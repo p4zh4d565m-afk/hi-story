@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { getDb } from './db/connection';
 import { runMigrations } from './db/migrations';
+import { registerAllIpc } from './ipc';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -34,6 +35,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   const db = getDb();
   runMigrations(db);
+  registerAllIpc();
   createWindow();
 });
 
