@@ -1,6 +1,7 @@
 import React from 'react';
 import ProjectList from './ProjectList';
-import type { Project } from '../types';
+import ChapterList from './ChapterList';
+import type { Project, Chapter } from '../types';
 
 interface SidebarProps {
   projects: Project[];
@@ -9,6 +10,13 @@ interface SidebarProps {
   onCreateProject: () => void;
   onDeleteProject: (id: string) => void;
   loading: boolean;
+  // Chapter props
+  chapters: Chapter[];
+  activeChapterId: string | null;
+  onSelectChapter: (id: string) => void;
+  onCreateChapter: (title: string) => void;
+  onDeleteChapter: (id: string) => void;
+  chaptersLoading: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -18,6 +26,12 @@ const Sidebar: React.FC<SidebarProps> = ({
   onCreateProject,
   onDeleteProject,
   loading,
+  chapters,
+  activeChapterId,
+  onSelectChapter,
+  onCreateChapter,
+  onDeleteChapter,
+  chaptersLoading,
 }) => {
   return (
     <div className="h-full flex flex-col">
@@ -34,7 +48,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Project List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto divide-y divide-gray-700/50">
         <ProjectList
           projects={projects}
           activeProjectId={activeProjectId}
@@ -42,6 +56,18 @@ const Sidebar: React.FC<SidebarProps> = ({
           onDelete={onDeleteProject}
           loading={loading}
         />
+
+        {/* Chapter list — show only when a project is selected */}
+        {activeProjectId && (
+          <ChapterList
+            chapters={chapters}
+            activeChapterId={activeChapterId}
+            onSelect={onSelectChapter}
+            onCreate={onCreateChapter}
+            onDelete={onDeleteChapter}
+            loading={chaptersLoading}
+          />
+        )}
       </div>
     </div>
   );
