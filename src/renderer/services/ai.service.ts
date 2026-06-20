@@ -14,24 +14,75 @@ export interface ChatOptions {
   systemPrompt?: string;
 }
 
+const DEFAULT_CONFIG = {
+  claude: {
+    apiKey: '', // User must configure this in the UI
+    model: 'claude-sonnet-4-6',
+  },
+  openai: {
+    apiKey: '',
+    model: 'gpt-4o',
+  },
+};
+
 class AIServiceImpl implements AIService {
+  private currentProvider: string = 'claude';
+  private currentApiKey: string = '';
+  private currentModel: string = 'claude-sonnet-4-6';
+
+  /** Set the active AI configuration (called from settings UI or env) */
+  configure(provider: string, apiKey: string, model?: string) {
+    this.currentProvider = provider;
+    this.currentApiKey = apiKey;
+    if (model) this.currentModel = model;
+  }
+
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
-    // Will be wired to AI IPC handlers
-    const result = await window.electronAPI.invoke('ai:chat', null, messages, options) as any;
+    const config = {
+      name: this.currentProvider,
+      apiKey: this.currentApiKey,
+      model: options?.model || this.currentModel,
+    };
+
+    if (!config.apiKey) {
+      throw new Error('请先配置 AI API Key（在设置中填入你的 API Key）');
+    }
+
+    const result = await window.electronAPI.invoke('ai:chat', config, messages, options) as any;
     if (result.success) {
       return result.data as string;
     }
-    throw new Error(result.error || 'AI chat failed');
+    throw new Error(result.error || 'AI 请求失败');
   }
 
   async *chatStream(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<string> {
-    // Streaming requires special handling via event listeners
-    // This is a placeholder — full streaming UI in Task 12
-    const result = await window.electronAPI.invoke('ai:chat', null, messages, options) as any;
+    const config = {
+      name: this.currentProvider,
+      apiKey: this.currentApiKey,
+      model: options?.model || this.currentModel,
+    };
+
+    if (!config.apiKey) {
+      throw new Error('请先配置 AI API Key（在设置中填入你的 API Key）');
+    }
+
+    // Use non-streaming chat for now (simpler, more reliable)
+    const result = await window.electronAPI.invoke('ai:chat', config, messages, options) as any;
     if (result.success) {
-      yield result.data as string;
+      // Simulate streaming by yielding in chunks
+      const text = result.data as string;
+      const words = text.split('');
+      let buffer = '';
+      for (let i = 0; i < words.length; i += 5) {
+        buffer += words.slice(i, i + 5).join('');
+        yield buffer;
+        await new Promise(r => setTimeout(r, 10));
+      }
+      if (buffer !== text) {
+        yield text;
+      }
     } else {
-      throw new Error(result.error || 'AI stream failed');
+      throw new Error(result.error || 'AI 请求失败');
     }
   }
 
