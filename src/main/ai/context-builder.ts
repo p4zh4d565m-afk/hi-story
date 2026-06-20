@@ -52,12 +52,15 @@ export class ContextBuilder {
       parts.push(this.getWorldContext(sources.worldEntries));
     }
 
-    // 7. 最近对话摘要（压缩长对话）
+    // 7. 文学知识库（本地已导入的数据）
+    parts.push(this.getLiteratureKnowledge());
+
+    // 8. 最近对话摘要（压缩长对话）
     if (sources.recentMessages && sources.recentMessages.length > 0) {
       parts.push(this.getConversationSummary(sources.recentMessages));
     }
 
-    // 8. 行为约束
+    // 9. 行为约束
     parts.push(this.getBehaviorRules());
 
     const systemContent = parts.filter(Boolean).join('\n\n---\n\n');
@@ -186,6 +189,19 @@ export class ContextBuilder {
       })
       .join('\n');
     return `## 最近对话\n${summary}`;
+  }
+
+  private static getLiteratureKnowledge(): string {
+    return `## 本地文学知识库
+你的训练数据中已包含大量文学知识。此外，用户已导入以下本地数据可供参考：
+
+- 📖 成语词典 (103条) — 含出处、释义、例句
+- ⚔️ 孙子兵法 + 三十六计 (42篇) — 完整原文
+- 🦊 希腊神话 + 北欧神话 (12篇) — 体系化介绍
+- 📚 唐诗宋词精选 (20首) — 名家名篇原文
+- 🎭 修辞手法大全 (11条) — 含例句
+
+如果用户询问关于这些主题的问题，请尽量给出详细的解答，并引用原文或出处。不要仅仅因为'本地数据库可能没有'就回避回答——你是 AI 模型，本身就掌握这些知识。`;
   }
 
   private static getBehaviorRules(): string {
