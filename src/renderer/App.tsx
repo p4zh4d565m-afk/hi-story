@@ -1,10 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import Layout from './components/Layout';
 import Sidebar from './components/Sidebar';
 import MainArea from './components/MainArea';
 import ContextPanel from './components/ContextPanel';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import { useProject } from './hooks/useProject';
+import { ContextBuilder } from '../main/ai/context-builder';
 import type { CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
 
 const App: React.FC = () => {
@@ -232,6 +233,18 @@ const App: React.FC = () => {
             saving={saving}
             showInspiration={showInspiration}
             onCloseInspiration={() => setShowInspiration(false)}
+            projectId={activeProject?.id ?? null}
+            contextMessages={useMemo(() => {
+              if (!activeProject) return [];
+              const ctx = ContextBuilder.build({
+                project: activeProject,
+                currentChapter: activeChapter ?? undefined,
+                characters: characters.length > 0 ? characters : undefined,
+                worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
+                outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
+              });
+              return ctx;
+            }, [activeProject?.id, activeChapter?.id, characters.length, worldEntries.length, outlineNodes.length])}
           />
         }
         contextPanel={

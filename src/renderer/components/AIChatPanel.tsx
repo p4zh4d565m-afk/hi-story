@@ -22,8 +22,12 @@ interface SavedConfig {
 }
 
 interface AIChatPanelProps {
+  /** Context messages built from current project - prepended to every request */
   contextMessages?: ChatMessage[];
+  /** Called when a message is sent or received */
   onSaveMessage?: (role: 'user' | 'assistant', content: string) => void;
+  /** Current project ID - conversations are isolated per project */
+  projectId?: string | null;
 }
 
 interface ChatEntry {
@@ -44,22 +48,23 @@ const PROVIDERS: ProviderPreset[] = [
   { id: 'moonshot', name: 'moonshot', displayName: 'Moonshot (Kimi)', baseUrl: 'https://api.moonshot.cn/v1', type: 'openai-compatible', defaultModel: 'moonshot-v1-8k', models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'] },
 ];
 
-const STORAGE_KEY = 'hi-story-ai-configs';
+const AI_CONFIGS_KEY = 'hi-story-ai-configs';
 
 function loadConfigs(): SavedConfig[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = localStorage.getItem(AI_CONFIGS_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
 function saveConfigs(configs: SavedConfig[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(configs));
+  localStorage.setItem(AI_CONFIGS_KEY, JSON.stringify(configs));
 }
 
 const AIChatPanel: React.FC<AIChatPanelProps> = ({
   contextMessages = [],
   onSaveMessage,
+  projectId,
 }) => {
   // ===== Config management =====
   const [savedConfigs, setSavedConfigs] = useState<SavedConfig[]>(loadConfigs);
@@ -67,9 +72,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [showSettings, setShowSettings] = useState(false);
 
   // New config form
-  const [editingProviderId, setEditingProviderId] = useState('claude');
+  const [editingProviderId, setEditingProviderId] = useState('deepseek');
   const [editingApiKey, setEditingApiKey] = useState('');
-  const [editingModel, setEditingModel] = useState('claude-sonnet-4-6');
+  const [editingModel, setEditingModel] = useState('deepseek-chat');
   const [editingLabel, setEditingLabel] = useState('');
 
   // ===== Chat state =====
@@ -79,6 +84,8 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  // Track previous project to detect switch
+  const prevProjectRef = useRef<string | null | undefined>(undefined);
 
   // Derived: active config
   const activeConfig = savedConfigs.find(c => c.id === activeConfigId) ?? null;
@@ -99,6 +106,16 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       );
     }
   }, [activeConfigId, activeConfig?.apiKey, activeConfig?.model]);
+
+  // Reset conversation when project changes (new project = new chat)
+  useEffect(() => {
+    if (prevProjectRef.current !== undefined && prevProjectRef.current !== projectId) {
+      setMessages([]);
+      setError(null);
+      setStreamingText('');
+    }
+    prevProjectRef.current = projectId;
+  }, [projectId]);
 
   const handleAddConfig = () => {
     if (!editingApiKey.trim()) return;
@@ -163,9 +180,10 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setMessages(prev => [...prev, userMsg]);
     onSaveMessage?.('user', text);
 
+    // Build messages: context (system prompt with project info) + conversation history + new user message
     const chatMessages: ChatMessage[] = [
-      ...contextMessages,
-      ...[...messages, userMsg].map(m => ({
+      ...contextMessages,                     // System context (project, characters, world, etc.)
+      ...[...messages, userMsg].map(m => ({   // Conversation history
         role: m.role as 'user' | 'assistant',
         content: m.content,
       })),
@@ -207,6 +225,11 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
   };
 
+  // Build context summary for display
+  const contextSummary = contextMessages.length > 0
+    ? `📚 +${contextMessages[0].content.length} 字符的创作上下文已注入`
+    : null;
+
   return (
     <div className="h-full flex flex-col bg-gray-900">
       {/* === Header with provider switcher === */}
@@ -241,6 +264,13 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Context indicator */}
+      {contextSummary && (
+        <div className="px-4 py-1.5 bg-accent/10 border-b border-accent/20 text-[10px] text-accent">
+          {contextSummary}
+        </div>
+      )}
 
       {/* === Settings panel === */}
       {showSettings && (
@@ -337,7 +367,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {currentProviderModels.map(m => (
                     <option key={m} value={m}>{m}</option>
                   ))}
-                  {/* Allow custom model name */}
                   {!currentProviderModels.includes(editingModel) && editingModel && (
                     <option value={editingModel}>{editingModel} (自定义)</option>
                   )}
@@ -370,12 +399,19 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         {messages.length === 0 && !isStreaming && (
           <div className="text-center text-gray-600 text-sm mt-8">
             <p className="text-2xl mb-2">💬</p>
-            <p>开始与 AI 对话</p>
-            <p className="text-xs mt-1">讨论角色、情节、世界观...</p>
+            <p>开始与 AI 讨论你的创作</p>
+            <p className="text-xs mt-1 text-gray-500">
+              {projectId
+                ? 'AI 已了解当前小说的世界观、角色和大纲'
+                : '请先选择一个小说项目'}
+            </p>
             {savedConfigs.length === 0 ? (
               <p className="text-xs mt-2 text-accent">⚠️ 请先点击 ⚙️ 添加 AI 配置</p>
             ) : (
               <p className="text-xs mt-2 text-gray-500">当前: {activeConfig?.label} ({activeConfig?.model})</p>
+            )}
+            {contextSummary && (
+              <p className="text-xs mt-1 text-accent">{contextSummary}</p>
             )}
           </div>
         )}
@@ -430,7 +466,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={savedConfigs.length > 0 ? 'Say anything...' : '请先点击 ⚙️ 添加 AI 配置...'}
+            placeholder={savedConfigs.length > 0 ? '和 AI 讨论你的小说...' : '请先点击 ⚙️ 添加 AI 配置...'}
             rows={2}
             className="flex-1 resize-none rounded bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white
                        focus:outline-none focus:border-accent placeholder-gray-600"

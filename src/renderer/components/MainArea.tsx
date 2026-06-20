@@ -16,6 +16,7 @@ interface MainAreaProps {
   saving: boolean;
   // AI Chat
   contextMessages?: { role: 'system' | 'user' | 'assistant'; content: string }[];
+  projectId?: string | null;
   // Inspiration
   showInspiration?: boolean;
   onCloseInspiration?: () => void;
@@ -33,6 +34,7 @@ const MainArea: React.FC<MainAreaProps> = ({
   onSaveChapter,
   saving,
   contextMessages = [],
+  projectId,
   showInspiration = false,
   onCloseInspiration,
 }) => {
@@ -96,6 +98,7 @@ const MainArea: React.FC<MainAreaProps> = ({
           {view === 'chat' && (
             <AIChatPanel
               contextMessages={contextMessages}
+              projectId={projectId}
               onSaveMessage={() => {}}
             />
           )}
