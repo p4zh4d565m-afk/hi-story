@@ -2,7 +2,7 @@
   "name": "hi-story",
   "version": "0.1.0",
   "description": "小说写作辅助工具",
-  "main": "dist/main/index.js",
+  "main": "dist/main/main/index.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
     "dev:main": "tsc -p tsconfig.main.json && electron .",
