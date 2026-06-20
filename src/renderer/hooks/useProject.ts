@@ -7,7 +7,7 @@ interface UseProjectReturn {
   loading: boolean;
   creating: boolean;
   setActiveProjectId: (id: string | null) => void;
-  createProject: (input: CreateProjectInput) => Promise<void>;
+  createProject: (input: CreateProjectInput) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
 }
@@ -37,13 +37,11 @@ export function useProject(): UseProjectReturn {
     refreshProjects();
   }, [refreshProjects]);
 
-  // When activeProjectId changes, load full project data
   useEffect(() => {
     if (!activeProjectId) {
       setActiveProject(null);
       return;
     }
-    // Find in local list first, then fetch if needed
     const found = projects.find((p) => p.id === activeProjectId);
     if (found) {
       setActiveProject(found);
@@ -57,15 +55,17 @@ export function useProject(): UseProjectReturn {
     }
   }, [activeProjectId, projects]);
 
-  const createProject = useCallback(async (input: CreateProjectInput) => {
+  const createProject = useCallback(async (input: CreateProjectInput): Promise<Project | null> => {
     setCreating(true);
     try {
       const result = await window.electronAPI.invoke('db:project:create', input) as any;
       if (result.success && result.data) {
         await refreshProjects();
         setActiveProjectId(result.data.id);
+        return result.data as Project;
       } else {
         console.error('Failed to create project:', result.error);
+        return null;
       }
     } finally {
       setCreating(false);

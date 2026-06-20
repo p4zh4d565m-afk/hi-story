@@ -82,6 +82,11 @@ const App: React.FC = () => {
     if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
   }, [activeProject]);
 
+  const handleSelectProject = useCallback((id: string) => {
+    setActiveProjectId(id);
+    // Loading of entities is handled by the useEffect on activeProject?.id
+  }, [setActiveProjectId]);
+
   const handleDeleteChapter = useCallback(async (id: string) => {
     await window.electronAPI.invoke('db:chapter:remove', id);
     setChapters(prev => prev.filter(ch => ch.id !== id));
@@ -162,8 +167,21 @@ const App: React.FC = () => {
   }, []);
 
   const handleCreateProject = async (input: CreateProjectInput) => {
-    await createProject(input);
+    const project = await createProject(input);
     setShowCreateDialog(false);
+    if (project) {
+      // Auto-create first chapter so the editor isn't blank
+      try {
+        const res = await window.electronAPI.invoke('db:chapter:create', {
+          projectId: project.id,
+          title: '第一章',
+        }) as any;
+        if (res.success && res.data) {
+          setChapters([res.data]);
+          setActiveChapterId(res.data.id);
+        }
+      } catch {}
+    }
   };
 
   return (
