@@ -2,7 +2,7 @@ import { registerProjectIpc } from './project.ipc';
 import { registerChapterIpc } from './chapter.ipc';
 import { registerAIIpc } from './ai.ipc';
 import { registerOutlineIpc } from './outline.ipc';
-import { registerCharacterIpc, registerWorldEntryIpc, registerReferenceLinkIpc } from './entities.ipc';
+import { registerCharacterIpc, registerWorldEntryIpc, registerReferenceLinkIpc, registerSearchIpc } from './entities.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -12,4 +12,5 @@ export function registerAllIpc(): void {
   registerCharacterIpc();
   registerWorldEntryIpc();
   registerReferenceLinkIpc();
+  registerSearchIpc();
 }
