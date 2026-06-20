@@ -39,11 +39,6 @@ export function useChapter(): UseChapterReturn {
     }
   }, [activeChapterId]);
 
-  // Update active chapter when id or list changes
-  // useChapter hook handles this via the component using the activeChapterId
-  // The actual activeChapter resolution is done inline since hooks can't have conditional effects easily
-
-  // This is a simplified version - the full implementation is in the component
   const createChapter = useCallback(async (input: CreateChapterInput): Promise<Chapter | null> => {
     try {
       const result = await window.electronAPI.invoke('db:chapter:create', input) as any;
@@ -61,7 +56,6 @@ export function useChapter(): UseChapterReturn {
   const saveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
     try {
-      // Calculate word count (Chinese characters + words)
       const chineseChars = (content.match(/[一-鿿]/g) || []).length;
       const words = content.replace(/<[^>]*>/g, '').split(/\s+/).filter(Boolean).length;
       const wordCount = chineseChars + words;
@@ -72,33 +66,33 @@ export function useChapter(): UseChapterReturn {
         wordCount,
       });
 
-      // Update local state
       setChapters(prev => prev.map(ch =>
         ch.id === id ? { ...ch, content, wordCount } : ch
       ));
-      if (activeChapter?.id === id) {
-        setActiveChapter(prev => prev ? { ...prev, content, wordCount } : null);
-      }
+      setActiveChapter(prev => prev?.id === id ? { ...prev, content, wordCount } : prev);
     } catch (err) {
       console.error('Failed to save chapter:', err);
     } finally {
       setSaving(false);
     }
-  }, [activeChapter]);
+  }, []);
 
   const deleteChapter = useCallback(async (id: string) => {
     try {
       await window.electronAPI.invoke('db:chapter:remove', id);
       setChapters(prev => prev.filter(ch => ch.id !== id));
       if (activeChapterId === id) {
-        const remaining = chapters.filter(ch => ch.id !== id);
-        setActiveChapterId(remaining.length > 0 ? remaining[0].id : null);
-        setActiveChapter(remaining.length > 0 ? remaining[0] : null);
+        setChapters(prev => {
+          const remaining = prev.filter(ch => ch.id !== id);
+          setActiveChapterId(remaining.length > 0 ? remaining[0].id : null);
+          setActiveChapter(remaining.length > 0 ? remaining[0] : null);
+          return remaining;
+        });
       }
     } catch (err) {
       console.error('Failed to delete chapter:', err);
     }
-  }, [activeChapterId, chapters]);
+  }, [activeChapterId]);
 
   // Resolve active chapter from chapters list
   const resolvedActive = activeChapterId
