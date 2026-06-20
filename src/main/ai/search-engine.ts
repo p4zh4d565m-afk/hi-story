@@ -107,7 +107,12 @@ export class SearchEngine {
       ).get(`fts_${layer.name}`);
 
       if (tableExists) {
-        const ftsQuery = sanitized.split(/\s+/).map(w => `"${w}"*`).join(' AND ');
+        // FTS5 query needs to use the prefix tokenizer properly
+        // Use simple OR-based query for better CJK support
+        const terms = sanitized.split(/\s+/).filter(w => w.length > 0);
+        // Build OR query for better matching
+        const ftsQuery = terms.map(w => `"${w}"`).join(' OR ');
+
         try {
           const rows = this.litDb.prepare(`
             SELECT m.rowid as material_id, m.title, m.content, m.url as source, m.tags,
