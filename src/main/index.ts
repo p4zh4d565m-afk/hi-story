@@ -1,6 +1,6 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
-import { getDb } from './db/connection';
+import { getDb, attachLiteraryDb } from './db/connection';
 import { runMigrations } from './db/migrations';
 import { registerAllIpc } from './ipc';
 import { createAppMenu } from './menu';
@@ -36,6 +36,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   const db = getDb();
   runMigrations(db);
+  attachLiteraryDb();
   registerAllIpc();
   createWindow();
   createAppMenu(mainWindow!);

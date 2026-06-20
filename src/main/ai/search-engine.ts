@@ -1,8 +1,10 @@
 import type Database from 'better-sqlite3';
+import { getDb, getLiteraryDb, getLiteraryDbPath } from '../db/connection';
+import fs from 'fs';
 
 /**
  * FTS5 全文搜索引擎
- * 管理五个文学数据层的全文索引
+ * 搜索本地的文学数据库 (literary.db)
  */
 export interface SearchLayer {
   name: string;
@@ -33,7 +35,7 @@ export interface SearchResult {
 
 export interface SearchOptions {
   query: string;
-  layers?: string[];        // Limit to specific layers
+  layers?: string[];
   maxResultsPerLayer?: number;
   maxTotalResults?: number;
   includeUserLayer?: boolean;
@@ -41,30 +43,11 @@ export interface SearchOptions {
 
 export class SearchEngine {
   private db: Database.Database;
+  private litDb: Database.Database | null;
 
   constructor(db: Database.Database) {
     this.db = db;
-  }
-
-  /**
-   * Initialize FTS5 tables for all search layers
-   */
-  initFTS(): void {
-    // Create FTS5 tables for each layer
-    for (const layer of SEARCH_LAYERS) {
-      this.db.exec(`
-        CREATE VIRTUAL TABLE IF NOT EXISTS fts_${layer.name} USING fts5(
-          title,
-          content,
-          source,
-          tags,
-          tokenize='unicode61'
-        );
-      `);
-    }
-
-    // Create a combined view for cross-layer search
-    console.log('FTS5 indexes initialized for all 5 layers.');
+    this.litDb = getLiteraryDb();
   }
 
   /**
@@ -76,14 +59,11 @@ export class SearchEngine {
       layers,
       maxResultsPerLayer = 10,
       maxTotalResults = 50,
-      includeUserLayer = true,
     } = options;
 
     const targetLayers = layers
       ? SEARCH_LAYERS.filter(l => layers.includes(l.name))
-      : includeUserLayer
-        ? SEARCH_LAYERS
-        : SEARCH_LAYERS.filter(l => l.name !== 'user');
+      : SEARCH_LAYERS;
 
     const allResults: SearchResult[] = [];
 
@@ -92,18 +72,28 @@ export class SearchEngine {
       allResults.push(...layerResults);
     }
 
-    // Sort by score descending
     allResults.sort((a, b) => b.score - a.score);
-
     return allResults.slice(0, maxTotalResults);
   }
 
   /**
-   * Search a single FTS5 layer
+   * Search a single layer in the literary database
    */
   private searchLayer(query: string, layer: SearchLayer, limit: number): SearchResult[] {
+    if (!this.litDb) {
+      // Try to open the literary DB
+      const litPath = getLiteraryDbPath();
+      if (fs.existsSync(litPath)) {
+        const Database = require('better-sqlite3');
+        this.litDb = new Database(litPath, { readonly: true });
+      } else {
+        return [];
+      }
+    }
+
+    if (!this.litDb) return [];
+
     try {
-      // Sanitize FTS5 query
       const sanitized = query
         .replace(/['"]/g, '')
         .replace(/[+\-*^~()<>]/g, '')
@@ -111,125 +101,76 @@ export class SearchEngine {
 
       if (!sanitized) return [];
 
-      // Use prefix matching for partial words
-      const ftsQuery = sanitized.split(/\s+/).map(w => `"${w}"*`).join(' AND ');
+      // First try FTS5 (if table exists)
+      const tableExists = this.litDb.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+      ).get(`fts_${layer.name}`);
 
-      const stmt = this.db.prepare(`
-        SELECT
-          m.id,
-          m.title,
-          m.content,
-          m.url as source,
-          m.tags,
-          fts_${layer.name}.rank AS score
-        FROM fts_${layer.name}
-        JOIN materials m ON m.id = fts_${layer.name}.rowid AND m.source_layer = ?
-        WHERE fts_${layer.name} MATCH ?
-        ORDER BY rank
+      if (tableExists) {
+        const ftsQuery = sanitized.split(/\s+/).map(w => `"${w}"*`).join(' AND ');
+        try {
+          const rows = this.litDb.prepare(`
+            SELECT m.rowid as material_id, m.title, m.content, m.url as source, m.tags,
+                   fts_${layer.name}.rank AS score
+            FROM fts_${layer.name}
+            JOIN materials m ON m.rowid = fts_${layer.name}.rowid AND m.source_layer = ?
+            WHERE fts_${layer.name} MATCH ?
+            ORDER BY rank
+            LIMIT ?
+          `).all(layer.name, ftsQuery, limit) as any[];
+
+          if (rows.length > 0) {
+            return rows.map((row: any) => ({
+              layer: layer.name,
+              layerDisplay: layer.displayName,
+              layerIcon: layer.icon,
+              title: row.title,
+              content: row.content || '',
+              snippet: this.generateSnippet(row.content || '', sanitized, 150),
+              score: row.score ? Math.abs(row.score) : 0,
+              source: row.source || '',
+              materialId: String(row.material_id || ''),
+            }));
+          }
+        } catch {
+          // FTS query failed, fall through to LIKE search
+        }
+      }
+
+      // Fallback: LIKE search
+      const likePattern = `%${sanitized}%`;
+      const rows = this.litDb.prepare(`
+        SELECT rowid as material_id, title, content, url as source, tags
+        FROM materials
+        WHERE source_layer = ? AND (title LIKE ? OR content LIKE ?)
         LIMIT ?
-      `);
+      `).all(layer.name, likePattern, likePattern, limit) as any[];
 
-      const rows = stmt.all(layer.name, ftsQuery, limit) as any[];
-
-      return rows.map((row: any) => {
-        const snippet = this.generateSnippet(row.content, sanitized, 120);
-        return {
-          layer: layer.name,
-          layerDisplay: layer.displayName,
-          layerIcon: layer.icon,
-          title: row.title,
-          content: row.content,
-          snippet,
-          score: row.score ? Math.abs(row.score) : 0,
-          source: row.source,
-          materialId: row.id,
-        };
-      });
+      return rows.map((row: any) => ({
+        layer: layer.name,
+        layerDisplay: layer.displayName,
+        layerIcon: layer.icon,
+        title: row.title || '',
+        content: row.content || '',
+        snippet: this.generateSnippet(row.content || '', sanitized, 150),
+        score: 1,
+        source: row.source || '',
+        materialId: String(row.material_id || ''),
+      }));
     } catch (err) {
-      // If FTS table doesn't exist or query fails, return empty
       return [];
     }
   }
 
-  /**
-   * Generate a readable snippet showing the matched context
-   */
   private generateSnippet(text: string, query: string, maxLength: number): string {
     const cleanText = text.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
     if (cleanText.length <= maxLength) return cleanText;
 
-    // Find best matching position
-    const terms = query.split(/\s+/);
-    let bestPos = 0;
-    let bestScore = -1;
-
-    for (const term of terms) {
-      const idx = cleanText.indexOf(term);
-      if (idx !== -1) {
-        const contextScore = Math.min(idx, cleanText.length - idx - term.length);
-        if (bestScore === -1 || contextScore > bestScore) {
-          bestScore = contextScore;
-          bestPos = Math.max(0, idx - Math.floor(maxLength / 3));
-        }
-      } else {
-        // Try case-insensitive
-        const lowerText = cleanText.toLowerCase();
-        const lowerTerm = term.toLowerCase();
-        const cidx = lowerText.indexOf(lowerTerm);
-        if (cidx !== -1) {
-          bestPos = Math.max(0, cidx - Math.floor(maxLength / 3));
-          break;
-        }
-      }
-    }
-
-    let snippet = cleanText.slice(bestPos, bestPos + maxLength);
-    if (bestPos > 0) snippet = '...' + snippet;
-    if (bestPos + maxLength < cleanText.length) snippet = snippet + '...';
-
+    const idx = cleanText.indexOf(query);
+    let start = idx >= 0 ? Math.max(0, idx - maxLength / 3) : 0;
+    let snippet = cleanText.slice(Math.floor(start), Math.floor(start + maxLength));
+    if (start > 0) snippet = '...' + snippet;
+    if (start + maxLength < cleanText.length) snippet = snippet + '...';
     return snippet;
-  }
-
-  /**
-   * Index a material document into its FTS layer
-   */
-  indexMaterial(materialId: string, layer: string, title: string, content: string, source: string, tags: string): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO fts_${layer} (rowid, title, content, source, tags)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-
-    // Get the material's rowid
-    const material = this.db.prepare('SELECT rowid FROM materials WHERE id = ?').get(materialId) as { rowid: number } | undefined;
-    if (!material) {
-      console.warn(`Material ${materialId} not found for indexing`);
-      return;
-    }
-
-    stmt.run(material.rowid, title, content, source, tags);
-  }
-
-  /**
-   * Re-index all materials of a given layer
-   */
-  reindexLayer(layer: string): void {
-    // Clear existing index
-    this.db.exec(`DELETE FROM fts_${layer}`);
-
-    // Re-index all materials in this layer
-    const materials = this.db.prepare(
-      'SELECT rowid, title, content, url, tags FROM materials WHERE source_layer = ?'
-    ).all(layer) as any[];
-
-    const stmt = this.db.prepare(`
-      INSERT INTO fts_${layer} (rowid, title, content, source, tags)
-      VALUES (?, ?, ?, ?, ?)
-    `);
-
-    for (const m of materials) {
-      stmt.run(m.rowid, m.title, m.content, m.url || '', m.tags);
-    }
-
-    console.log(`Re-indexed ${materials.length} documents in layer "${layer}"`);
   }
 }
