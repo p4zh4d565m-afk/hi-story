@@ -5,8 +5,7 @@ import WritingArea from './components/WritingArea';
 import ContextPanel from './components/ContextPanel';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import { useProject } from './hooks/useProject';
-import type { CreateProjectInput } from './types';
-import type { Chapter } from './types';
+import type { CreateProjectInput, Chapter, OutlineNode } from './types';
 
 const App: React.FC = () => {
   const {
@@ -27,21 +26,24 @@ const App: React.FC = () => {
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // Outline state
+  const [outlineNodes, setOutlineNodes] = useState<OutlineNode[]>([]);
+  const [activeOutlineNodeId, setActiveOutlineNodeId] = useState<string | null>(null);
+  const [outlineLoading, setOutlineLoading] = useState(false);
+
   const activeChapter = activeChapterId
     ? chapters.find(ch => ch.id === activeChapterId) ?? null
     : null;
 
-  // Load chapters when project changes
+  // ===== Chapters =====
   const loadChapters = useCallback(async (projectId: string) => {
     setChaptersLoading(true);
     try {
       const result = await window.electronAPI.invoke('db:chapter:findByProject', projectId) as any;
       if (result.success && result.data) {
         setChapters(result.data);
-        if (result.data.length > 0) {
+        if (result.data.length > 0 && !activeChapterId) {
           setActiveChapterId(result.data[0].id);
-        } else {
-          setActiveChapterId(null);
         }
       }
     } catch (err) {
@@ -51,16 +53,6 @@ const App: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    if (activeProject) {
-      loadChapters(activeProject.id);
-    } else {
-      setChapters([]);
-      setActiveChapterId(null);
-    }
-  }, [activeProject?.id, loadChapters]);
-
-  // Chapter CRUD handlers
   const handleCreateChapter = useCallback(async (title: string) => {
     if (!activeProject) return;
     try {
@@ -93,17 +85,10 @@ const App: React.FC = () => {
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
     try {
-      // Calculate word count (Chinese characters)
       const chineseChars = (content.match(/[一-鿿㐀-䶿]/g) || []).length;
       const plainText = content.replace(/<[^>]*>/g, '').replace(/\s+/g, '');
       const wordCount = chineseChars || plainText.length;
-
-      await window.electronAPI.invoke('db:chapter:update', {
-        id,
-        content,
-        wordCount,
-      });
-
+      await window.electronAPI.invoke('db:chapter:update', { id, content, wordCount });
       setChapters(prev => prev.map(ch =>
         ch.id === id ? { ...ch, content, wordCount } : ch
       ));
@@ -114,7 +99,74 @@ const App: React.FC = () => {
     }
   }, []);
 
-  // Listen for menu events
+  // ===== Outline =====
+  const loadOutline = useCallback(async (projectId: string) => {
+    setOutlineLoading(true);
+    try {
+      const result = await window.electronAPI.invoke('db:outline:findByProject', projectId) as any;
+      if (result.success && result.data) {
+        setOutlineNodes(result.data);
+      }
+    } catch (err) {
+      console.error('Failed to load outline:', err);
+    } finally {
+      setOutlineLoading(false);
+    }
+  }, []);
+
+  const handleCreateOutlineNode = useCallback(async (parentId: string | null, title: string) => {
+    if (!activeProject) return;
+    try {
+      const result = await window.electronAPI.invoke('db:outline:create', {
+        projectId: activeProject.id,
+        parentId,
+        title,
+      }) as any;
+      if (result.success && result.data) {
+        await loadOutline(activeProject.id);
+        setActiveOutlineNodeId(result.data.id);
+      }
+    } catch (err) {
+      console.error('Failed to create outline node:', err);
+    }
+  }, [activeProject, loadOutline]);
+
+  const handleDeleteOutlineNode = useCallback(async (id: string) => {
+    try {
+      await window.electronAPI.invoke('db:outline:remove', id);
+      setOutlineNodes(prev => prev.filter(n => n.id !== id));
+      if (activeOutlineNodeId === id) {
+        setActiveOutlineNodeId(null);
+      }
+    } catch (err) {
+      console.error('Failed to delete outline node:', err);
+    }
+  }, [activeOutlineNodeId]);
+
+  const handleUpdateOutlineNode = useCallback(async (id: string, title: string, summary: string) => {
+    try {
+      await window.electronAPI.invoke('db:outline:update', { id, title, summary });
+      setOutlineNodes(prev => prev.map(n =>
+        n.id === id ? { ...n, title, summary } : n
+      ));
+    } catch (err) {
+      console.error('Failed to update outline node:', err);
+    }
+  }, []);
+
+  // ===== Effects =====
+  useEffect(() => {
+    if (activeProject) {
+      loadChapters(activeProject.id);
+      loadOutline(activeProject.id);
+    } else {
+      setChapters([]);
+      setActiveChapterId(null);
+      setOutlineNodes([]);
+      setActiveOutlineNodeId(null);
+    }
+  }, [activeProject?.id, loadChapters, loadOutline]);
+
   useEffect(() => {
     const handleMenuCreate = () => setShowCreateDialog(true);
     window.electronAPI.on('menu:create-project', handleMenuCreate);
@@ -145,6 +197,13 @@ const App: React.FC = () => {
             onCreateChapter={handleCreateChapter}
             onDeleteChapter={handleDeleteChapter}
             chaptersLoading={chaptersLoading}
+            outlineNodes={outlineNodes}
+            activeOutlineNodeId={activeOutlineNodeId}
+            onSelectOutlineNode={setActiveOutlineNodeId}
+            onCreateOutlineNode={handleCreateOutlineNode}
+            onDeleteOutlineNode={handleDeleteOutlineNode}
+            onUpdateOutlineNode={handleUpdateOutlineNode}
+            outlineLoading={outlineLoading}
           />
         }
         main={

@@ -1,7 +1,8 @@
 import React from 'react';
 import ProjectList from './ProjectList';
 import ChapterList from './ChapterList';
-import type { Project, Chapter } from '../types';
+import OutlineTree from './OutlineTree';
+import type { Project, Chapter, OutlineNode } from '../types';
 
 interface SidebarProps {
   projects: Project[];
@@ -17,6 +18,14 @@ interface SidebarProps {
   onCreateChapter: (title: string) => void;
   onDeleteChapter: (id: string) => void;
   chaptersLoading: boolean;
+  // Outline props
+  outlineNodes: OutlineNode[];
+  activeOutlineNodeId: string | null;
+  onSelectOutlineNode: (id: string) => void;
+  onCreateOutlineNode: (parentId: string | null, title: string) => void;
+  onDeleteOutlineNode: (id: string) => void;
+  onUpdateOutlineNode: (id: string, title: string, summary: string) => void;
+  outlineLoading: boolean;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({
@@ -32,6 +41,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   onCreateChapter,
   onDeleteChapter,
   chaptersLoading,
+  outlineNodes,
+  activeOutlineNodeId,
+  onSelectOutlineNode,
+  onCreateOutlineNode,
+  onDeleteOutlineNode,
+  onUpdateOutlineNode,
+  outlineLoading,
 }) => {
   return (
     <div className="h-full flex flex-col">
@@ -47,7 +63,7 @@ const Sidebar: React.FC<SidebarProps> = ({
         </button>
       </div>
 
-      {/* Project List */}
+      {/* Content */}
       <div className="flex-1 overflow-y-auto divide-y divide-gray-700/50">
         <ProjectList
           projects={projects}
@@ -57,16 +73,26 @@ const Sidebar: React.FC<SidebarProps> = ({
           loading={loading}
         />
 
-        {/* Chapter list — show only when a project is selected */}
         {activeProjectId && (
-          <ChapterList
-            chapters={chapters}
-            activeChapterId={activeChapterId}
-            onSelect={onSelectChapter}
-            onCreate={onCreateChapter}
-            onDelete={onDeleteChapter}
-            loading={chaptersLoading}
-          />
+          <>
+            <OutlineTree
+              nodes={outlineNodes}
+              activeNodeId={activeOutlineNodeId}
+              onSelect={onSelectOutlineNode}
+              onCreate={onCreateOutlineNode}
+              onDelete={onDeleteOutlineNode}
+              onUpdate={onUpdateOutlineNode}
+              loading={outlineLoading}
+            />
+            <ChapterList
+              chapters={chapters}
+              activeChapterId={activeChapterId}
+              onSelect={onSelectChapter}
+              onCreate={onCreateChapter}
+              onDelete={onDeleteChapter}
+              loading={chaptersLoading}
+            />
+          </>
         )}
       </div>
     </div>
