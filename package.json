@@ -4,18 +4,17 @@
   "description": "小说写作辅助工具",
   "main": "dist/main/main/index.js",
   "scripts": {
-    "dev": "concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
+    "dev": "npm run electron:rebuild && concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
     "dev:main": "tsc -p tsconfig.main.json && electron .",
     "dev:renderer": "vite",
     "build:main": "tsc -p tsconfig.main.json",
     "build:renderer": "vite build",
     "build": "npm run build:main && npm run build:renderer",
-    "test": "vitest run",
+    "test": "npm rebuild better-sqlite3 && vitest run",
     "test:watch": "vitest",
-    "postinstall": "npm run build:main",
+    "postinstall": "npm run build:main && npm run electron:rebuild",
     "electron:rebuild": "@electron/rebuild -f -w better-sqlite3",
-    "test:node": "npm rebuild better-sqlite3 && vitest run",
-    "test:electron": "@electron/rebuild -f -w better-sqlite3 && electron node_modules/.bin/vitest run"
+    "start": "npm run electron:rebuild && electron ."
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
