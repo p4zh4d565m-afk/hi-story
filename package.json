@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "postinstall": "npm run build:main",
-    "electron:rebuild": "@electron/rebuild -f -w better-sqlite3"
+    "electron:rebuild": "@electron/rebuild -f -w better-sqlite3",
+    "test:node": "npm rebuild better-sqlite3 && vitest run",
+    "test:electron": "@electron/rebuild -f -w better-sqlite3 && electron node_modules/.bin/vitest run"
   },
   "devDependencies": {
     "@electron/rebuild": "^4.0.4",
