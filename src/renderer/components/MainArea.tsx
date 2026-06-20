@@ -38,34 +38,44 @@ const MainArea: React.FC<MainAreaProps> = ({
 }) => {
   const [view, setView] = useState<MainView>('write');
 
+  if (!activeProject) {
+    return (
+      <div className="h-full flex items-center justify-center text-gray-600">
+        <div className="text-center">
+          <p className="text-4xl mb-4">📝</p>
+          <p className="text-lg">选择一本小说开始创作</p>
+          <p className="text-sm mt-2 text-gray-700">或点击 + 创建新项目</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col">
       {/* View toggle bar */}
-      {activeProject && (
-        <div className="flex items-center gap-0 px-1 py-1 bg-gray-800 border-b border-gray-700">
-          {([
-            { id: 'write' as MainView, label: '✍️ 写作', title: '写作模式' },
-            { id: 'chat' as MainView, label: '💬 AI 对话', title: 'AI 对话' },
-          ]).map(({ id, label, title }) => (
-            <button
-              key={id}
-              onClick={() => setView(id)}
-              className={`
-                px-3 py-1 rounded text-xs transition-colors
-                ${view === id
-                  ? 'bg-accent text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700'
-                }
-              `}
-              title={title}
-            >
-              {label}
-            </button>
-          ))}
-          <div className="flex-1" />
-          <span className="text-[10px] text-gray-600 px-2">{activeProject.name}</span>
-        </div>
-      )}
+      <div className="flex items-center gap-0 px-1 py-1 bg-gray-800 border-b border-gray-700">
+        {([
+          { id: 'write' as MainView, label: '✍️ 写作', title: '写作模式' },
+          { id: 'chat' as MainView, label: '💬 AI 对话', title: 'AI 对话' },
+        ]).map(({ id, label, title }) => (
+          <button
+            key={id}
+            onClick={() => setView(id)}
+            className={`
+              px-3 py-1 rounded text-xs transition-colors
+              ${view === id
+                ? 'bg-accent text-white'
+                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+              }
+            `}
+            title={title}
+          >
+            {label}
+          </button>
+        ))}
+        <div className="flex-1" />
+        <span className="text-[10px] text-gray-600 px-2">{activeProject.name}</span>
+      </div>
 
       {/* Main content area */}
       <div className="flex-1 flex overflow-hidden">
@@ -98,7 +108,6 @@ const MainArea: React.FC<MainAreaProps> = ({
               open={true}
               onClose={() => onCloseInspiration?.()}
               onSendToChat={(result: SearchResult) => {
-                // Will be wired: copy result to chat
                 console.log('Send to chat:', result.title);
               }}
               onSaveAsMaterial={(result: SearchResult) => {
