@@ -3,6 +3,7 @@ import path from 'path';
 import { getDb } from './db/connection';
 import { runMigrations } from './db/migrations';
 import { registerAllIpc } from './ipc';
+import { createAppMenu } from './menu';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -37,6 +38,7 @@ app.whenReady().then(() => {
   runMigrations(db);
   registerAllIpc();
   createWindow();
+  createAppMenu(mainWindow!);
 });
 
 app.on('window-all-closed', () => {
