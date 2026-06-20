@@ -1,55 +1,55 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import Layout from './components/Layout';
+import DockLayout from './components/DockLayout';
 import Sidebar from './components/Sidebar';
-import MainArea from './components/MainArea';
+import WritingArea from './components/WritingArea';
+import AIChatPanel from './components/AIChatPanel';
 import ContextPanel from './components/ContextPanel';
+import InspirationPanel from './components/InspirationPanel';
+import MindMap from './components/MindMap';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import { useProject } from './hooks/useProject';
 import { ContextBuilder } from '../main/ai/context-builder';
 import type { CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
 
 const App: React.FC = () => {
-  const {
-    projects,
-    activeProject,
-    loading: projectsLoading,
-    creating: creatingProject,
-    setActiveProjectId,
-    createProject,
-    deleteProject,
-  } = useProject();
+  const { projects, activeProject, loading: projectsLoading, creating: creatingProject,
+    setActiveProjectId, createProject, deleteProject } = useProject();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
-  // ========== Chapter state ==========
+  // ===== Entity state =====
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // ========== Outline state ==========
   const [outlineNodes, setOutlineNodes] = useState<OutlineNode[]>([]);
   const [activeOutlineNodeId, setActiveOutlineNodeId] = useState<string | null>(null);
   const [outlineLoading, setOutlineLoading] = useState(false);
 
-  // ========== Character state ==========
   const [characters, setCharacters] = useState<Character[]>([]);
   const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
   const [charactersLoading, setCharactersLoading] = useState(false);
 
-  // ========== World Entry state ==========
   const [worldEntries, setWorldEntries] = useState<WorldEntry[]>([]);
   const [activeWorldEntryId, setActiveWorldEntryId] = useState<string | null>(null);
   const [worldEntriesLoading, setWorldEntriesLoading] = useState(false);
 
-  // ========== UI state ==========
-  const [showInspiration, setShowInspiration] = useState(false);
+  // ===== Panel state =====
+  const [panelState, setPanelState] = useState({
+    sidebarOpen: true,
+    aiChatOpen: true,
+    aiChatMinimized: false,
+    contextOpen: false,
+    inspirationOpen: false,
+    mindmapOpen: false,
+  });
 
   const activeChapter = activeChapterId ? chapters.find(ch => ch.id === activeChapterId) ?? null : null;
   const activeOutlineNode = activeOutlineNodeId ? outlineNodes.find(n => n.id === activeOutlineNodeId) ?? null : null;
   const activeCharacter = activeCharacterId ? characters.find(c => c.id === activeCharacterId) ?? null : null;
 
-  // ========== Loaders ==========
+  // ===== Loaders =====
   const loadEntities = useCallback(async (projectId: string) => {
     setChaptersLoading(true); setOutlineLoading(true);
     setCharactersLoading(true); setWorldEntriesLoading(true);
@@ -64,29 +64,22 @@ const App: React.FC = () => {
       if (olRes.success && olRes.data) setOutlineNodes(olRes.data);
       if (ch2Res.success && ch2Res.data) setCharacters(ch2Res.data);
       if (weRes.success && weRes.data) setWorldEntries(weRes.data);
-    } catch (err) { console.error('Failed to load entities:', err); }
+    } catch (err) { console.error(err); }
     finally { setChaptersLoading(false); setOutlineLoading(false); setCharactersLoading(false); setWorldEntriesLoading(false); }
   }, []);
 
   useEffect(() => {
-    if (activeProject) { loadEntities(activeProject.id); }
-    else {
-      setChapters([]); setActiveChapterId(null); setOutlineNodes([]); setActiveOutlineNodeId(null);
-      setCharacters([]); setActiveCharacterId(null); setWorldEntries([]); setActiveWorldEntryId(null);
-    }
+    if (activeProject) loadEntities(activeProject.id);
+    else { setChapters([]); setActiveChapterId(null); setOutlineNodes([]); setActiveOutlineNodeId(null);
+      setCharacters([]); setActiveCharacterId(null); setWorldEntries([]); setActiveWorldEntryId(null); }
   }, [activeProject?.id, loadEntities]);
 
-  // ========== Chapter handlers ==========
+  // ===== Handlers (abbreviated) =====
   const handleCreateChapter = useCallback(async (title: string) => {
     if (!activeProject) return;
     const res = await window.electronAPI.invoke('db:chapter:create', { projectId: activeProject.id, title }) as any;
     if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
   }, [activeProject]);
-
-  const handleSelectProject = useCallback((id: string) => {
-    setActiveProjectId(id);
-    // Loading of entities is handled by the useEffect on activeProject?.id
-  }, [setActiveProjectId]);
 
   const handleDeleteChapter = useCallback(async (id: string) => {
     await window.electronAPI.invoke('db:chapter:remove', id);
@@ -104,7 +97,6 @@ const App: React.FC = () => {
     } finally { setSaving(false); }
   }, []);
 
-  // ========== Outline handlers ==========
   const handleCreateOutlineNode = useCallback(async (parentId: string | null, title: string) => {
     if (!activeProject) return;
     const res = await window.electronAPI.invoke('db:outline:create', { projectId: activeProject.id, parentId, title }) as any;
@@ -122,72 +114,80 @@ const App: React.FC = () => {
     setOutlineNodes(prev => prev.map(n => n.id === id ? { ...n, title, summary } : n));
   }, []);
 
-  // ========== Character handlers ==========
   const handleCreateCharacter = useCallback(async () => {
     if (!activeProject) return;
     const res = await window.electronAPI.invoke('db:character:create', { projectId: activeProject.id, name: '新角色' }) as any;
     if (res.success && res.data) { setCharacters(prev => [...prev, res.data]); setActiveCharacterId(res.data.id); }
   }, [activeProject]);
 
-  const handleSelectCharacter = useCallback((id: string) => {
-    setActiveCharacterId(id);
-  }, []);
-
   const handleSaveCharacter = useCallback(async (data: Partial<Character>) => {
     if (!activeCharacterId) return;
     const res = await window.electronAPI.invoke('db:character:update', { id: activeCharacterId, ...data }) as any;
-    if (res.success && res.data) {
-      setCharacters(prev => prev.map(c => c.id === res.data.id ? res.data : c));
-    }
+    if (res.success && res.data) setCharacters(prev => prev.map(c => c.id === res.data.id ? res.data : c));
   }, [activeCharacterId]);
 
-  // ========== World Entry handlers ==========
   const handleCreateWorldEntry = useCallback(async (category: WorldEntry['category']) => {
     if (!activeProject) return;
     const res = await window.electronAPI.invoke('db:worldEntry:create', { projectId: activeProject.id, category, name: '新条目' }) as any;
     if (res.success && res.data) { setWorldEntries(prev => [...prev, res.data]); setActiveWorldEntryId(res.data.id); }
   }, [activeProject]);
 
-  // ========== Menu events ==========
-  useEffect(() => {
-    const handleMenuCreate = () => setShowCreateDialog(true);
-    window.electronAPI.on('menu:create-project', handleMenuCreate);
-    return () => { window.electronAPI.removeListener('menu:create-project', handleMenuCreate); };
-  }, []);
-
-  // Keyboard shortcut: Ctrl+Shift+I for inspiration panel
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'I') {
-        e.preventDefault();
-        setShowInspiration(prev => !prev);
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
   const handleCreateProject = async (input: CreateProjectInput) => {
     const project = await createProject(input);
     setShowCreateDialog(false);
     if (project) {
-      // Auto-create first chapter so the editor isn't blank
       try {
-        const res = await window.electronAPI.invoke('db:chapter:create', {
-          projectId: project.id,
-          title: '第一章',
-        }) as any;
-        if (res.success && res.data) {
-          setChapters([res.data]);
-          setActiveChapterId(res.data.id);
-        }
+        const res = await window.electronAPI.invoke('db:chapter:create', { projectId: project.id, title: '第一章' }) as any;
+        if (res.success && res.data) { setChapters([res.data]); setActiveChapterId(res.data.id); }
       } catch {}
     }
   };
 
+  // === Menu events ===
+  useEffect(() => {
+    const h = () => setShowCreateDialog(true);
+    window.electronAPI.on('menu:create-project', h);
+    return () => { window.electronAPI.removeListener('menu:create-project', h); };
+  }, []);
+
+  // === Keyboard shortcuts ===
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
+        if (e.key === 'I') { e.preventDefault(); setPanelState(p => ({ ...p, inspirationOpen: !p.inspirationOpen })); }
+        if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
+        if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
+      }
+      if (e.key === 'Escape') {
+        setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false, inspirationOpen: false, contextOpen: false }));
+      }
+    };
+    window.addEventListener('keydown', h);
+    return () => window.removeEventListener('keydown', h);
+  }, []);
+
+  // === AI context ===
+  const contextMessages = useMemo(() => {
+    if (!activeProject) return [];
+    return ContextBuilder.build({
+      project: activeProject,
+      currentChapter: activeChapter ?? undefined,
+      characters: characters.length > 0 ? characters : undefined,
+      worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
+      outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
+    });
+  }, [activeProject?.id, activeChapter?.id, characters.length, worldEntries.length, outlineNodes.length]);
+
   return (
     <>
-      <Layout
+      <DockLayout
+        panelState={panelState}
+        onToggleSidebar={() => setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen }))}
+        onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
+        onMinimizeAiChat={() => setPanelState(p => ({ ...p, aiChatMinimized: !p.aiChatMinimized }))}
+        onToggleContext={() => setPanelState(p => ({ ...p, contextOpen: !p.contextOpen }))}
+        onToggleInspiration={() => setPanelState(p => ({ ...p, inspirationOpen: !p.inspirationOpen }))}
+        onToggleMindmap={() => setPanelState(p => ({ ...p, mindmapOpen: !p.mindmapOpen }))}
         sidebar={
           <Sidebar
             projects={projects}
@@ -212,7 +212,7 @@ const App: React.FC = () => {
             characters={characters}
             worldEntries={worldEntries}
             activeCharacterId={activeCharacterId}
-            onSelectCharacter={handleSelectCharacter}
+            onSelectCharacter={setActiveCharacterId}
             onCreateCharacter={handleCreateCharacter}
             charactersLoading={charactersLoading}
             activeWorldEntryId={activeWorldEntryId}
@@ -221,8 +221,8 @@ const App: React.FC = () => {
             worldEntriesLoading={worldEntriesLoading}
           />
         }
-        main={
-          <MainArea
+        writingArea={
+          <WritingArea
             activeProject={activeProject}
             chapters={chapters}
             activeChapter={activeChapter}
@@ -231,20 +231,13 @@ const App: React.FC = () => {
             onDeleteChapter={handleDeleteChapter}
             onSaveChapter={handleSaveChapter}
             saving={saving}
-            showInspiration={showInspiration}
-            onCloseInspiration={() => setShowInspiration(false)}
+          />
+        }
+        aiChat={
+          <AIChatPanel
+            contextMessages={contextMessages}
             projectId={activeProject?.id ?? null}
-            contextMessages={useMemo(() => {
-              if (!activeProject) return [];
-              const ctx = ContextBuilder.build({
-                project: activeProject,
-                currentChapter: activeChapter ?? undefined,
-                characters: characters.length > 0 ? characters : undefined,
-                worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
-                outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
-              });
-              return ctx;
-            }, [activeProject?.id, activeChapter?.id, characters.length, worldEntries.length, outlineNodes.length])}
+            onSaveMessage={() => {}}
           />
         }
         contextPanel={
@@ -255,10 +248,24 @@ const App: React.FC = () => {
             characters={characters}
             worldEntries={worldEntries}
             relationships={[]}
-            selectedCharacter={activeCharacter}
-            onSelectCharacter={(ch) => ch && setActiveCharacterId(ch.id)}
+            selectedCharacter={null}
+            onSelectCharacter={() => {}}
             onSaveCharacter={handleSaveCharacter}
             onCloseCharacter={() => setActiveCharacterId(null)}
+          />
+        }
+        inspirationPanel={
+          <InspirationPanel
+            open={true}
+            onClose={() => setPanelState(p => ({ ...p, inspirationOpen: false }))}
+            onSendToChat={(r) => console.log('Send to chat:', r.title)}
+            onSaveAsMaterial={(r) => console.log('Save:', r.title)}
+          />
+        }
+        mindmapPanel={
+          <MindMap
+            characters={characters}
+            onSelectCharacter={setActiveCharacterId}
           />
         }
       />
