@@ -21,11 +21,10 @@ function createWindow(): void {
     },
   });
 
-  // In dev, try to connect to the Vite dev server
-  if (process.env.NODE_ENV === 'development') {
+  const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+  if (isDev) {
     mainWindow.loadURL('http://localhost:5173');
   } else {
-    // Production: load the built index.html
     mainWindow.loadFile(path.join(__dirname, '../../../renderer/index.html'));
   }
 
