@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import Layout from './components/Layout';
 import Sidebar from './components/Sidebar';
-import WritingArea from './components/WritingArea';
+import MainArea from './components/MainArea';
 import ContextPanel from './components/ContextPanel';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import { useProject } from './hooks/useProject';
-import type { CreateProjectInput, Chapter, OutlineNode } from './types';
+import type { CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
 
 const App: React.FC = () => {
   const {
     projects,
     activeProject,
     loading: projectsLoading,
-    creating,
+    creating: creatingProject,
     setActiveProjectId,
     createProject,
     deleteProject,
@@ -20,159 +20,145 @@ const App: React.FC = () => {
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
 
-  // Chapter state
+  // ========== Chapter state ==========
   const [chapters, setChapters] = useState<Chapter[]>([]);
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  // Outline state
+  // ========== Outline state ==========
   const [outlineNodes, setOutlineNodes] = useState<OutlineNode[]>([]);
   const [activeOutlineNodeId, setActiveOutlineNodeId] = useState<string | null>(null);
   const [outlineLoading, setOutlineLoading] = useState(false);
 
-  const activeChapter = activeChapterId
-    ? chapters.find(ch => ch.id === activeChapterId) ?? null
-    : null;
+  // ========== Character state ==========
+  const [characters, setCharacters] = useState<Character[]>([]);
+  const [activeCharacterId, setActiveCharacterId] = useState<string | null>(null);
+  const [charactersLoading, setCharactersLoading] = useState(false);
 
-  // ===== Chapters =====
-  const loadChapters = useCallback(async (projectId: string) => {
-    setChaptersLoading(true);
+  // ========== World Entry state ==========
+  const [worldEntries, setWorldEntries] = useState<WorldEntry[]>([]);
+  const [activeWorldEntryId, setActiveWorldEntryId] = useState<string | null>(null);
+  const [worldEntriesLoading, setWorldEntriesLoading] = useState(false);
+
+  // ========== UI state ==========
+  const [showInspiration, setShowInspiration] = useState(false);
+
+  const activeChapter = activeChapterId ? chapters.find(ch => ch.id === activeChapterId) ?? null : null;
+  const activeOutlineNode = activeOutlineNodeId ? outlineNodes.find(n => n.id === activeOutlineNodeId) ?? null : null;
+  const activeCharacter = activeCharacterId ? characters.find(c => c.id === activeCharacterId) ?? null : null;
+
+  // ========== Loaders ==========
+  const loadEntities = useCallback(async (projectId: string) => {
+    setChaptersLoading(true); setOutlineLoading(true);
+    setCharactersLoading(true); setWorldEntriesLoading(true);
     try {
-      const result = await window.electronAPI.invoke('db:chapter:findByProject', projectId) as any;
-      if (result.success && result.data) {
-        setChapters(result.data);
-        if (result.data.length > 0 && !activeChapterId) {
-          setActiveChapterId(result.data[0].id);
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load chapters:', err);
-    } finally {
-      setChaptersLoading(false);
-    }
+      const [chRes, olRes, ch2Res, weRes] = await Promise.all([
+        window.electronAPI.invoke('db:chapter:findByProject', projectId) as any,
+        window.electronAPI.invoke('db:outline:findByProject', projectId) as any,
+        window.electronAPI.invoke('db:character:findByProject', projectId) as any,
+        window.electronAPI.invoke('db:worldEntry:findByProject', projectId) as any,
+      ]);
+      if (chRes.success && chRes.data) { setChapters(chRes.data); if (chRes.data.length > 0) setActiveChapterId(chRes.data[0].id); }
+      if (olRes.success && olRes.data) setOutlineNodes(olRes.data);
+      if (ch2Res.success && ch2Res.data) setCharacters(ch2Res.data);
+      if (weRes.success && weRes.data) setWorldEntries(weRes.data);
+    } catch (err) { console.error('Failed to load entities:', err); }
+    finally { setChaptersLoading(false); setOutlineLoading(false); setCharactersLoading(false); setWorldEntriesLoading(false); }
   }, []);
 
+  useEffect(() => {
+    if (activeProject) { loadEntities(activeProject.id); }
+    else {
+      setChapters([]); setActiveChapterId(null); setOutlineNodes([]); setActiveOutlineNodeId(null);
+      setCharacters([]); setActiveCharacterId(null); setWorldEntries([]); setActiveWorldEntryId(null);
+    }
+  }, [activeProject?.id, loadEntities]);
+
+  // ========== Chapter handlers ==========
   const handleCreateChapter = useCallback(async (title: string) => {
     if (!activeProject) return;
-    try {
-      const result = await window.electronAPI.invoke('db:chapter:create', {
-        projectId: activeProject.id,
-        title,
-      }) as any;
-      if (result.success && result.data) {
-        await loadChapters(activeProject.id);
-        setActiveChapterId(result.data.id);
-      }
-    } catch (err) {
-      console.error('Failed to create chapter:', err);
-    }
-  }, [activeProject, loadChapters]);
+    const res = await window.electronAPI.invoke('db:chapter:create', { projectId: activeProject.id, title }) as any;
+    if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
+  }, [activeProject]);
 
   const handleDeleteChapter = useCallback(async (id: string) => {
-    try {
-      await window.electronAPI.invoke('db:chapter:remove', id);
-      setChapters(prev => prev.filter(ch => ch.id !== id));
-      if (activeChapterId === id) {
-        const remaining = chapters.filter(ch => ch.id !== id);
-        setActiveChapterId(remaining.length > 0 ? remaining[0]?.id : null);
-      }
-    } catch (err) {
-      console.error('Failed to delete chapter:', err);
-    }
+    await window.electronAPI.invoke('db:chapter:remove', id);
+    setChapters(prev => prev.filter(ch => ch.id !== id));
+    if (activeChapterId === id) { const r = chapters.filter(ch => ch.id !== id); setActiveChapterId(r[0]?.id ?? null); }
   }, [activeChapterId, chapters]);
 
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
     try {
-      const chineseChars = (content.match(/[一-鿿㐀-䶿]/g) || []).length;
-      const plainText = content.replace(/<[^>]*>/g, '').replace(/\s+/g, '');
-      const wordCount = chineseChars || plainText.length;
+      const cjk = (content.match(/[一-鿿㐀-䶿]/g) || []).length;
+      const wordCount = cjk || content.replace(/<[^>]*>/g, '').replace(/\s+/g, '').length;
       await window.electronAPI.invoke('db:chapter:update', { id, content, wordCount });
-      setChapters(prev => prev.map(ch =>
-        ch.id === id ? { ...ch, content, wordCount } : ch
-      ));
-    } catch (err) {
-      console.error('Failed to save chapter:', err);
-    } finally {
-      setSaving(false);
-    }
+      setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content, wordCount } : ch));
+    } finally { setSaving(false); }
   }, []);
 
-  // ===== Outline =====
-  const loadOutline = useCallback(async (projectId: string) => {
-    setOutlineLoading(true);
-    try {
-      const result = await window.electronAPI.invoke('db:outline:findByProject', projectId) as any;
-      if (result.success && result.data) {
-        setOutlineNodes(result.data);
-      }
-    } catch (err) {
-      console.error('Failed to load outline:', err);
-    } finally {
-      setOutlineLoading(false);
-    }
-  }, []);
-
+  // ========== Outline handlers ==========
   const handleCreateOutlineNode = useCallback(async (parentId: string | null, title: string) => {
     if (!activeProject) return;
-    try {
-      const result = await window.electronAPI.invoke('db:outline:create', {
-        projectId: activeProject.id,
-        parentId,
-        title,
-      }) as any;
-      if (result.success && result.data) {
-        await loadOutline(activeProject.id);
-        setActiveOutlineNodeId(result.data.id);
-      }
-    } catch (err) {
-      console.error('Failed to create outline node:', err);
-    }
-  }, [activeProject, loadOutline]);
+    const res = await window.electronAPI.invoke('db:outline:create', { projectId: activeProject.id, parentId, title }) as any;
+    if (res.success && res.data) { setOutlineNodes(prev => [...prev, res.data]); setActiveOutlineNodeId(res.data.id); }
+  }, [activeProject]);
 
   const handleDeleteOutlineNode = useCallback(async (id: string) => {
-    try {
-      await window.electronAPI.invoke('db:outline:remove', id);
-      setOutlineNodes(prev => prev.filter(n => n.id !== id));
-      if (activeOutlineNodeId === id) {
-        setActiveOutlineNodeId(null);
-      }
-    } catch (err) {
-      console.error('Failed to delete outline node:', err);
-    }
+    await window.electronAPI.invoke('db:outline:remove', id);
+    setOutlineNodes(prev => prev.filter(n => n.id !== id));
+    if (activeOutlineNodeId === id) setActiveOutlineNodeId(null);
   }, [activeOutlineNodeId]);
 
   const handleUpdateOutlineNode = useCallback(async (id: string, title: string, summary: string) => {
-    try {
-      await window.electronAPI.invoke('db:outline:update', { id, title, summary });
-      setOutlineNodes(prev => prev.map(n =>
-        n.id === id ? { ...n, title, summary } : n
-      ));
-    } catch (err) {
-      console.error('Failed to update outline node:', err);
-    }
+    await window.electronAPI.invoke('db:outline:update', { id, title, summary });
+    setOutlineNodes(prev => prev.map(n => n.id === id ? { ...n, title, summary } : n));
   }, []);
 
-  // ===== Effects =====
-  useEffect(() => {
-    if (activeProject) {
-      loadChapters(activeProject.id);
-      loadOutline(activeProject.id);
-    } else {
-      setChapters([]);
-      setActiveChapterId(null);
-      setOutlineNodes([]);
-      setActiveOutlineNodeId(null);
-    }
-  }, [activeProject?.id, loadChapters, loadOutline]);
+  // ========== Character handlers ==========
+  const handleCreateCharacter = useCallback(async () => {
+    if (!activeProject) return;
+    const res = await window.electronAPI.invoke('db:character:create', { projectId: activeProject.id, name: '新角色' }) as any;
+    if (res.success && res.data) { setCharacters(prev => [...prev, res.data]); setActiveCharacterId(res.data.id); }
+  }, [activeProject]);
 
+  const handleSelectCharacter = useCallback((id: string) => {
+    setActiveCharacterId(id);
+  }, []);
+
+  const handleSaveCharacter = useCallback(async (data: Partial<Character>) => {
+    if (!activeCharacterId) return;
+    const res = await window.electronAPI.invoke('db:character:update', { id: activeCharacterId, ...data }) as any;
+    if (res.success && res.data) {
+      setCharacters(prev => prev.map(c => c.id === res.data.id ? res.data : c));
+    }
+  }, [activeCharacterId]);
+
+  // ========== World Entry handlers ==========
+  const handleCreateWorldEntry = useCallback(async (category: WorldEntry['category']) => {
+    if (!activeProject) return;
+    const res = await window.electronAPI.invoke('db:worldEntry:create', { projectId: activeProject.id, category, name: '新条目' }) as any;
+    if (res.success && res.data) { setWorldEntries(prev => [...prev, res.data]); setActiveWorldEntryId(res.data.id); }
+  }, [activeProject]);
+
+  // ========== Menu events ==========
   useEffect(() => {
     const handleMenuCreate = () => setShowCreateDialog(true);
     window.electronAPI.on('menu:create-project', handleMenuCreate);
-    return () => {
-      window.electronAPI.removeListener('menu:create-project', handleMenuCreate);
+    return () => { window.electronAPI.removeListener('menu:create-project', handleMenuCreate); };
+  }, []);
+
+  // Keyboard shortcut: Ctrl+Shift+I for inspiration panel
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'I') {
+        e.preventDefault();
+        setShowInspiration(prev => !prev);
+      }
     };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
   const handleCreateProject = async (input: CreateProjectInput) => {
@@ -204,10 +190,20 @@ const App: React.FC = () => {
             onDeleteOutlineNode={handleDeleteOutlineNode}
             onUpdateOutlineNode={handleUpdateOutlineNode}
             outlineLoading={outlineLoading}
+            characters={characters}
+            worldEntries={worldEntries}
+            activeCharacterId={activeCharacterId}
+            onSelectCharacter={handleSelectCharacter}
+            onCreateCharacter={handleCreateCharacter}
+            charactersLoading={charactersLoading}
+            activeWorldEntryId={activeWorldEntryId}
+            onSelectWorldEntry={setActiveWorldEntryId}
+            onCreateWorldEntry={handleCreateWorldEntry}
+            worldEntriesLoading={worldEntriesLoading}
           />
         }
         main={
-          <WritingArea
+          <MainArea
             activeProject={activeProject}
             chapters={chapters}
             activeChapter={activeChapter}
@@ -216,16 +212,31 @@ const App: React.FC = () => {
             onDeleteChapter={handleDeleteChapter}
             onSaveChapter={handleSaveChapter}
             saving={saving}
+            showInspiration={showInspiration}
+            onCloseInspiration={() => setShowInspiration(false)}
           />
         }
-        contextPanel={<ContextPanel activeProject={activeProject} />}
+        contextPanel={
+          <ContextPanel
+            activeProject={activeProject}
+            activeChapter={activeChapter}
+            activeOutlineNode={activeOutlineNode}
+            characters={characters}
+            worldEntries={worldEntries}
+            relationships={[]}
+            selectedCharacter={activeCharacter}
+            onSelectCharacter={(ch) => ch && setActiveCharacterId(ch.id)}
+            onSaveCharacter={handleSaveCharacter}
+            onCloseCharacter={() => setActiveCharacterId(null)}
+          />
+        }
       />
 
       <CreateProjectDialog
         open={showCreateDialog}
         onClose={() => setShowCreateDialog(false)}
         onCreate={handleCreateProject}
-        creating={creating}
+        creating={creatingProject}
       />
     </>
   );
