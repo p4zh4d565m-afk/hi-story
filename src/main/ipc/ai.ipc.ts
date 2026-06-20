@@ -23,7 +23,18 @@ export function registerAIIpc(): void {
       const response = await provider.chat(messages, options);
       return { success: true, data: response };
     } catch (err: any) {
-      return { success: false, error: err.message };
+      // Catch permission / 403 errors
+      const msg = err.message || err.statusText || '';
+      if (msg.includes('403') || msg.includes('forbidden') || msg.includes('Forbidden')) {
+        return { success: false, error: 'API 拒绝访问 (403 Forbidden)。请检查：\n1. API Key 是否正确\n2. 账户是否有余额/额度\n3. API Key 是否有该模型的权限' };
+      }
+      if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('unauthorized')) {
+        return { success: false, error: 'API Key 无效 (401 Unauthorized)。请在 ⚙️ 中检查 API Key 是否正确' };
+      }
+      if (msg.includes('429') || msg.includes('rate') || msg.includes('Rate')) {
+        return { success: false, error: 'API 请求频率过高 (429)。请稍等片刻再试' };
+      }
+      return { success: false, error: err.message || 'AI 请求失败' };
     }
   });
 
