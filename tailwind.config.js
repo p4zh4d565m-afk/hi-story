@@ -4,8 +4,9 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        sidebar: { DEFAULT: '#1e1e2e', hover: '#2a2a3c', active: '#363650' },
-        accent: '#7c5cfc',
+        sidebar: { DEFAULT: '#1e2621', hover: '#2a352c', active: '#374938' },
+        accent: '#7fb380',
+        'accent-hover': '#669468',
       },
     },
   },

@@ -1,25 +1,15 @@
 import { ipcMain } from 'electron';
-import { getDb } from '../db/connection';
 import { ProviderFactory } from '../ai/provider-factory';
-import type { AIProvider, StreamCallbacks, ChatMessage, ChatOptions, ProviderConfig } from '../ai/provider';
+import type { ChatMessage, ChatOptions, ProviderConfig } from '../ai/provider';
 
-// Store active provider instances
-const providerCache = new Map<string, AIProvider>();
-
-function getProvider(config: ProviderConfig): AIProvider {
-  const key = `${config.name}:${config.model}`;
-  if (!providerCache.has(key)) {
-    const provider = ProviderFactory.create(config);
-    providerCache.set(key, provider);
-  }
-  return providerCache.get(key)!;
-}
+// Provider caching is handled by ProviderFactory internally.
+// Always use ProviderFactory.create() for singleton, invalidate via ProviderFactory.invalidateCache().
 
 export function registerAIIpc(): void {
   // Send chat message (non-streaming)
   ipcMain.handle('ai:chat', async (_event, config: ProviderConfig, messages: ChatMessage[], options?: ChatOptions) => {
     try {
-      const provider = getProvider(config);
+      const provider = ProviderFactory.create(config);
       const response = await provider.chat(messages, options);
       return { success: true, data: response };
     } catch (err: any) {
@@ -42,12 +32,12 @@ export function registerAIIpc(): void {
   // Returns a stream ID, tokens are sent via webContents events
   ipcMain.handle('ai:chatStream', async (event, config: ProviderConfig, messages: ChatMessage[], options?: ChatOptions) => {
     try {
-      const provider = getProvider(config);
+      const provider = ProviderFactory.create(config);
       const sender = event.sender;
       const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
       // Send stream events back to renderer
-      const callbacks: StreamCallbacks = {
+      const callbacks = {
         onToken: (token: string) => {
           sender.send('ai:streamToken', streamId, token);
         },
@@ -59,8 +49,10 @@ export function registerAIIpc(): void {
         },
       };
 
-      // Start streaming (don't await — run in background)
-      provider.chatStream(messages, callbacks, options);
+      // Start streaming (don't await — run in background, catch rejections)
+      provider.chatStream(messages, callbacks, options).catch((err) => {
+        console.error('chatStream background error:', err);
+      });
 
       return { success: true, data: { streamId } };
     } catch (err: any) {
@@ -71,7 +63,7 @@ export function registerAIIpc(): void {
   // Validate API key
   ipcMain.handle('ai:validateKey', async (_event, config: ProviderConfig) => {
     try {
-      const provider = getProvider(config);
+      const provider = ProviderFactory.create(config);
       const valid = await provider.validateApiKey();
       return { success: true, data: valid };
     } catch (err: any) {

@@ -15,6 +15,11 @@ export function getDb(): Database.Database {
   if (db) return db;
 
   const dbPath = getDbPath();
+  // Ensure directory exists
+  const dir = path.dirname(dbPath);
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 
   db = new Database(dbPath);
 
@@ -31,6 +36,7 @@ export function getDb(): Database.Database {
  * The literary DB contains FTS5 indexes for the 5-layer library.
  */
 export function attachLiteraryDb(): void {
+  if (litDbAttached) return;
   const litDbPath = getLiteraryDbPath();
   if (!fs.existsSync(litDbPath)) {
     console.warn('Literary database not found at:', litDbPath);
@@ -41,6 +47,7 @@ export function attachLiteraryDb(): void {
     const mainDb = getDb();
     // Attach as 'lit' so we can query: SELECT ... FROM lit.fts_dictionary ...
     mainDb.prepare(`ATTACH DATABASE ? AS lit`).run(litDbPath);
+    litDbAttached = true;
     console.log('Literary database attached:', litDbPath);
   } catch (err) {
     console.error('Failed to attach literary DB:', err);
@@ -63,23 +70,28 @@ export function getLiteraryDbPath(): string {
   return userPath;
 }
 
-export function getLiteraryDb(): Database.Database {
+let litDbAttached = false;
+
+export function getLiteraryDb(): Database.Database | null {
   if (litDb) return litDb;
 
   const litDbPath = getLiteraryDbPath();
-  if (!fs.existsSync(litDbPath)) return null!;
+  if (!fs.existsSync(litDbPath)) return null;
 
   litDb = new Database(litDbPath, { readonly: true });
   return litDb;
 }
 
 export function closeDb(): void {
+  if (db) {
+    try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch {}
+  }
   if (litDb) {
-    litDb.close();
+    try { litDb.close(); } catch {}
     litDb = null;
   }
   if (db) {
-    db.close();
+    try { db.close(); } catch {}
     db = null;
   }
 }

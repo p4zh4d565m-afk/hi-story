@@ -40,11 +40,24 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
 
+    let activated = false;
+    let offset = 0;
+    const deadZone = 5;
+
     const handleMouseMove = (ev: MouseEvent) => {
       if (!isResizing.current) return;
       const deltaX = ev.clientX - resizeStartX.current;
+
+      // Dead zone: don't activate until mouse moves past 5px threshold
+      if (!activated) {
+        if (Math.abs(deltaX) < deadZone) return;
+        activated = true;
+        offset = deltaX > 0 ? deadZone : -deadZone;
+      }
+
+      const effectiveDelta = deltaX - offset;
       // Resize from the left (panel is on the right side)
-      const newWidth = Math.max(280, Math.min(800, resizeStartWidth.current - deltaX));
+      const newWidth = Math.max(280, Math.min(800, resizeStartWidth.current - effectiveDelta));
       setPanelWidth(newWidth);
     };
 
@@ -207,7 +220,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
             <button
               type="submit"
               disabled={!form.name.trim()}
-              className="px-6 py-2 text-sm bg-accent text-white rounded hover:bg-purple-600
+              className="px-6 py-2 text-sm bg-accent text-white rounded hover:bg-accent-hover
                          disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               保存

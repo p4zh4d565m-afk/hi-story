@@ -3,7 +3,13 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [
+    react(),
+    {
+      name: 'remove-crossorigin-for-file-protocol',
+      transformIndexHtml: (html) => html.replace(/\s*crossorigin\s*/g, ' '),
+    },
+  ],
   root: 'src/renderer',
   base: './',
   build: {

@@ -22,6 +22,33 @@ export function createAppMenu(mainWindow: BrowserWindow): void {
             mainWindow.webContents.send('menu:create-project');
           },
         },
+        {
+          label: '导入小说...',
+          accelerator: 'CmdOrCtrl+I',
+          click: () => {
+            mainWindow.webContents.send('menu:import-novel');
+          },
+        },
+        { type: 'separator' },
+        {
+          label: '导出当前项目 (JSON)',
+          click: () => {
+            mainWindow.webContents.send('menu:export-project-json');
+          },
+        },
+        {
+          label: '导出全部项目 (JSON)',
+          click: () => {
+            mainWindow.webContents.send('menu:export-all-json');
+          },
+        },
+        {
+          label: '备份数据库',
+          accelerator: 'CmdOrCtrl+Shift+B',
+          click: () => {
+            mainWindow.webContents.send('menu:backup-db');
+          },
+        },
         { type: 'separator' },
         isMac ? { role: 'close' } : { role: 'quit', label: '退出' },
       ],

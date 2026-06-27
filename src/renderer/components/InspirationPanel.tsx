@@ -1,11 +1,23 @@
 import React, { useState, useCallback } from 'react';
 import type { SearchResult } from '../types/search';
 
+interface SearchTab {
+  id: string;
+  query: string;
+  results: SearchResult[];
+  isSearching: boolean;
+}
+
 interface InspirationPanelProps {
   open: boolean;
   onClose: () => void;
   onSendToChat?: (result: SearchResult) => void;
   onSaveAsMaterial?: (result: SearchResult) => void;
+  /** Text to auto-search when panel opens (from context menu) */
+  pendingSearchText?: string;
+  pendingSave?: SearchResult | null;
+  onMaterialSaved?: () => void;
+  onOpenMaterialPanel?: () => void;
 }
 
 // Layer definitions
@@ -36,40 +48,90 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
   onClose,
   onSendToChat,
   onSaveAsMaterial,
+  pendingSearchText,
+  pendingSave,
+  onMaterialSaved,
+  onOpenMaterialPanel,
 }) => {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<SearchResult[]>([]);
-  const [isSearching, setIsSearching] = useState(false);
+  const [savedMaterialId, setSavedMaterialId] = useState<string | null>(null);
   const [activeResultId, setActiveResultId] = useState<string | null>(null);
   const [activeLayers, setActiveLayers] = useState<Set<string>>(
     new Set(LAYERS.map(l => l.name))
   );
   const [showHowToUse, setShowHowToUse] = useState(true);
 
-  const handleSearch = useCallback(async () => {
-    const q = query.trim();
-    if (!q) return;
+  // Tab-based search results accumulation
+  const [tabs, setTabs] = useState<SearchTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
-    setIsSearching(true);
+  const activeTab = tabs.find(t => t.id === activeTabId) ?? null;
+  const currentResults = activeTab?.results || [];
+  const isSearching = activeTab?.isSearching || false;
+
+  // Auto-search when pendingSearchText is provided
+  const searchRef = React.useRef(query);
+  searchRef.current = query;
+
+  React.useEffect(() => {
+    if (pendingSearchText && pendingSearchText.trim()) {
+      setQuery(pendingSearchText);
+    }
+  }, [pendingSearchText]);
+
+  // Auto-execute search when query changes from external trigger
+  React.useEffect(() => {
+    if (query && query === pendingSearchText) {
+      const q = query.trim();
+      if (!q) return;
+      executeSearch(q);
+    }
+  }, [pendingSearchText]);
+
+  const executeSearch = useCallback(async (q: string) => {
+    const layers = Array.from(activeLayers);
+    const tabId = Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+
+    // Add a new tab
+    const newTab: SearchTab = { id: tabId, query: q, results: [], isSearching: true };
+    setTabs(prev => [...prev, newTab]);
+    setActiveTabId(tabId);
+
     try {
       const result = await window.electronAPI.invoke('search:query', {
         query: q,
-        layers: Array.from(activeLayers),
+        layers,
         maxResultsPerLayer: 10,
       }) as any;
 
-      if (result.success && result.data) {
-        setResults(result.data);
-      } else {
-        setResults([]);
-      }
+      setTabs(prev => prev.map(t =>
+        t.id === tabId
+          ? { ...t, results: result.success && result.data ? result.data : [], isSearching: false }
+          : t
+      ));
     } catch (err) {
       console.error('Search failed:', err);
-      setResults([]);
-    } finally {
-      setIsSearching(false);
+      setTabs(prev => prev.map(t =>
+        t.id === tabId ? { ...t, results: [], isSearching: false } : t
+      ));
     }
-  }, [query, activeLayers]);
+  }, [activeLayers]);
+
+  const handleSearch = useCallback(async () => {
+    const q = query.trim();
+    if (!q) return;
+    executeSearch(q);
+  }, [query, executeSearch]);
+
+  const closeTab = useCallback((tabId: string) => {
+    setTabs(prev => {
+      const next = prev.filter(t => t.id !== tabId);
+      if (activeTabId === tabId) {
+        setActiveTabId(next[0]?.id ?? null);
+      }
+      return next;
+    });
+  }, [activeTabId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') handleSearch();
@@ -83,14 +145,31 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
     });
   };
 
-  // Results grouped by layer
+  // Handle material save
+  const handleSaveAsMaterial = useCallback(async (result: SearchResult) => {
+    try {
+      const res = await window.electronAPI.invoke('db:material:create', {
+        title: result.title,
+        content: `${result.snippet}\n\n${result.content || ''}`,
+        sourceLayer: result.layer,
+        url: result.source || null,
+        tags: [result.layer, result.layerDisplay],
+      }) as any;
+      if (res.success) {
+        setSavedMaterialId(res.data.id);
+        onMaterialSaved?.();
+      }
+    } catch {}
+  }, [onMaterialSaved]);
+
+  if (!open) return null;
+
+  // Group current results by layer for rendering
   const resultsByLayer = new Map<string, SearchResult[]>();
-  for (const r of results) {
+  for (const r of currentResults) {
     if (!resultsByLayer.has(r.layer)) resultsByLayer.set(r.layer, []);
     resultsByLayer.get(r.layer)!.push(r);
   }
-
-  if (!open) return null;
 
   return (
     <div className="h-full flex flex-col bg-gray-900 border-l border-gray-700">
@@ -174,7 +253,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
           <button
             onClick={handleSearch}
             disabled={isSearching || !query.trim()}
-            className="px-3 py-1.5 bg-accent text-white text-xs rounded hover:bg-purple-600
+            className="px-3 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             {isSearching ? '...' : '搜索'}
@@ -198,7 +277,39 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
             </button>
           ))}
         </div>
+        {/* Open material panel */}
+        <button
+          onClick={onOpenMaterialPanel}
+          className="mt-2 text-[10px] text-gray-500 hover:text-accent transition-colors flex items-center gap-1"
+        >
+          📦 素材管理
+        </button>
       </div>
+
+      {/* Search tabs */}
+      {tabs.length > 0 && (
+        <div className="flex items-center gap-0.5 px-2 py-1.5 bg-gray-800/50 border-b border-gray-700 overflow-x-auto">
+          {tabs.map(t => (
+            <div key={t.id} className="flex items-center gap-0.5 flex-shrink-0">
+              <button
+                onClick={() => setActiveTabId(t.id)}
+                className={`px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors ${
+                  t.id === activeTabId
+                    ? 'bg-accent text-white'
+                    : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                }`}
+              >
+                🔍 {t.query.slice(0, 12)}
+                {t.isSearching ? ' ...' : ` (${t.results.length})`}
+              </button>
+              <button
+                onClick={() => closeTab(t.id)}
+                className="text-gray-600 hover:text-red-400 text-[8px] px-0.5"
+              >×</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Results */}
       <div className="flex-1 overflow-y-auto">
@@ -212,7 +323,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
           </div>
         )}
 
-        {!isSearching && query && results.length === 0 && (
+        {!isSearching && query && tabs.length === 0 && currentResults.length === 0 && (
           <div className="px-4 py-8 text-center text-gray-600 text-xs">
             <p className="text-lg mb-1">🔍</p>
             <p>没有找到相关结果</p>
@@ -248,9 +359,9 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
                           className="text-[10px] px-2 py-0.5 bg-accent/20 text-accent rounded hover:bg-accent/30 transition-colors"
                         >💬 发到对话</button>
                         <button
-                          onClick={(e) => { e.stopPropagation(); onSaveAsMaterial?.(result); }}
+                          onClick={(e) => { e.stopPropagation(); handleSaveAsMaterial?.(result); }}
                           className="text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded hover:bg-gray-600 transition-colors"
-                        >📌 收藏</button>
+                        >{savedMaterialId ? '📌 已收藏' : '📌 收藏'}</button>
                       </div>
                     )}
                   </div>

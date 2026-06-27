@@ -1,6 +1,5 @@
 import type Database from 'better-sqlite3';
-import { getDb, getLiteraryDb, getLiteraryDbPath } from '../db/connection';
-import fs from 'fs';
+import { getDb, getLiteraryDb } from '../db/connection';
 
 /**
  * FTS5 全文搜索引擎
@@ -43,11 +42,18 @@ export interface SearchOptions {
 
 export class SearchEngine {
   private db: Database.Database;
-  private litDb: Database.Database | null;
+  private litDb: Database.Database | null = null;
 
   constructor(db: Database.Database) {
     this.db = db;
     this.litDb = getLiteraryDb();
+  }
+
+  /** Lazily open the literary DB (cached) */
+  private ensureLitDb(): Database.Database | null {
+    if (this.litDb) return this.litDb;
+    this.litDb = getLiteraryDb();
+    return this.litDb;
   }
 
   /**
@@ -80,18 +86,8 @@ export class SearchEngine {
    * Search a single layer in the literary database
    */
   private searchLayer(query: string, layer: SearchLayer, limit: number): SearchResult[] {
-    if (!this.litDb) {
-      // Try to open the literary DB
-      const litPath = getLiteraryDbPath();
-      if (fs.existsSync(litPath)) {
-        const Database = require('better-sqlite3');
-        this.litDb = new Database(litPath, { readonly: true });
-      } else {
-        return [];
-      }
-    }
-
-    if (!this.litDb) return [];
+    const litDb = this.ensureLitDb();
+    if (!litDb) return [];
 
     try {
       const sanitized = query
@@ -101,67 +97,85 @@ export class SearchEngine {
 
       if (!sanitized) return [];
 
+      // ===== Pinyin detection and auto-conversion =====
+      // Check if the query looks like pinyin (mostly ASCII + tone numbers or marks)
+      const isLikelyPinyin = /^[a-zA-Z0-9\sāáǎàōóǒòēéěèīíǐìūúǔùǖǘǚǜü]+$/.test(sanitized);
+
+      // Build search variants
+      const searchVariants = [sanitized];
+      if (isLikelyPinyin) {
+        // For pinyin input, also search as-is (materials may contain pinyin annotations)
+        // and try common pinyin-to-hanzi via titles that contain pinyin
+        searchVariants.push(sanitized.replace(/\s+/g, ''));
+      }
+
       // First try FTS5 (if table exists)
-      const tableExists = this.litDb.prepare(
+      const tableExists = litDb.prepare(
         "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
       ).get(`fts_${layer.name}`);
 
       if (tableExists) {
-        // FTS5 query needs to use the prefix tokenizer properly
-        // Use simple OR-based query for better CJK support
-        const terms = sanitized.split(/\s+/).filter(w => w.length > 0);
-        // Build OR query for better matching
-        const ftsQuery = terms.map(w => `"${w}"`).join(' OR ');
+        for (const variant of searchVariants) {
+          // FTS5 query needs to use the prefix tokenizer properly
+          const terms = variant.split(/\s+/).filter(w => w.length > 0);
+          const ftsQuery = terms.map(w => `"${w}"`).join(' OR ');
 
-        try {
-          const rows = this.litDb.prepare(`
-            SELECT m.rowid as material_id, m.title, m.content, m.url as source, m.tags,
-                   fts_${layer.name}.rank AS score
-            FROM fts_${layer.name}
-            JOIN materials m ON m.rowid = fts_${layer.name}.rowid AND m.source_layer = ?
-            WHERE fts_${layer.name} MATCH ?
-            ORDER BY rank
-            LIMIT ?
-          `).all(layer.name, ftsQuery, limit) as any[];
+          try {
+            const rows = litDb.prepare(`
+              SELECT m.rowid as material_id, m.title, m.content, m.url as source, m.tags,
+                     fts_${layer.name}.rank AS score
+              FROM fts_${layer.name}
+              JOIN materials m ON m.rowid = fts_${layer.name}.rowid AND m.source_layer = ?
+              WHERE fts_${layer.name} MATCH ?
+              ORDER BY rank
+              LIMIT ?
+            `).all(layer.name, ftsQuery, limit) as any[];
 
-          if (rows.length > 0) {
-            return rows.map((row: any) => ({
-              layer: layer.name,
-              layerDisplay: layer.displayName,
-              layerIcon: layer.icon,
-              title: row.title,
-              content: row.content || '',
-              snippet: this.generateSnippet(row.content || '', sanitized, 150),
-              score: row.score ? Math.abs(row.score) : 0,
-              source: row.source || '',
-              materialId: String(row.material_id || ''),
-            }));
+            if (rows.length > 0) {
+              return rows.map((row: any) => ({
+                layer: layer.name,
+                layerDisplay: layer.displayName,
+                layerIcon: layer.icon,
+                title: row.title,
+                content: row.content || '',
+                snippet: this.generateSnippet(row.content || '', variant, 150),
+                score: row.score ? Math.abs(row.score) : 0,
+                source: row.source || '',
+                materialId: String(row.material_id || ''),
+              }));
+            }
+          } catch {
+            // FTS query failed, fall through to LIKE search
           }
-        } catch {
-          // FTS query failed, fall through to LIKE search
         }
       }
 
       // Fallback: LIKE search
-      const likePattern = `%${sanitized}%`;
-      const rows = this.litDb.prepare(`
-        SELECT rowid as material_id, title, content, url as source, tags
-        FROM materials
-        WHERE source_layer = ? AND (title LIKE ? OR content LIKE ?)
-        LIMIT ?
-      `).all(layer.name, likePattern, likePattern, limit) as any[];
+      for (const variant of searchVariants) {
+        const likePattern = `%${variant}%`;
+        const rows = litDb.prepare(`
+          SELECT rowid as material_id, title, content, url as source, tags
+          FROM materials
+          WHERE source_layer = ? AND (title LIKE ? OR content LIKE ?)
+          LIMIT ?
+        `).all(layer.name, likePattern, likePattern, limit) as any[];
 
-      return rows.map((row: any) => ({
-        layer: layer.name,
-        layerDisplay: layer.displayName,
-        layerIcon: layer.icon,
-        title: row.title || '',
-        content: row.content || '',
-        snippet: this.generateSnippet(row.content || '', sanitized, 150),
-        score: 1,
-        source: row.source || '',
-        materialId: String(row.material_id || ''),
-      }));
+        if (rows.length > 0) {
+          return rows.map((row: any) => ({
+            layer: layer.name,
+            layerDisplay: layer.displayName,
+            layerIcon: layer.icon,
+            title: row.title || '',
+            content: row.content || '',
+            snippet: this.generateSnippet(row.content || '', variant, 150),
+            score: 1,
+            source: row.source || '',
+            materialId: String(row.material_id || ''),
+          }));
+        }
+      }
+
+      return [];
     } catch (err) {
       return [];
     }

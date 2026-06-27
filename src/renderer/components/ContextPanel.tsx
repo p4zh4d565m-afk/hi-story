@@ -2,6 +2,7 @@ import React from 'react';
 import type { Project, Chapter, OutlineNode, Character, WorldEntry } from '../types';
 import type { SearchResult } from '../types/search';
 import CharacterCard from './CharacterCard';
+import WorldEntryCard from './WorldEntryCard';
 import RelationshipGraph from './RelationshipGraph';
 
 interface ContextPanelProps {
@@ -12,9 +13,13 @@ interface ContextPanelProps {
   worldEntries?: WorldEntry[];
   relationships?: { source: string; target: string; type: string }[];
   selectedCharacter?: Character | null;
+  selectedWorldEntry?: WorldEntry | null;
   onSelectCharacter?: (ch: Character | null) => void;
   onSaveCharacter?: (data: Partial<Character>) => void;
   onCloseCharacter?: () => void;
+  onSaveWorldEntry?: (data: Partial<WorldEntry>) => void;
+  onDeleteWorldEntry?: (id: string) => void;
+  onCloseWorldEntry?: () => void;
 }
 
 const ContextPanel: React.FC<ContextPanelProps> = ({
@@ -25,10 +30,26 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
   worldEntries = [],
   relationships = [],
   selectedCharacter,
+  selectedWorldEntry,
   onSelectCharacter,
   onSaveCharacter,
   onCloseCharacter,
+  onSaveWorldEntry,
+  onDeleteWorldEntry,
+  onCloseWorldEntry,
 }) => {
+  // Show world entry editor if selected
+  if (selectedWorldEntry && onSaveWorldEntry && onDeleteWorldEntry && onCloseWorldEntry) {
+    return (
+      <WorldEntryCard
+        entry={selectedWorldEntry}
+        onSave={onSaveWorldEntry}
+        onDelete={onDeleteWorldEntry}
+        onClose={onCloseWorldEntry}
+      />
+    );
+  }
+
   // Show character editor if a character is selected
   if (selectedCharacter) {
     return (

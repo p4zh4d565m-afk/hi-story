@@ -12,6 +12,7 @@ interface MainAreaProps {
   onSelectChapter: (id: string) => void;
   onCreateChapter: (title: string) => void;
   onDeleteChapter: (id: string) => void;
+  onRenameChapter?: (id: string, title: string) => void;
   onSaveChapter: (id: string, content: string) => void;
   saving: boolean;
   // AI Chat
@@ -31,6 +32,7 @@ const MainArea: React.FC<MainAreaProps> = ({
   onSelectChapter,
   onCreateChapter,
   onDeleteChapter,
+  onRenameChapter,
   onSaveChapter,
   saving,
   contextMessages = [],
@@ -91,6 +93,7 @@ const MainArea: React.FC<MainAreaProps> = ({
               onSelectChapter={onSelectChapter}
               onCreateChapter={onCreateChapter}
               onDeleteChapter={onDeleteChapter}
+              onRenameChapter={onRenameChapter}
               onSaveChapter={onSaveChapter}
               saving={saving}
             />

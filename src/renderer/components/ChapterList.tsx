@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import type { Chapter } from '../types';
+import ContextMenu from './ContextMenu';
 
 interface ChapterListProps {
   chapters: Chapter[];
@@ -7,6 +8,7 @@ interface ChapterListProps {
   onSelect: (id: string) => void;
   onCreate: (title: string) => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, title: string) => void;
   loading: boolean;
 }
 
@@ -16,10 +18,17 @@ const ChapterList: React.FC<ChapterListProps> = ({
   onSelect,
   onCreate,
   onDelete,
+  onRename,
   loading,
 }) => {
   const [isCreating, setIsCreating] = useState(false);
   const [newTitle, setNewTitle] = useState('');
+  const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; chapterId: string }>({
+    visible: false, x: 0, y: 0, chapterId: '',
+  });
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameTitle, setRenameTitle] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const handleCreate = () => {
     if (!newTitle.trim()) return;
@@ -27,6 +36,34 @@ const ChapterList: React.FC<ChapterListProps> = ({
     setNewTitle('');
     setIsCreating(false);
   };
+
+  const handleContextMenu = (e: React.MouseEvent, chapterId: string) => {
+    e.preventDefault();
+    setContextMenu({ visible: true, x: e.clientX, y: e.clientY, chapterId });
+  };
+
+  const handleRenameStart = (chapterId: string) => {
+    const ch = chapters.find(c => c.id === chapterId);
+    if (ch) {
+      setRenamingId(chapterId);
+      setRenameTitle(ch.title);
+    }
+  };
+
+  const handleRenameConfirm = () => {
+    if (renamingId && renameTitle.trim()) {
+      onRename(renamingId, renameTitle.trim());
+    }
+    setRenamingId(null);
+    setRenameTitle('');
+  };
+
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingId]);
 
   return (
     <div className="py-1">
@@ -83,13 +120,31 @@ const ChapterList: React.FC<ChapterListProps> = ({
                 }
               `}
               onClick={() => onSelect(chapter.id)}
+              onContextMenu={(e) => handleContextMenu(e, chapter.id)}
             >
               <span className="text-xs text-gray-600 w-6 flex-shrink-0">
                 {index + 1}
               </span>
-              <span className="flex-1 truncate text-xs">
-                {chapter.title}
-              </span>
+              {renamingId === chapter.id ? (
+                <input
+                  ref={renameInputRef}
+                  type="text"
+                  value={renameTitle}
+                  onChange={(e) => setRenameTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleRenameConfirm();
+                    if (e.key === 'Escape') { setRenamingId(null); setRenameTitle(''); }
+                  }}
+                  onBlur={() => { setRenamingId(null); setRenameTitle(''); }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex-1 px-1 py-0 bg-gray-700 border border-accent rounded text-white text-xs
+                             focus:outline-none"
+                />
+              ) : (
+                <span className="flex-1 truncate text-xs">
+                  {chapter.title}
+                </span>
+              )}
               <span className="text-[10px] text-gray-600 flex-shrink-0 ml-1">
                 {chapter.status === 'final' ? '📌' : '📝'}
               </span>
@@ -118,6 +173,31 @@ const ChapterList: React.FC<ChapterListProps> = ({
           </p>
         </div>
       )}
+
+      {/* Context Menu */}
+      <ContextMenu
+        visible={contextMenu.visible}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        onClose={() => setContextMenu(p => ({ ...p, visible: false }))}
+        items={[
+          {
+            label: '重命名',
+            icon: '✏️',
+            onClick: () => handleRenameStart(contextMenu.chapterId),
+          },
+          {
+            label: '删除',
+            icon: '🗑️',
+            danger: true,
+            onClick: () => {
+              if (confirm('确定要删除这个章节吗？')) {
+                onDelete(contextMenu.chapterId);
+              }
+            },
+          },
+        ]}
+      />
     </div>
   );
 };

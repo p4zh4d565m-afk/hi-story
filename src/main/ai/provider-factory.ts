@@ -99,6 +99,31 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
   },
 ];
 
+class ProviderCache {
+  private cache = new Map<string, AIProvider>();
+
+  key(config: ProviderConfig): string {
+    // Include apiKey in the cache key so config changes take effect immediately
+    const apiKey = config.apiKey || '';
+    return `${config.name}:${config.model}|${apiKey.slice(0, 8)}`;
+  }
+
+  get(key: string): AIProvider | undefined {
+    return this.cache.get(key);
+  }
+
+  set(key: string, provider: AIProvider): void {
+    this.cache.set(key, provider);
+  }
+
+  /** Clear all cached providers (e.g., on config reset) */
+  clear(): void {
+    this.cache.clear();
+  }
+}
+
+const providerCache = new ProviderCache();
+
 export class ProviderFactory {
   private static customPresets: ProviderPreset[] = [];
 
@@ -121,17 +146,30 @@ export class ProviderFactory {
     return this.getAllPresets().find(p => p.id === id);
   }
 
-  /** Create an AI provider from a config */
+  /** Create an AI provider from a config (cached by key) */
   static create(config: ProviderConfig): AIProvider {
+    const cacheKey = providerCache.key(config);
+    const cached = providerCache.get(cacheKey);
+    if (cached) return cached;
+
     const name = config.name.toLowerCase();
 
+    let provider: AIProvider;
     // Claude uses its own native API
     if (name === 'claude') {
-      return new ClaudeProvider(config);
+      provider = new ClaudeProvider(config);
+    } else {
+      // Everything else uses OpenAI-compatible protocol
+      provider = new GenericOpenAIProvider(config);
     }
 
-    // Everything else uses OpenAI-compatible protocol
-    return new GenericOpenAIProvider(config);
+    providerCache.set(cacheKey, provider);
+    return provider;
+  }
+
+  /** Invalidate cached providers when config changes */
+  static invalidateCache(): void {
+    providerCache.clear();
   }
 
   static getAvailableProviders(): string[] {

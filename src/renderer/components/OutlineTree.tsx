@@ -1,5 +1,6 @@
 import React, { useState, useCallback } from 'react';
 import type { OutlineNode } from '../types';
+import ContextMenu from './ContextMenu';
 
 interface OutlineTreeProps {
   nodes: OutlineNode[];
@@ -33,6 +34,11 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
   const [editSummary, setEditSummary] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; nodeId: string }>({
+    visible: false, x: 0, y: 0, nodeId: '',
+  });
 
   // Build tree structure from flat list
   const buildTree = useCallback((): TreeNode[] => {
@@ -109,6 +115,12 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
     setDragOverId(null);
   };
 
+  const handleNodeContextMenu = (e: React.MouseEvent, nodeId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ visible: true, x: e.clientX, y: e.clientY, nodeId });
+  };
+
   const renderNode = (treeNode: TreeNode, depth: number = 0) => {
     const { node, children } = treeNode;
     const hasChildren = children.length > 0;
@@ -130,6 +142,7 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
           style={{ paddingLeft: `${8 + depth * 16}px` }}
           onClick={() => onSelect(node.id)}
           onDoubleClick={() => handleStartEdit(node)}
+          onContextMenu={(e) => handleNodeContextMenu(e, node.id)}
           draggable
           onDragStart={(e) => handleDragStart(e, node.id)}
           onDragOver={(e) => handleDragOver(e, node.id)}
@@ -296,6 +309,43 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
       <div>
         {tree.map(treeNode => renderNode(treeNode))}
       </div>
+
+      {/* Context Menu */}
+      <ContextMenu
+        visible={contextMenu.visible}
+        x={contextMenu.x}
+        y={contextMenu.y}
+        onClose={() => setContextMenu(p => ({ ...p, visible: false }))}
+        items={[
+          {
+            label: '重命名',
+            icon: '✏️',
+            onClick: () => {
+              const node = nodes.find(n => n.id === contextMenu.nodeId);
+              if (node) handleStartEdit(node);
+            },
+          },
+          {
+            label: '添加子节点',
+            icon: '➕',
+            onClick: () => {
+              setIsCreating({ parentId: contextMenu.nodeId });
+              setNewTitle('');
+              setExpandedIds(prev => new Set(prev).add(contextMenu.nodeId));
+            },
+          },
+          {
+            label: '删除',
+            icon: '🗑️',
+            danger: true,
+            onClick: () => {
+              if (confirm('确定要删除这个大纲节点吗？')) {
+                onDelete(contextMenu.nodeId);
+              }
+            },
+          },
+        ]}
+      />
     </div>
   );
 };

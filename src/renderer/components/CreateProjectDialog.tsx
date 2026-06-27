@@ -135,7 +135,7 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
             <button
               type="submit"
               disabled={!name.trim() || creating}
-              className="px-6 py-2 text-sm bg-accent text-white rounded hover:bg-purple-600
+              className="px-6 py-2 text-sm bg-accent text-white rounded hover:bg-accent-hover
                          disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               {creating ? '创建中...' : '创建'}

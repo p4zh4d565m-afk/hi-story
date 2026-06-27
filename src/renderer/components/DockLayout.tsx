@@ -17,6 +17,9 @@ interface PanelState {
   contextOpen: boolean;
   inspirationOpen: boolean;
   mindmapOpen: boolean;
+  materialOpen: boolean;
+  relationMatrixOpen: boolean;
+  aiLevel: 'off' | 'assist' | 'deep';  // AI participation level
 }
 
 interface DockLayoutProps {
@@ -26,6 +29,8 @@ interface DockLayoutProps {
   contextPanel: React.ReactNode;
   inspirationPanel: React.ReactNode;
   mindmapPanel: React.ReactNode;
+  materialPanel: React.ReactNode;
+  relationMatrixPanel: React.ReactNode;
   panelState: PanelState;
   onToggleSidebar: () => void;
   onToggleAiChat: () => void;
@@ -33,11 +38,17 @@ interface DockLayoutProps {
   onToggleContext: () => void;
   onToggleInspiration: () => void;
   onToggleMindmap: () => void;
+  onToggleMaterial: () => void;
+  onToggleRelationMatrix: () => void;
+  onSetAiLevel: (level: 'off' | 'assist' | 'deep') => void;
 }
 
 const DockLayout: React.FC<DockLayoutProps> = ({
   sidebar, writingArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
+  materialPanel, relationMatrixPanel,
   panelState, onToggleSidebar, onToggleAiChat, onMinimizeAiChat, onToggleContext, onToggleInspiration, onToggleMindmap,
+  onToggleMaterial, onToggleRelationMatrix,
+  onSetAiLevel,
 }) => {
   const [sidebarWidth, setSidebarWidth] = useState(280);
   const [aiChatWidth, setAiChatWidth] = useState(380);
@@ -111,6 +122,28 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
           <div className="flex-1" />
 
+          {/* AI participation level */}
+          <div className="flex bg-gray-700 rounded overflow-hidden">
+            {([
+              { level: 'off' as const, label: '🖊️ 纯写', title: '零参与 — 纯编辑器模式' },
+              { level: 'assist' as const, label: '✨ 辅助', title: '辅助参与 — AI润色/建议' },
+              { level: 'deep' as const, label: '🤖 深度', title: '深度参与 — AI续写/共创' },
+            ]).map(({ level, label, title }) => (
+              <button
+                key={level}
+                onClick={() => onSetAiLevel(level)}
+                className={`px-2 py-1 text-[10px] transition-colors ${
+                  panelState.aiLevel === level
+                    ? 'bg-accent text-white'
+                    : 'text-gray-400 hover:text-white'
+                }`}
+                title={title}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           {/* Inspiration toggle */}
           <button onClick={onToggleInspiration}
             className={`px-2 py-1 rounded text-xs transition-colors ${panelState.inspirationOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
@@ -125,6 +158,20 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             🧠 导图
           </button>
 
+          {/* Relation matrix toggle */}
+          <button onClick={onToggleRelationMatrix}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.relationMatrixOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            title="关联关系矩阵">
+            🔗 矩阵
+          </button>
+
+          {/* Material panel toggle */}
+          <button onClick={onToggleMaterial}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.materialOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            title="素材管理">
+            📦 素材
+          </button>
+
           {/* Context toggle */}
           <button onClick={onToggleContext}
             className={`px-2 py-1 rounded text-xs transition-colors ${panelState.contextOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
@@ -132,10 +179,11 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             📋 详情
           </button>
 
-          {/* AI Chat toggle (minimized = floating button) */}
-          {panelState.aiChatMinimized ? (
+          {/* AI Chat toggle — hidden when aiLevel is 'off' */}
+          {panelState.aiLevel !== 'off' && (
+            panelState.aiChatMinimized ? (
             <button onClick={() => onMinimizeAiChat()}
-              className="ml-1 w-10 h-10 rounded-full bg-accent text-white text-lg shadow-lg hover:bg-purple-600 flex items-center justify-center fixed bottom-4 right-4 z-50 animate-pulse"
+              className="ml-1 w-10 h-10 rounded-full bg-accent text-white text-lg shadow-lg hover:bg-accent-hover flex items-center justify-center fixed bottom-4 right-4 z-50 animate-pulse"
               title="展开 AI 对话">
               💬
             </button>
@@ -145,6 +193,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               title="AI 对话">
               💬 AI
             </button>
+          )
           )}
         </div>
 
@@ -155,20 +204,20 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             {writingArea}
           </div>
 
-          {/* AI Chat panel (dockable, resizable) */}
-          {panelState.aiChatOpen && !panelState.aiChatMinimized && (
+          {/* AI Chat panel (dockable, resizable) — hidden when aiLevel is 'off' */}
+          {panelState.aiChatOpen && !panelState.aiChatMinimized && panelState.aiLevel !== 'off' && (
             <>
               <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
                 onMouseDown={handleAiChatResize} title="拖拽调整 AI 对话宽度" />
               <aside className="flex-shrink-0 border-l border-gray-700 bg-gray-900 overflow-hidden" style={{ width: aiChatWidth }}>
                 <div className="h-full relative">
-                  {aiChat}
-                  {/* Minimize button */}
+                  {/* Minimize button — positioned below the AI header so it doesn't cover ⚙️ */}
                   <button onClick={onMinimizeAiChat}
-                    className="absolute top-2 right-2 w-6 h-6 rounded bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600 text-xs z-10"
+                    className="absolute top-2 left-2 w-6 h-6 rounded bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600 text-xs z-10"
                     title="最小化 AI 对话">
                     _
                   </button>
+                  {aiChat}
                 </div>
               </aside>
             </>
@@ -212,6 +261,38 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             </div>
             <div className="flex-1 overflow-auto p-2">
               {mindmapPanel}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== FLOATING RELATION MATRIX ===== */}
+      {panelState.relationMatrixOpen && (
+        <div className="fixed inset-0 z-40 pointer-events-none">
+          <div className="absolute top-16 left-20 right-20 bottom-8 pointer-events-auto bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
+            style={{ minWidth: 500, minHeight: 400 }}>
+            <div className="px-3 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between cursor-move">
+              <span className="text-xs text-gray-400">🔗 关联关系矩阵</span>
+              <button onClick={onToggleRelationMatrix} className="text-gray-500 hover:text-white text-xs">✕</button>
+            </div>
+            <div className="flex-1 overflow-auto">
+              {relationMatrixPanel}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ===== FLOATING MATERIAL PANEL ===== */}
+      {panelState.materialOpen && (
+        <div className="fixed inset-0 z-40 pointer-events-none">
+          <div className="absolute top-16 left-20 right-20 bottom-8 pointer-events-auto bg-gray-900 border border-gray-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
+            style={{ minWidth: 500, minHeight: 400 }}>
+            <div className="px-3 py-2 bg-gray-800 border-b border-gray-700 flex items-center justify-between cursor-move">
+              <span className="text-xs text-gray-400">📦 素材管理</span>
+              <button onClick={onToggleMaterial} className="text-gray-500 hover:text-white text-xs">✕</button>
+            </div>
+            <div className="flex-1 overflow-hidden">
+              {materialPanel}
             </div>
           </div>
         </div>

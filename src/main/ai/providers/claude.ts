@@ -66,8 +66,9 @@ export class ClaudeProvider implements AIProvider {
     callbacks: StreamCallbacks,
     options?: ChatOptions,
   ): Promise<void> {
-    const client = this.getClient();
+    let stream: any = null;
     try {
+      const client = this.getClient();
       const systemMessages = messages.filter(m => m.role === 'system').map(m => m.content);
       const userAssistantMessages = messages.filter(m => m.role !== 'system').map(m => ({
         role: m.role as 'user' | 'assistant',
@@ -79,7 +80,7 @@ export class ClaudeProvider implements AIProvider {
         systemPrompt = options.systemPrompt + '\n\n' + systemPrompt;
       }
 
-      const stream = await client.messages.stream({
+      stream = await client.messages.stream({
         model: options?.model || this.defaultModel,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.7,
@@ -89,6 +90,7 @@ export class ClaudeProvider implements AIProvider {
 
       let fullText = '';
 
+      // Attach event listeners BEFORE the stream can start emitting
       stream.on('text', (text: string, delta: string) => {
         if (delta) {
           callbacks.onToken(delta);

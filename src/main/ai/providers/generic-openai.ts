@@ -60,9 +60,10 @@ export class GenericOpenAIProvider implements AIProvider {
     callbacks: StreamCallbacks,
     options?: ChatOptions,
   ): Promise<void> {
-    const client = this.getClient();
+    let stream: any = null;
     try {
-      const stream = await client.chat.completions.create({
+      const client = this.getClient();
+      stream = await client.chat.completions.create({
         model: options?.model || this.defaultModel,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.7,
