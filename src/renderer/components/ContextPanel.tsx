@@ -74,7 +74,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
   return (
     <div className="h-full overflow-y-auto">
       {/* Project Info */}
-      <div className="p-4 border-b border-gray-700/50">
+      <div className="p-4 border-b border-context-700/50">
         <h3 className="text-sm font-semibold text-gray-300 mb-3 uppercase tracking-wide">
           📖 {activeProject.name}
         </h3>
@@ -84,7 +84,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
               <dt className="text-gray-500 text-xs">类型</dt>
               <dd className="flex flex-wrap gap-1 mt-0.5">
                 {activeProject.typeTags.map((tag) => (
-                  <span key={tag} className="px-1.5 py-0.5 rounded text-[10px] bg-gray-700 text-gray-300">
+                  <span key={tag} className="px-1.5 py-0.5 rounded text-[10px] bg-context-700 text-gray-300">
                     {tag}
                   </span>
                 ))}
@@ -108,7 +108,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
 
       {/* Current Chapter Info */}
       {activeChapter && (
-        <div className="p-4 border-b border-gray-700/50">
+        <div className="p-4 border-b border-context-700/50">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">当前章节</h3>
           <p className="text-sm text-gray-300">{activeChapter.title}</p>
           <div className="flex items-center gap-3 mt-1 text-[10px] text-gray-600">
@@ -120,7 +120,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
 
       {/* Outline Node Detail */}
       {activeOutlineNode && (
-        <div className="p-4 border-b border-gray-700/50">
+        <div className="p-4 border-b border-context-700/50">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">大纲节点</h3>
           <p className="text-sm text-gray-300">{activeOutlineNode.title}</p>
           {activeOutlineNode.summary && (
@@ -131,7 +131,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
 
       {/* Characters */}
       {characters.length > 0 && (
-        <div className="p-4 border-b border-gray-700/50">
+        <div className="p-4 border-b border-context-700/50">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
             角色 ({characters.length})
           </h3>
@@ -139,7 +139,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
             {characters.map((ch) => (
               <li
                 key={ch.id}
-                className="text-xs text-gray-400 hover:text-white cursor-pointer px-2 py-1 rounded hover:bg-gray-800 transition-colors"
+                className="text-xs text-gray-400 hover:text-white cursor-pointer px-2 py-1 rounded hover:bg-context-800 transition-colors"
                 onClick={() => onSelectCharacter?.(ch)}
               >
                 👤 {ch.name}
@@ -152,7 +152,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
 
       {/* World Entries */}
       {worldEntries.length > 0 && (
-        <div className="p-4 border-b border-gray-700/50">
+        <div className="p-4 border-b border-context-700/50">
           <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
             世界观 ({worldEntries.length})
           </h3>
@@ -160,7 +160,7 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
             {worldEntries.map((entry) => (
               <li
                 key={entry.id}
-                className="text-xs text-gray-400 hover:text-white cursor-pointer px-2 py-1 rounded hover:bg-gray-800 transition-colors"
+                className="text-xs text-gray-400 hover:text-white cursor-pointer px-2 py-1 rounded hover:bg-context-800 transition-colors"
               >
                 <span className="text-[10px]">
                   {entry.category === 'place' && '🌍'}

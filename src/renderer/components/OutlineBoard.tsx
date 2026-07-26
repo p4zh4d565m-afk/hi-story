@@ -121,10 +121,10 @@ const OutlineBoard: React.FC<OutlineBoardProps> = ({
             {columns.map((col) => (
               <div
                 key={col.id}
-                className="flex-shrink-0 w-[160px] bg-gray-800/50 rounded border border-gray-700/50"
+                className="flex-shrink-0 w-[160px] bg-float-800/50 rounded border border-float-700/50"
               >
                 {/* Column header */}
-                <div className="px-3 py-2 border-b border-gray-700/50 flex items-center justify-between">
+                <div className="px-3 py-2 border-b border-float-700/50 flex items-center justify-between">
                   <span className="text-[11px] font-semibold text-gray-300 truncate flex-1">
                     {col.title}
                   </span>
@@ -160,7 +160,7 @@ const OutlineBoard: React.FC<OutlineBoardProps> = ({
                         px-2 py-1.5 rounded text-[11px] cursor-pointer transition-colors
                         ${card.id === activeNodeId
                           ? 'bg-accent/20 border border-accent/50 text-white'
-                          : 'bg-gray-700/50 border border-transparent hover:border-gray-600 text-gray-300'
+                          : 'bg-float-700/50 border border-transparent hover:border-float-600 text-gray-300'
                         }
                       `}
                     >
@@ -174,7 +174,7 @@ const OutlineBoard: React.FC<OutlineBoardProps> = ({
                               if (e.key === 'Enter') handleSaveEdit();
                               if (e.key === 'Escape') setEditingId(null);
                             }}
-                            className="w-full px-1 py-0.5 bg-gray-600 border border-gray-500 rounded text-white text-[11px]
+                            className="w-full px-1 py-0.5 bg-float-600 border border-gray-500 rounded text-white text-[11px]
                                        focus:outline-none focus:border-accent"
                             placeholder="标题"
                             autoFocus
@@ -183,7 +183,7 @@ const OutlineBoard: React.FC<OutlineBoardProps> = ({
                             value={editSummary}
                             onChange={(e) => setEditSummary(e.target.value)}
                             rows={2}
-                            className="w-full px-1 py-0.5 bg-gray-600 border border-gray-500 rounded text-white text-[10px]
+                            className="w-full px-1 py-0.5 bg-float-600 border border-gray-500 rounded text-white text-[10px]
                                        focus:outline-none focus:border-accent resize-none"
                             placeholder="摘要..."
                           />
@@ -232,7 +232,7 @@ const OutlineBoard: React.FC<OutlineBoardProps> = ({
                           if (e.key === 'Escape') { setAddingToCol(null); setNewCardTitle(''); }
                         }}
                         placeholder="卡片标题..."
-                        className="w-full px-1.5 py-1 bg-gray-600 border border-gray-500 rounded text-white text-[10px]
+                        className="w-full px-1.5 py-1 bg-float-600 border border-gray-500 rounded text-white text-[10px]
                                    focus:outline-none focus:border-accent placeholder-gray-500"
                         autoFocus
                       />

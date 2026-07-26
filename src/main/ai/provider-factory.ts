@@ -14,6 +14,7 @@ export interface ProviderPreset {
   type: 'claude' | 'openai-compatible';
   defaultModel: string;
   models: string[];
+  hint?: string; // 提示信息（如火山方舟需要 ep- ID）
 }
 
 export const PROVIDER_PRESETS: ProviderPreset[] = [
@@ -47,15 +48,27 @@ export const PROVIDER_PRESETS: ProviderPreset[] = [
     defaultModel: 'deepseek-chat',
     models: ['deepseek-chat', 'deepseek-reasoner'],
   },
-  // ===== 豆包 (ByteDance) =====
+  // ===== 豆包 / 火山方舟 (ByteDance) =====
   {
     id: 'doubao',
     name: 'doubao',
-    displayName: '豆包 (字节跳动)',
+    displayName: '豆包 (火山方舟)',
     baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
     type: 'openai-compatible',
-    defaultModel: 'doubao-pro-32k',
-    models: ['doubao-pro-32k', 'doubao-lite-32k', 'doubao-pro-128k'],
+    defaultModel: 'doubao-seed-evolving',
+    models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro', 'doubao-seed-2-0-pro', 'doubao-seed-2-0-lite', 'doubao-seed-1-8', 'doubao-seed-1-6', 'doubao-seed-1-6-flash'],
+    hint: '也可直接填入 ep- 接入点 ID 或任意豆包模型名',
+  },
+  // ===== 火山方舟（全平台模型）=====
+  {
+    id: 'volcengine',
+    name: 'volcengine',
+    displayName: '火山方舟 (全模型)',
+    baseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+    type: 'openai-compatible',
+    defaultModel: 'doubao-seed-evolving',
+    models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro', 'doubao-seed-2-0-pro', 'doubao-seed-2-0-lite', 'deepseek-v4-pro', 'deepseek-v4-flash', 'kimi-k2.6', 'glm-5.2'],
+    hint: '也可直接填入 ep- 接入点 ID 或任意模型名',
   },
   // ===== 通义千问 (Alibaba) =====
   {

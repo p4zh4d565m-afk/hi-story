@@ -3,7 +3,7 @@ import RichEditor from './editor/RichEditor';
 import WritingGoal from './WritingGoal';
 import ContextMenu from './ContextMenu';
 import type { MenuItem } from './ContextMenu';
-import type { Chapter, Project } from '../types';
+import type { Chapter, ChapterHistorySnapshot, Project } from '../types';
 
 interface WritingAreaProps {
   activeProject: Project | null;
@@ -18,8 +18,13 @@ interface WritingAreaProps {
   onImportNovel: () => void;
   saving: boolean;
   onSearchInInspiration?: (text: string) => void;
+  onSearchInReference?: (text: string) => void;
   onAIPolish?: (text: string) => void;
   onAIContinue?: () => void;
+  /** 编辑器字号预设 */
+  editorFontSize?: 0 | 1 | 2 | 3;
+  /** 编辑器字号变更回调 */
+  onSetEditorFontSize?: (preset: 0 | 1 | 2 | 3) => void;
 }
 
 const WritingArea: React.FC<WritingAreaProps> = ({
@@ -35,8 +40,11 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   onImportNovel,
   saving,
   onSearchInInspiration,
+  onSearchInReference,
   onAIPolish,
   onAIContinue,
+  editorFontSize = 1,
+  onSetEditorFontSize,
 }) => {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeChapterRef = useRef(activeChapter);
@@ -59,6 +67,69 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   const [renamingChapterId, setRenamingChapterId] = useState<string | null>(null);
   const [renameTitle, setRenameTitle] = useState('');
   const renameInputRef = useRef<HTMLInputElement>(null);
+
+  // ===== 历史版本 =====
+  const [showHistory, setShowHistory] = useState(false);
+  const [snapshots, setSnapshots] = useState<ChapterHistorySnapshot[]>([]);
+  const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const historyPanelRef = useRef<HTMLDivElement>(null);
+
+  const loadSnapshots = useCallback(async () => {
+    if (!activeChapter) return;
+    setLoadingSnapshots(true);
+    try {
+      const res = await window.electronAPI.invoke('db:chapterHistory:list', activeChapter.id) as any;
+      if (res.success) setSnapshots(res.data);
+    } catch {} finally { setLoadingSnapshots(false); }
+  }, [activeChapter?.id]);
+
+  // 打开历史面板时自动加载
+  useEffect(() => {
+    if (showHistory) loadSnapshots();
+  }, [showHistory, loadSnapshots]);
+
+  // 点击外部关闭历史面板
+  useEffect(() => {
+    if (!showHistory) return;
+    const h = (e: MouseEvent) => {
+      if (historyPanelRef.current && !historyPanelRef.current.contains(e.target as Node)) {
+        setShowHistory(false);
+      }
+    };
+    setTimeout(() => document.addEventListener('click', h), 100);
+    return () => document.removeEventListener('click', h);
+  }, [showHistory]);
+
+  const handleRestoreSnapshot = useCallback(async (snapshot: ChapterHistorySnapshot) => {
+    if (!activeChapter) return;
+    if (!confirm(`确定恢复到 ${formatTimeAgo(snapshot.savedAt)} 的版本吗？\n当前内容将被保存为一个新版本。`)) return;
+    try {
+      const res = await window.electronAPI.invoke('db:chapterHistory:restore', snapshot.id) as any;
+      if (res.success) {
+        // 刷新编辑器内容：通过强制切换 key 重新挂载
+        onSaveChapter(activeChapter.id, res.data.content);
+        setShowHistory(false);
+        setSnapshots([]);
+      } else {
+        alert('恢复失败：' + (res.error || '未知错误'));
+      }
+    } catch {
+      alert('恢复失败，请重试');
+    }
+  }, [activeChapter, onSaveChapter]);
+
+  /** "X 分钟前" 格式化 */
+  function formatTimeAgo(isoStr: string): string {
+    const diff = Date.now() - new Date(isoStr).getTime();
+    const mins = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+    if (mins < 1) return '刚刚';
+    if (mins < 60) return `${mins} 分钟前`;
+    if (hours < 24) return `${hours} 小时前`;
+    if (days < 7) return `${days} 天前`;
+    return new Date(isoStr).toLocaleString('zh-CN');
+  }
 
   // Sync local content when active chapter changes
   // CRITICAL: flush any pending save for the PREVIOUS chapter before switching
@@ -202,7 +273,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           <div className="flex items-center justify-center gap-3 mt-4">
             <button
               onClick={onCreateProject}
-              className="px-4 py-2 text-sm border border-gray-600 text-gray-400 rounded hover:bg-gray-800 hover:text-white transition-colors"
+              className="px-4 py-2 text-sm border border-editor-600 text-gray-400 rounded hover:bg-editor-800 hover:text-white transition-colors"
             >
               + 新建项目
             </button>
@@ -221,7 +292,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   return (
     <div className="h-full flex flex-col">
       {/* Chapter header bar */}
-      <div className="px-6 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between">
+      <div className="px-6 py-3 border-b border-editor-700 bg-editor-800 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <h2 className="text-lg font-semibold text-white">{activeProject.name}</h2>
           {activeChapter && (
@@ -230,7 +301,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
               <span className="text-sm text-gray-300">{activeChapter.title}</span>
             </>
           )}
-          <span className="text-[11px] text-gray-500 bg-gray-700/50 px-2 py-0.5 rounded">
+          <span className="text-[11px] text-gray-500 bg-editor-700/50 px-2 py-0.5 rounded">
             {totalWords.toLocaleString()} 字
           </span>
         </div>
@@ -274,11 +345,59 @@ const WritingArea: React.FC<WritingAreaProps> = ({
             </button>
           )}
 
+          {/* 历史版本按钮 */}
+          {activeChapter && (
+            <div className="relative" ref={historyPanelRef}>
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs text-gray-400 hover:text-white hover:bg-editor-700 transition-colors"
+                title="查看历史版本"
+              >
+                📋 历史
+              </button>
+              {showHistory && (
+                <div className="absolute right-0 top-full mt-1 w-72 max-h-64 bg-editor-800 border border-editor-600 rounded-lg shadow-xl z-40 overflow-y-auto">
+                  <div className="px-3 py-2 border-b border-editor-700 text-[10px] text-gray-500 uppercase tracking-wide">
+                    历史版本（每章最多保留 30 个）
+                  </div>
+                  {loadingSnapshots && (
+                    <div className="px-3 py-4 text-center text-xs text-gray-500">加载中...</div>
+                  )}
+                  {!loadingSnapshots && snapshots.length === 0 && (
+                    <div className="px-3 py-4 text-center text-xs text-gray-500">
+                      暂无历史快照
+                      <br /><span className="text-gray-600">每次保存时自动记录</span>
+                    </div>
+                  )}
+                  {!loadingSnapshots && snapshots.map((s, i) => (
+                    <button
+                      key={s.id}
+                      onClick={() => handleRestoreSnapshot(s)}
+                      className="w-full text-left px-3 py-2 hover:bg-editor-700 transition-colors border-b border-editor-700/30 group"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-gray-300">
+                          {i === 0 ? '🕐 上一版本' : `📝 ${formatTimeAgo(s.savedAt)}`}
+                        </span>
+                        <span className="text-[9px] text-accent opacity-0 group-hover:opacity-100 transition-opacity">
+                          ↩ 恢复此版本
+                        </span>
+                      </div>
+                      <div className="text-[10px] text-gray-600 mt-0.5">
+                        {s.wordCount.toLocaleString()} 字 · {new Date(s.savedAt).toLocaleString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Chapter selector */}
           <select
             value={activeChapter?.id ?? ''}
             onChange={(e) => onSelectChapter(e.target.value)}
-            className="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-300
+            className="text-xs bg-editor-700 border border-editor-600 rounded px-2 py-1 text-gray-300
                        focus:outline-none focus:border-accent max-w-[200px] truncate"
           >
             {chapters.map((ch, i) => (
@@ -291,7 +410,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
       </div>
 
       {/* Quick chapter tabs */}
-      <div className="flex items-center gap-0.5 px-2 py-1.5 bg-gray-850 border-b border-gray-700 overflow-x-auto">
+      <div className="flex items-center gap-0.5 px-2 py-1.5 bg-editor-850 border-b border-editor-700 overflow-x-auto">
         {chapters.map((ch, i) => (
           renamingChapterId === ch.id ? (
             <div key={ch.id} className="flex items-center gap-1">
@@ -304,8 +423,8 @@ const WritingArea: React.FC<WritingAreaProps> = ({
                   if (e.key === 'Enter') handleRenameConfirm();
                   if (e.key === 'Escape') { setRenamingChapterId(null); setRenameTitle(''); }
                 }}
-                onBlur={() => { setRenamingChapterId(null); setRenameTitle(''); }}
-                className="px-2 py-0.5 bg-gray-700 border border-accent rounded text-xs text-white
+                onBlur={handleRenameConfirm}
+                className="px-2 py-0.5 bg-editor-700 border border-accent rounded text-xs text-white
                            focus:outline-none min-w-[80px] max-w-[180px]"
               />
             </div>
@@ -318,18 +437,20 @@ const WritingArea: React.FC<WritingAreaProps> = ({
                 flex items-center gap-1 px-3 py-1 rounded text-xs whitespace-nowrap transition-colors
                 ${ch.id === activeChapter?.id
                   ? 'bg-accent text-white'
-                  : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                  : 'text-gray-400 hover:bg-editor-700 hover:text-white'
                 }
               `}
             >
-              <span className="text-[10px]">{i + 1}</span>
               {ch.title}
             </button>
           )
         ))}
         <button
-          onClick={() => onCreateChapter('未命名章节')}
-          className="px-2 py-1 rounded text-xs text-gray-500 hover:bg-gray-700 hover:text-white transition-colors"
+          onClick={() => {
+            const nextNum = chapters.length + 1;
+            onCreateChapter(`第${nextNum}章`);
+          }}
+          className="px-2 py-1 rounded text-xs text-gray-500 hover:bg-editor-700 hover:text-white transition-colors"
           title="快速新建章节"
         >
           +
@@ -345,8 +466,11 @@ const WritingArea: React.FC<WritingAreaProps> = ({
             onUpdate={handleUpdate}
             placeholder={`继续写「${activeChapter.title}」...`}
             onSearchInInspiration={onSearchInInspiration}
+            onSearchInReference={onSearchInReference}
             onAIPolish={onAIPolish}
             onAIContinue={onAIContinue}
+            fontSizePreset={editorFontSize}
+            onSetFontSize={onSetEditorFontSize}
           />
         ) : (
           <div className="h-full flex items-center justify-center text-gray-600">
@@ -372,7 +496,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
       />
 
       {/* Status bar */}
-      <div className="px-4 py-1.5 border-t border-gray-700 bg-gray-800 flex items-center justify-between text-[10px] text-gray-600">
+      <div className="px-4 py-1.5 border-t border-editor-700 bg-editor-800 flex items-center justify-between text-[10px] text-gray-600">
         <div className="flex items-center gap-4">
           {activeChapter && (
             <>
@@ -397,6 +521,15 @@ const WritingArea: React.FC<WritingAreaProps> = ({
         y={contextMenu.y}
         onClose={() => setContextMenu(p => ({ ...p, visible: false }))}
         items={[
+          {
+            label: '新章节',
+            icon: '➕',
+            onClick: () => {
+              const nextNum = chapters.length + 1;
+              onCreateChapter(`第${nextNum}章`);
+            },
+          },
+          { type: 'separator' as const },
           {
             label: '重命名',
             icon: '✏️',

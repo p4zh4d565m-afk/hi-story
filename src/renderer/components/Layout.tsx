@@ -66,9 +66,9 @@ const Layout: React.FC<LayoutProps> = ({ sidebar, main, contextPanel, showContex
   }, [contextWidth]);
 
   return (
-    <div className="h-full flex bg-gray-900 text-gray-100">
+    <div className="h-full flex bg-editor-900 text-gray-100">
       {/* 左侧导航栏 */}
-      <aside className="flex-shrink-0 border-r border-gray-700 bg-sidebar" style={{ width: sidebarWidth }}>
+      <aside className="flex-shrink-0 border-r border-editor-700 bg-sidebar" style={{ width: sidebarWidth }}>
         {sidebar}
       </aside>
 
@@ -93,7 +93,7 @@ const Layout: React.FC<LayoutProps> = ({ sidebar, main, contextPanel, showContex
             onMouseDown={handleContextResizeStart}
             title="拖拽调整面板宽度"
           />
-          <aside className="flex-shrink-0 border-l border-gray-700 bg-sidebar" style={{ width: contextWidth }}>
+          <aside className="flex-shrink-0 border-l border-editor-700 bg-sidebar" style={{ width: contextWidth }}>
             {contextPanel}
           </aside>
         </>

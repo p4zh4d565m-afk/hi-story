@@ -6,3 +6,63 @@ html, body, #root {
   @apply h-full m-0 p-0 overflow-hidden;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
 }
+
+/* ===== 滚动条美化 · 蓝绿调细滚动条 ===== */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #417085;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #56879A;
+}
+
+/* ===== 中文小说排版：首行缩进两字符，段落间无额外间距 ===== */
+.ProseMirror p {
+  text-indent: 2em;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+/* 标题不需要缩进 */
+.ProseMirror h1,
+.ProseMirror h2,
+.ProseMirror h3,
+.ProseMirror h4,
+.ProseMirror h5,
+.ProseMirror h6 {
+  text-indent: 0;
+}
+
+/* 列表项不需要缩进 */
+.ProseMirror li {
+  text-indent: 0;
+}
+
+/* 引用块保持原有样式 */
+.ProseMirror blockquote {
+  text-indent: 0;
+}
+
+/* 代码块不需要首行缩进 */
+.ProseMirror pre {
+  text-indent: 0;
+}
+
+/* ===== 选中文字颜色 · 柔和薄荷绿 ===== */
+::selection {
+  background: rgba(94, 196, 154, 0.35);
+  color: #E1ECF0;
+}
+
+/* ===== 编辑器字号预设（不缩放边距，仅改字号）===== */
+.prose-font-s  { font-size: 14px; }
+.prose-font-m  { font-size: 16px; }
+.prose-font-l  { font-size: 18px; }
+.prose-font-xl { font-size: 20px; }

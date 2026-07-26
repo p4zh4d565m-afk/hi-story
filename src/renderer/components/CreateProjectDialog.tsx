@@ -46,8 +46,8 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-gray-800 rounded-lg shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto border border-gray-700">
-        <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between">
+      <div className="bg-float-800 rounded-lg shadow-2xl w-[480px] max-h-[90vh] overflow-y-auto border border-float-700">
+        <div className="px-6 py-4 border-b border-float-700 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-white">创建新小说</h2>
           <button
             onClick={onClose}
@@ -68,7 +68,7 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="给你的故事起个名字..."
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-float-900 border border-float-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
               autoFocus
             />
@@ -87,7 +87,7 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
                     px-2 py-1 rounded text-xs transition-colors
                     ${selectedTags.includes(tag)
                       ? 'bg-accent text-white'
-                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                      : 'bg-float-700 text-gray-400 hover:bg-float-600'
                     }
                   `}
                 >
@@ -105,7 +105,7 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
               value={style}
               onChange={(e) => setStyle(e.target.value)}
               placeholder="如：古风、轻松、沉重..."
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-float-900 border border-float-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
             />
           </div>
@@ -118,7 +118,7 @@ const CreateProjectDialog: React.FC<CreateProjectDialogProps> = ({
               onChange={(e) => setSummary(e.target.value)}
               placeholder="简单介绍一下你想写的故事..."
               rows={3}
-              className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-float-900 border border-float-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600 resize-none"
             />
           </div>

@@ -57,7 +57,7 @@ const MainArea: React.FC<MainAreaProps> = ({
   return (
     <div className="h-full flex flex-col">
       {/* View toggle bar */}
-      <div className="flex items-center gap-0 px-1 py-1 bg-gray-800 border-b border-gray-700">
+      <div className="flex items-center gap-0 px-1 py-1 bg-editor-800 border-b border-editor-700">
         {([
           { id: 'write' as MainView, label: '✍️ 写作', title: '写作模式' },
           { id: 'chat' as MainView, label: '💬 AI 对话', title: 'AI 对话' },
@@ -69,7 +69,7 @@ const MainArea: React.FC<MainAreaProps> = ({
               px-3 py-1 rounded text-xs transition-colors
               ${view === id
                 ? 'bg-accent text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700'
+                : 'text-gray-400 hover:text-white hover:bg-editor-700'
               }
             `}
             title={title}

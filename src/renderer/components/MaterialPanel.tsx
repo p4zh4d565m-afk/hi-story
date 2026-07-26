@@ -128,9 +128,9 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
   if (!open) return null;
 
   return (
-    <div className="h-full flex flex-col bg-gray-900">
+    <div className="h-full flex flex-col bg-float-900">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+      <div className="px-3 py-2 border-b border-float-700 flex items-center justify-between">
         <div>
           <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">📦 素材管理</h3>
           <p className="text-[10px] text-gray-600 mt-0.5">{materials.length} 条素材</p>
@@ -151,20 +151,20 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="搜索素材..."
-          className="w-full px-2 py-1 bg-gray-800 border border-gray-700 rounded text-white text-xs
+          className="w-full px-2 py-1 bg-float-800 border border-float-700 rounded text-white text-xs
                      focus:outline-none focus:border-accent placeholder-gray-600"
         />
       </div>
 
       {/* Edit form */}
       {editing && (
-        <div className="p-3 border-b border-gray-700 bg-gray-800/50 space-y-2">
+        <div className="p-3 border-b border-float-700 bg-float-800/50 space-y-2">
           <input
             type="text"
             value={editForm.title}
             onChange={(e) => setEditForm(f => ({ ...f, title: e.target.value }))}
             placeholder="标题"
-            className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+            className="w-full px-2 py-1 bg-float-700 border border-float-600 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500"
             autoFocus
           />
@@ -173,7 +173,7 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
             onChange={(e) => setEditForm(f => ({ ...f, content: e.target.value }))}
             placeholder="内容..."
             rows={4}
-            className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+            className="w-full px-2 py-1 bg-float-700 border border-float-600 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500 resize-none"
           />
           <input
@@ -181,7 +181,7 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
             value={editForm.tagsInput}
             onChange={(e) => setEditForm(f => ({ ...f, tagsInput: e.target.value }))}
             placeholder="标签，用逗号分隔"
-            className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+            className="w-full px-2 py-1 bg-float-700 border border-float-600 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500"
           />
           <div className="flex items-center gap-2">
@@ -223,7 +223,7 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
           <div
             key={m.id}
             className={`px-3 py-2 border-b border-gray-800 cursor-pointer transition-colors
-              ${selectedMaterial?.id === m.id ? 'bg-sidebar-active' : 'hover:bg-gray-800/70'}`}
+              ${selectedMaterial?.id === m.id ? 'bg-sidebar-active' : 'hover:bg-float-800/70'}`}
             onClick={() => setSelectedMaterial(selectedMaterial?.id === m.id ? null : m)}
           >
             <div className="flex items-center justify-between">
@@ -240,7 +240,7 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
                 <p className="text-[11px] text-gray-400 whitespace-pre-wrap line-clamp-6">{m.content}</p>
                 <div className="flex flex-wrap gap-1 mt-1">
                   {m.tags.map(tag => (
-                    <span key={tag} className="px-1 py-0.5 bg-gray-700 rounded text-[9px] text-gray-400">{tag}</span>
+                    <span key={tag} className="px-1 py-0.5 bg-float-700 rounded text-[9px] text-gray-400">{tag}</span>
                   ))}
                 </div>
                 <div className="text-[9px] text-gray-600">
@@ -252,7 +252,7 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
             {selectedMaterial?.id !== m.id && (
               <div className="flex items-center gap-1 mt-0.5">
                 {m.tags.slice(0, 3).map(tag => (
-                  <span key={tag} className="px-1 py-0.5 bg-gray-800 rounded text-[8px] text-gray-500">{tag}</span>
+                  <span key={tag} className="px-1 py-0.5 bg-float-800 rounded text-[8px] text-gray-500">{tag}</span>
                 ))}
                 {m.tags.length > 3 && <span className="text-[8px] text-gray-600">+{m.tags.length - 3}</span>}
                 <span className="text-[9px] text-gray-600 ml-auto">{new Date(m.createdAt).toLocaleDateString('zh-CN')}</span>

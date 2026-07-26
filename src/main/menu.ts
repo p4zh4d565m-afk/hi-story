@@ -80,6 +80,18 @@ export function createAppMenu(mainWindow: BrowserWindow): void {
       ],
     },
     {
+      label: '数据库',
+      submenu: [
+        {
+          label: '📚 浏览参考库...',
+          accelerator: 'CmdOrCtrl+D',
+          click: () => {
+            mainWindow.webContents.send('menu:browse-database');
+          },
+        },
+      ],
+    },
+    {
       label: '帮助',
       submenu: [
         {

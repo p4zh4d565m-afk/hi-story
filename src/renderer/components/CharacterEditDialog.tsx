@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Character, Chapter, WorldEntry } from '../types';
+import OutlineEditor, { type OutlineNode } from './OutlineEditor';
 
 interface CharacterEditDialogProps {
   open: boolean;
@@ -31,30 +32,38 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
   const [form, setForm] = useState({
     name: '',
     aliases: '',
-    appearance: '',
-    personality: '',
-    background: '',
-    arc: '',
   });
+  const [outline, setOutline] = useState<OutlineNode[]>([]);
   const [saving, setSaving] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  // 用于防止重复加载
+  const loadedCharacterId = useRef<string | null>(null);
 
   useEffect(() => {
-    if (character) {
-      setForm({
-        name: character.name === '新角色' ? '' : character.name,
-        aliases: character.aliases || '',
-        appearance: character.appearance || '',
-        personality: character.personality || '',
-        background: character.background || '',
-        arc: character.arc || '',
-      });
-      // Auto-focus name field after render
-      setTimeout(() => nameRef.current?.focus(), 100);
+    if (character && open) {
+      // 只在打开不同角色时重新加载
+      if (loadedCharacterId.current !== character.id) {
+        loadedCharacterId.current = character.id;
+        setForm({
+          name: character.name === '新角色' ? '' : character.name,
+          aliases: character.aliases || '',
+        });
+        try {
+          const parsed = JSON.parse(character.profileOutline || '[]');
+          setOutline(Array.isArray(parsed) && parsed.length > 0 ? parsed : [{ id: 'root', text: '', children: [] }]);
+        } catch {
+          setOutline([{ id: 'root', text: '', children: [] }]);
+        }
+        setTimeout(() => nameRef.current?.focus(), 100);
+      }
+    }
+    if (!open) {
+      loadedCharacterId.current = null;
     }
   }, [character?.id, open]);
 
-  if (!open || !character) return null;
+  if (!character) return null;
+  if (!open) return null;
 
   const handleChange = (field: string, value: string) => {
     setForm(prev => ({ ...prev, [field]: value }));
@@ -65,7 +74,8 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
     if (!form.name.trim()) return;
     setSaving(true);
     try {
-      await onSave({ id: character.id, ...form });
+      const profileOutline = JSON.stringify(outline);
+      await onSave({ id: character.id, name: form.name, aliases: form.aliases, profileOutline });
       onClose();
     } finally {
       setSaving(false);
@@ -81,9 +91,9 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-gray-800 rounded-lg shadow-2xl w-[520px] max-h-[90vh] overflow-hidden border border-gray-700 flex flex-col">
+      <div className="bg-float-800 rounded-lg shadow-2xl w-[520px] max-h-[90vh] overflow-hidden border border-float-700 flex flex-col">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-700 flex items-center justify-between shrink-0">
+        <div className="px-6 py-4 border-b border-float-700 flex items-center justify-between shrink-0">
           <h2 className="text-lg font-semibold text-white">
             {character.name === '新角色' ? '创建角色' : '编辑角色'}
           </h2>
@@ -108,7 +118,7 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
               value={form.name}
               onChange={(e) => handleChange('name', e.target.value)}
               placeholder="角色姓名"
-              className="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2.5 bg-float-900 border border-float-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
             />
           </div>
@@ -121,61 +131,26 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
               value={form.aliases}
               onChange={(e) => handleChange('aliases', e.target.value)}
               placeholder="如：剑圣、北境之王、小师妹..."
-              className="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2.5 bg-float-900 border border-float-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
             />
           </div>
 
-          {/* Appearance */}
+          {/* ── 幕布式层级大纲编辑器 ── */}
           <div>
-            <label className="block text-sm text-gray-400 mb-1">外貌特征</label>
-            <textarea
-              value={form.appearance}
-              onChange={(e) => handleChange('appearance', e.target.value)}
-              placeholder="容貌、体型、穿着、标志性特征、年龄感..."
-              rows={3}
-              className="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded text-white text-sm
-                         focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
-            />
-          </div>
-
-          {/* Personality */}
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">性格特征</label>
-            <textarea
-              value={form.personality}
-              onChange={(e) => handleChange('personality', e.target.value)}
-              placeholder="性格标签、行为模式、内在动机、弱点、说话风格..."
-              rows={3}
-              className="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded text-white text-sm
-                         focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
-            />
-          </div>
-
-          {/* Background */}
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">背景故事</label>
-            <textarea
-              value={form.background}
-              onChange={(e) => handleChange('background', e.target.value)}
-              placeholder="出身、成长经历、关键事件、内心创伤、人生目标..."
-              rows={4}
-              className="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded text-white text-sm
-                         focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
-            />
-          </div>
-
-          {/* Arc */}
-          <div>
-            <label className="block text-sm text-gray-400 mb-1">角色弧线</label>
-            <textarea
-              value={form.arc}
-              onChange={(e) => handleChange('arc', e.target.value)}
-              placeholder="角色的成长轨迹：起点 → 转折事件 → 最终状态..."
-              rows={3}
-              className="w-full px-3 py-2.5 bg-gray-900 border border-gray-700 rounded text-white text-sm
-                         focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
-            />
+            <label className="block text-sm text-gray-400 mb-2">
+              📋 角色档案大纲
+              <span className="text-gray-600 text-[10px] ml-2">
+                Tab 缩进 · Enter 新建 · Alt+Enter 换行 · ↑↓ 移动
+              </span>
+            </label>
+            <div className="bg-float-900 rounded-lg border border-float-700 p-3 min-h-[200px] max-h-[320px] overflow-y-auto">
+              <OutlineEditor
+                nodes={outline}
+                onChange={setOutline}
+                placeholder="输入第一级标题（如：性格特征），然后 Enter 新建下一项…"
+              />
+            </div>
           </div>
 
           {/* Chapter Appearances */}
@@ -187,11 +162,11 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
                   ({appearances.length} 个章节)
                 </span>
               </label>
-              <div className="max-h-[120px] overflow-y-auto space-y-0.5 bg-gray-900 rounded p-2 border border-gray-700">
+              <div className="max-h-[120px] overflow-y-auto space-y-0.5 bg-float-900 rounded p-2 border border-float-700">
                 {chapters.map((ch, i) => (
                   <label
                     key={ch.id}
-                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-800 cursor-pointer text-xs text-gray-300 transition-colors"
+                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-float-800 cursor-pointer text-xs text-gray-300 transition-colors"
                   >
                     <input
                       type="checkbox"
@@ -217,11 +192,11 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
                   ({worldAssociations.length} 个关联)
                 </span>
               </label>
-              <div className="max-h-[120px] overflow-y-auto space-y-0.5 bg-gray-900 rounded p-2 border border-gray-700">
+              <div className="max-h-[120px] overflow-y-auto space-y-0.5 bg-float-900 rounded p-2 border border-float-700">
                 {worldEntries.map((entry) => (
                   <label
                     key={entry.id}
-                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-gray-800 cursor-pointer text-xs text-gray-300 transition-colors"
+                    className="flex items-center gap-2 px-2 py-1 rounded hover:bg-float-800 cursor-pointer text-xs text-gray-300 transition-colors"
                   >
                     <input
                       type="checkbox"
@@ -247,7 +222,7 @@ const CharacterEditDialog: React.FC<CharacterEditDialogProps> = ({
         </form>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-700 flex justify-between shrink-0">
+        <div className="px-6 py-4 border-t border-float-700 flex justify-between shrink-0">
           <button
             type="button"
             onClick={handleDelete}

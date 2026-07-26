@@ -8,7 +8,7 @@ interface RelationEditDialogProps {
   targetId: string;
   existingRelation?: CharacterRelation;
   characters: Character[];
-  onSave: (sourceId: string, targetId: string, relationType: string, existingId?: string) => void;
+  onSave: (sourceId: string, targetId: string, relationType: string, arrowDirection: string, existingId?: string) => void;
   onDelete: (relationId: string) => void;
   onClose: () => void;
 }
@@ -37,6 +37,7 @@ const RelationEditDialog: React.FC<RelationEditDialogProps> = ({
 }) => {
   const [relationType, setRelationType] = useState(existingRelation?.relationType || '');
   const [customType, setCustomType] = useState('');
+  const [arrowDirection, setArrowDirection] = useState(existingRelation?.arrowDirection || 'none');
   const [saving, setSaving] = useState(false);
 
   const sourceChar = characters.find(c => c.id === sourceId);
@@ -50,7 +51,7 @@ const RelationEditDialog: React.FC<RelationEditDialogProps> = ({
     if (!effectiveType.trim()) return;
     setSaving(true);
     try {
-      await onSave(sourceId, targetId, effectiveType.trim(), existingRelation?.id);
+      await onSave(sourceId, targetId, effectiveType.trim(), arrowDirection, existingRelation?.id);
       onClose();
     } finally {
       setSaving(false);
@@ -66,9 +67,9 @@ const RelationEditDialog: React.FC<RelationEditDialogProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
-      <div className="bg-gray-800 rounded-lg shadow-2xl w-[400px] max-h-[90vh] overflow-hidden border border-gray-700">
+      <div className="bg-float-800 rounded-lg shadow-2xl w-[400px] max-h-[90vh] overflow-hidden border border-float-700">
         {/* Header */}
-        <div className="px-5 py-3 border-b border-gray-700 flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-float-700 flex items-center justify-between">
           <h2 className="text-base font-semibold text-white">
             {existingRelation ? '编辑角色关系' : '创建角色关系'}
           </h2>
@@ -125,7 +126,7 @@ const RelationEditDialog: React.FC<RelationEditDialogProps> = ({
                     px-2 py-2 rounded text-xs text-center transition-colors
                     ${relationType === type
                       ? 'bg-accent text-white ring-1 ring-accent'
-                      : 'bg-gray-700 text-gray-400 hover:bg-gray-600'
+                      : 'bg-float-700 text-gray-400 hover:bg-float-600'
                     }
                   `}
                 >
@@ -145,16 +146,43 @@ const RelationEditDialog: React.FC<RelationEditDialogProps> = ({
                 value={customType}
                 onChange={(e) => setCustomType(e.target.value)}
                 placeholder="输入关系名称..."
-                className="w-full px-3 py-2 bg-gray-900 border border-gray-700 rounded text-white text-sm
+                className="w-full px-3 py-2 bg-float-900 border border-float-700 rounded text-white text-sm
                            focus:outline-none focus:border-accent placeholder-gray-600"
                 autoFocus
               />
             </div>
           )}
+
+          {/* 箭头方向选择 */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-2">箭头方向</label>
+            <div className="grid grid-cols-3 gap-1.5">
+              {([
+                { val: 'forward', label: '⟶', sub: `${sourceChar?.name || 'A'} → ${targetChar?.name || 'B'}` },
+                { val: 'backward', label: '⟵', sub: `${targetChar?.name || 'B'} → ${sourceChar?.name || 'A'}` },
+                { val: 'both', label: '⟷', sub: '双向' },
+              ]).map(({ val, label, sub }) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => setArrowDirection(val)}
+                  className={`px-2 py-2 rounded text-xs text-center transition-colors
+                    ${arrowDirection === val
+                      ? 'bg-accent text-white ring-1 ring-accent'
+                      : 'bg-float-700 text-gray-400 hover:bg-float-600'
+                    }`}
+                  title={sub}
+                >
+                  <span className="block text-lg mb-0.5">{label}</span>
+                  <span className="text-[9px] opacity-70">{sub}</span>
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
-        <div className="px-5 py-3 border-t border-gray-700 flex justify-between items-center">
+        <div className="px-5 py-3 border-t border-float-700 flex justify-between items-center">
           {existingRelation ? (
             <button
               onClick={handleDelete}

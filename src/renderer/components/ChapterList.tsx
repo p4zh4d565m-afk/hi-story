@@ -7,6 +7,7 @@ interface ChapterListProps {
   activeChapterId: string | null;
   onSelect: (id: string) => void;
   onCreate: (title: string) => void;
+  onInsertAfter: (afterChapterId: string, title: string) => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
   loading: boolean;
@@ -17,6 +18,7 @@ const ChapterList: React.FC<ChapterListProps> = ({
   activeChapterId,
   onSelect,
   onCreate,
+  onInsertAfter,
   onDelete,
   onRename,
   loading,
@@ -58,6 +60,13 @@ const ChapterList: React.FC<ChapterListProps> = ({
     setRenameTitle('');
   };
 
+  const handleInsertAfter = (afterChapterId: string) => {
+    const afterCh = chapters.find(c => c.id === afterChapterId);
+    // 自动生成标题：基于被点击章节的序号 + 1
+    const defaultTitle = afterCh ? `第${afterCh.sortOrder + 2}章` : '新章节';
+    onInsertAfter(afterChapterId, defaultTitle);
+  };
+
   useEffect(() => {
     if (renamingId && renameInputRef.current) {
       renameInputRef.current.focus();
@@ -89,7 +98,7 @@ const ChapterList: React.FC<ChapterListProps> = ({
               if (e.key === 'Escape') { setIsCreating(false); setNewTitle(''); }
             }}
             placeholder="章节标题..."
-            className="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-xs
+            className="w-full px-2 py-1.5 bg-sidebar-700 border border-sidebar-700 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500"
             autoFocus
           />
@@ -122,9 +131,6 @@ const ChapterList: React.FC<ChapterListProps> = ({
               onClick={() => onSelect(chapter.id)}
               onContextMenu={(e) => handleContextMenu(e, chapter.id)}
             >
-              <span className="text-xs text-gray-600 w-6 flex-shrink-0">
-                {index + 1}
-              </span>
               {renamingId === chapter.id ? (
                 <input
                   ref={renameInputRef}
@@ -135,9 +141,9 @@ const ChapterList: React.FC<ChapterListProps> = ({
                     if (e.key === 'Enter') handleRenameConfirm();
                     if (e.key === 'Escape') { setRenamingId(null); setRenameTitle(''); }
                   }}
-                  onBlur={() => { setRenamingId(null); setRenameTitle(''); }}
+          onBlur={handleRenameConfirm}
                   onClick={(e) => e.stopPropagation()}
-                  className="flex-1 px-1 py-0 bg-gray-700 border border-accent rounded text-white text-xs
+                  className="flex-1 px-1 py-0 bg-sidebar-700 border border-accent rounded text-white text-xs
                              focus:outline-none"
                 />
               ) : (
@@ -167,7 +173,7 @@ const ChapterList: React.FC<ChapterListProps> = ({
 
       {/* Chapter stats */}
       {chapters.length > 0 && (
-        <div className="px-4 py-2 border-t border-gray-700/50 mt-1">
+        <div className="px-4 py-2 border-t border-sidebar-700/50 mt-1">
           <p className="text-[10px] text-gray-600">
             {chapters.length} 章 · {chapters.filter(c => c.status === 'final').length} 定稿
           </p>
@@ -181,6 +187,20 @@ const ChapterList: React.FC<ChapterListProps> = ({
         y={contextMenu.y}
         onClose={() => setContextMenu(p => ({ ...p, visible: false }))}
         items={[
+          {
+            label: '新章节',
+            icon: '➕',
+            onClick: () => {
+              const nextNum = chapters.length + 1;
+              onCreate(`第${nextNum}章`);
+            },
+          },
+          {
+            label: '在下方插入',
+            icon: '📥',
+            onClick: () => handleInsertAfter(contextMenu.chapterId),
+          },
+          { type: 'separator' as const },
           {
             label: '重命名',
             icon: '✏️',

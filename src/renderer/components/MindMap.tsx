@@ -8,6 +8,7 @@ export interface CharacterRelation {
   sourceId: string;
   targetId: string;
   relationType: string;
+  arrowDirection?: string; // 'forward' | 'backward' | 'both' | 'none'
 }
 
 interface NodePos {
@@ -19,16 +20,22 @@ interface NodePos {
   y: number;
   vx: number;
   vy: number;
+  cardW: number;  // 动态卡片宽度，根据名字长度计算
+  cardH: number;  // 动态卡片高度，根据是否有副标题计算
 }
 
-const CARD_W = 130;
-const CARD_H = 56;
+const MIN_CARD_W = 70;
+const MAX_CARD_W = 200;
+const CARD_W_DEFAULT = 130;
+const CARD_H_NAME_ONLY = 32;   // 仅名字时卡片高度
+const CARD_H_WITH_SUB = 48;    // 有副标题时卡片高度
+const CARD_H_DEFAULT = 56;
 const CARD_R = 10;
 
 const RELATION_COLORS: Record<string, string> = {
-  '父母': '#f43f5e', '子女': '#f43f5e', '配偶': '#ec4899', '恋人': '#ec4899',
-  '仇敌': '#ef4444', '师徒': '#8b5cf6', '朋友': '#3b82f6', '盟友': '#3b82f6',
-  '上下级': '#eab308', '兄弟姐妹': '#10b981', '情敌': '#f97316', '其他': '#6b7280',
+  '父母': '#F0A5BC', '子女': '#F0A5BC', '配偶': '#E89078', '恋人': '#E89078',
+  '仇敌': '#F0A890', '师徒': '#B4A5D9', '朋友': '#8ECAE6', '盟友': '#8ECAE6',
+  '上下级': '#F5D97E', '兄弟姐妹': '#7EE0C8', '情敌': '#F5D97E', '其他': '#B8B0AC',
 };
 
 const RELATION_TYPES = ['父母', '子女', '配偶', '恋人', '兄弟姐妹', '师徒', '朋友', '盟友', '仇敌', '情敌', '上下级', '其他'];
@@ -87,21 +94,25 @@ const MindMap: React.FC<MindMapProps> = ({
   useEffect(() => { draggingRef.current = dragging; }, [dragging]);
   useEffect(() => { viewOffsetRef.current = viewOffset; }, [viewOffset]);
 
-  const [containerSize, setContainerSize] = useState({ w: 800, h: 600 });
+  // ── 使用 canvas 元素自身尺寸（而非容器），确保坐标映射准确 ──
+  const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
 
-  // ── Observe container size ──
   useEffect(() => {
-    const el = containerRef.current;
+    const el = canvasRef.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => {
-      setContainerSize({ w: el.clientWidth, h: el.clientHeight });
-    });
+    // 使用 ResizeObserver 监听画布的实际屏幕尺寸（含 CSS zoom 影响）
+    const updateSize = () => {
+      const rect = el.getBoundingClientRect();
+      setCanvasSize({ w: rect.width, h: rect.height });
+    };
+    updateSize();
+    const ro = new ResizeObserver(updateSize);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  const W = containerSize.w;
-  const H = containerSize.h;
+  const W = canvasSize.w;
+  const H = canvasSize.h;
 
   // ── Sync characters → nodes (only when character list changes) ──
   // Use a stable key: array of ids + metadata
@@ -113,14 +124,29 @@ const MindMap: React.FC<MindMapProps> = ({
     const prev = nodesRef.current;
     const prevMap = new Map(prev.map(n => [n.id, n]));
 
+    // 根据名字长度和副标题计算合适的卡片尺寸
+    const ctx = document.createElement('canvas').getContext('2d');
+    function calcCardSize(name: string, aliases: string, personality: string): { cw: number; ch: number } {
+      if (!ctx) return { cw: CARD_W_DEFAULT, ch: CARD_H_DEFAULT };
+      ctx.font = '13px "Microsoft YaHei", sans-serif';
+      const textW = ctx.measureText(name).width;
+      // 名字宽度 + 左右内边距
+      const cw = Math.max(MIN_CARD_W, Math.min(MAX_CARD_W, Math.ceil(textW) + 16));
+      // 有副标题时卡片更高，只有名字时紧凑贴紧
+      const hasSubtitle = !!(aliases || personality);
+      const ch = hasSubtitle ? CARD_H_WITH_SUB : CARD_H_NAME_ONLY;
+      return { cw, ch };
+    }
+
     let changed = false;
     const updated = characters.map((ch, i) => {
       const existing = prevMap.get(ch.id);
+      const { cw, ch: cardH } = calcCardSize(ch.name, ch.aliases || '', ch.personality || '');
       if (existing) {
         // Only update if metadata changed
-        if (existing.name !== ch.name || existing.aliases !== (ch.aliases || '') || existing.personality !== (ch.personality || '')) {
+        if (existing.name !== ch.name || existing.aliases !== (ch.aliases || '') || existing.personality !== (ch.personality || '') || existing.cardW !== cw || existing.cardH !== cardH) {
           changed = true;
-          return { ...existing, name: ch.name, aliases: ch.aliases || '', personality: ch.personality || '' };
+          return { ...existing, name: ch.name, aliases: ch.aliases || '', personality: ch.personality || '', cardW: cw, cardH: cardH };
         }
         return existing;
       }
@@ -135,6 +161,8 @@ const MindMap: React.FC<MindMapProps> = ({
         x: cx + r * Math.cos(angle) + (Math.random() - 0.5) * 40,
         y: cy + r * Math.sin(angle) + (Math.random() - 0.5) * 40,
         vx: 0, vy: 0,
+        cardW: cw,
+        cardH: cardH,
       };
     });
 
@@ -207,8 +235,10 @@ const MindMap: React.FC<MindMapProps> = ({
         for (const n of simNodes) {
           n.x += n.vx * DAMPING;
           n.y += n.vy * DAMPING;
-          n.x = Math.max(CARD_W / 2, Math.min(W * 3 - CARD_W / 2, n.x));
-          n.y = Math.max(CARD_H / 2, Math.min(H * 3 - CARD_H / 2, n.y));
+          const cw = n.cardW || CARD_W_DEFAULT;
+          const ch = n.cardH || CARD_H_DEFAULT;
+          n.x = Math.max(cw / 2, Math.min(W * 3 - cw / 2, n.x));
+          n.y = Math.max(ch / 2, Math.min(H * 3 - ch / 2, n.y));
         }
       }
 
@@ -253,6 +283,8 @@ const MindMap: React.FC<MindMapProps> = ({
 
     // ── Draw connections ──
     const drawnPairs = new Set<string>();
+    // 记录需要画箭头的连线信息，等节点画完再画箭头（避免被卡片遮挡）
+    const arrowQueue: Array<{ toX: number; toY: number; fromX: number; fromY: number; color: string }> = [];
 
     for (const rel of rels) {
       const s = simNodes.find(n => n.id === rel.sourceId);
@@ -265,12 +297,37 @@ const MindMap: React.FC<MindMapProps> = ({
       const isHovered = hoveredRelation?.id === rel.id;
       const color = getRelationColor(rel.relationType);
 
+      const scw = s.cardW || CARD_W_DEFAULT;
+      const sch = s.cardH || CARD_H_DEFAULT;
+      const tcw = t.cardW || CARD_W_DEFAULT;
+      const tch = t.cardH || CARD_H_DEFAULT;
+
+      // 计算节点边缘点（连线从边缘开始，不被卡片遮挡）
+      const angle = Math.atan2(t.y - s.y, t.x - s.x);
+      const sx = s.x + (scw / 2 + 2) * Math.cos(angle);
+      const sy = s.y + (sch / 2 + 2) * Math.sin(angle);
+      const tx = t.x - (tcw / 2 + 2) * Math.cos(angle);
+      const ty = t.y - (tch / 2 + 2) * Math.sin(angle);
+
       ctx.beginPath();
-      ctx.moveTo(s.x, s.y);
-      ctx.lineTo(t.x, t.y);
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(tx, ty);
       ctx.strokeStyle = isHovered ? color : color + '99';
       ctx.lineWidth = isHovered ? 3 : 2;
       ctx.stroke();
+
+      // 把箭头加入延迟绘制队列（箭头尖端精确落在矩形边框上）
+      const arrow = rel.arrowDirection || 'none';
+      const toEdge = edgeIntersect(t.x, t.y, s.x, s.y, tcw, tch);
+      const fromEdge = edgeIntersect(s.x, s.y, t.x, t.y, scw, sch);
+      if (arrow === 'forward' && toEdge) {
+        arrowQueue.push({ toX: toEdge.x, toY: toEdge.y, fromX: fromEdge.x, fromY: fromEdge.y, color });
+      } else if (arrow === 'backward' && fromEdge) {
+        arrowQueue.push({ toX: fromEdge.x, toY: fromEdge.y, fromX: toEdge.x, fromY: toEdge.y, color });
+      } else if (arrow === 'both') {
+        if (toEdge) arrowQueue.push({ toX: toEdge.x, toY: toEdge.y, fromX: fromEdge.x, fromY: fromEdge.y, color });
+        if (fromEdge) arrowQueue.push({ toX: fromEdge.x, toY: fromEdge.y, fromX: toEdge.x, fromY: toEdge.y, color });
+      }
 
       const mx = (s.x + t.x) / 2;
       const my = (s.y + t.y) / 2;
@@ -305,7 +362,7 @@ const MindMap: React.FC<MindMapProps> = ({
 
         ctx.beginPath();
         ctx.arc(mx, my, isHoveredPlus ? 10 : 7, 0, Math.PI * 2);
-        ctx.fillStyle = isHoveredPlus ? '#7fb380' : 'rgba(60,80,56,0.6)';
+        ctx.fillStyle = isHoveredPlus ? '#5EC49A' : 'rgba(40,80,70,0.6)';
         ctx.fill();
         ctx.fillStyle = '#fff';
         ctx.font = `${isHoveredPlus ? 'bold ' : ''}10px sans-serif`;
@@ -325,7 +382,7 @@ const MindMap: React.FC<MindMapProps> = ({
           (mousePos.x - vo.x) / scale,
           (mousePos.y - vo.y) / scale
         );
-        ctx.strokeStyle = '#7fb380';
+        ctx.strokeStyle = '#5EC49A';
         ctx.lineWidth = 2;
         ctx.setLineDash([6, 3]);
         ctx.stroke();
@@ -339,45 +396,57 @@ const MindMap: React.FC<MindMapProps> = ({
       const isDraggingNode = dragging === node.id;
       const isLinkSrc = linkingFrom === node.id;
 
-      const x = node.x - CARD_W / 2;
-      const y = node.y - CARD_H / 2;
+      const cw = node.cardW || CARD_W_DEFAULT;
+      const ch = node.cardH || CARD_H_DEFAULT;
+      const x = node.x - cw / 2;
+      const y = node.y - ch / 2;
 
-      ctx.shadowColor = isHovered || isDraggingNode || isLinkSrc ? 'rgba(127,179,128,0.5)' : 'rgba(0,0,0,0.3)';
+      ctx.shadowColor = isHovered || isDraggingNode || isLinkSrc ? 'rgba(94,196,154,0.5)' : 'rgba(0,0,0,0.3)';
       ctx.shadowBlur = isHovered || isLinkSrc ? 16 : 6;
       ctx.shadowOffsetY = 2;
 
       ctx.beginPath();
-      roundRect(ctx, x, y, CARD_W, CARD_H, CARD_R);
-      ctx.fillStyle = isHovered || isLinkSrc ? '#3c5636' : isDraggingNode ? '#4a6b44' : '#2a2a3e';
+      roundRect(ctx, x, y, cw, ch, CARD_R);
+      ctx.fillStyle = isHovered || isLinkSrc ? '#1C3D4A' : isDraggingNode ? '#2D5768' : '#152E3A';
       ctx.fill();
 
       ctx.shadowColor = 'transparent';
       ctx.shadowBlur = 0;
       ctx.shadowOffsetY = 0;
-      ctx.strokeStyle = isHovered || isLinkSrc ? '#a5c9a5' : isDraggingNode ? '#8bb88b' : 'rgba(127,179,128,0.35)';
+      ctx.strokeStyle = isHovered || isLinkSrc ? '#7DDDBF' : isDraggingNode ? '#5EC49A' : 'rgba(94,196,154,0.35)';
       ctx.lineWidth = isHovered || isLinkSrc ? 2.5 : isDraggingNode ? 2 : 1.5;
       ctx.stroke();
 
-      ctx.fillStyle = '#e5e7eb';
+      ctx.fillStyle = '#E1ECF0';
       ctx.font = `${isHovered ? 'bold ' : ''}13px "Microsoft YaHei", sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      const displayName = node.name.length > 6 ? node.name.slice(0, 6) + '…' : node.name;
-      ctx.fillText(displayName, node.x, node.y - 10);
+      // 动态宽度下不再截断名字，完整显示
+      const maxChars = Math.max(4, Math.floor((cw - 20) / 8)); // 每个中文字符约13px，留20px内边距
+      const displayName = node.name.length > maxChars ? node.name.slice(0, maxChars) + '…' : node.name;
+      // 根据卡片高度决定名字的垂直位置
+      const hasSubtitle = !!(node.aliases || node.personality);
+      const nameY = hasSubtitle ? node.y - 9 : node.y; // 有副标题时偏上，否则居中
+      ctx.fillText(displayName, node.x, nameY);
 
       const subtitle = node.aliases || (node.personality || '').slice(0, 10);
       if (subtitle) {
-        ctx.fillStyle = '#9ca3af';
+        ctx.fillStyle = '#9CBDCB';
         ctx.font = '10px "Microsoft YaHei", sans-serif';
         const displaySub = subtitle.length > 10 ? subtitle.slice(0, 10) + '…' : subtitle;
-        ctx.fillText(displaySub, node.x, node.y + 11);
+        ctx.fillText(displaySub, node.x, node.y + 13);
       }
 
       if (isLinkSrc) {
-        ctx.fillStyle = '#7fb380';
+        ctx.fillStyle = '#5EC49A';
         ctx.font = '9px "Microsoft YaHei", sans-serif';
-        ctx.fillText('拖到目标角色', node.x, node.y - CARD_H / 2 - 12);
+        ctx.fillText('拖到目标角色', node.x, node.y - ch / 2 - 12);
       }
+    }
+
+    // ── 在节点之上绘制箭头（避免被卡片遮挡）──
+    for (const a of arrowQueue) {
+      drawArrowhead(ctx, a.toX, a.toY, a.fromX, a.fromY, a.color);
     }
 
     ctx.restore();
@@ -418,7 +487,9 @@ const MindMap: React.FC<MindMapProps> = ({
 
   function hitTestNode(wx: number, wy: number): NodePos | null {
     for (const n of nodesRef.current) {
-      if (Math.abs(wx - n.x) < CARD_W / 2 + 4 && Math.abs(wy - n.y) < CARD_H / 2 + 4) {
+      const cw = n.cardW || CARD_W_DEFAULT;
+      const ch = n.cardH || CARD_H_DEFAULT;
+      if (Math.abs(wx - n.x) < cw / 2 + 4 && Math.abs(wy - n.y) < ch / 2 + 4) {
         return n;
       }
     }
@@ -435,7 +506,7 @@ const MindMap: React.FC<MindMapProps> = ({
       if (!s || !t) continue;
       const mx = (s.x + t.x) / 2;
       const my = (s.y + t.y) / 2;
-      if (Math.hypot(wx - mx, wy - my) < 20) return rel;
+      if (Math.hypot(wx - mx, wy - my) < 12) return rel;
     }
 
     for (let i = 0; i < simNodes.length; i++) {
@@ -450,7 +521,7 @@ const MindMap: React.FC<MindMapProps> = ({
 
         const mx = (simNodes[i].x + simNodes[j].x) / 2;
         const my = (simNodes[i].y + simNodes[j].y) / 2;
-        if (Math.hypot(wx - mx, wy - my) < 12) {
+        if (Math.hypot(wx - mx, wy - my) < 10) {
           return { id: '', sourceId: simNodes[i].id, targetId: simNodes[j].id, relationType: '' };
         }
       }
@@ -461,15 +532,19 @@ const MindMap: React.FC<MindMapProps> = ({
   function handleMouseDown(e: React.MouseEvent) {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const world = screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const world = screenToWorld(sx, sy);
 
-    if (e.button === 1 || (e.button === 0 && e.ctrlKey)) {
+    // 中键或右键 → 平移
+    if (e.button === 1 || e.button === 2) {
       setPanning(true);
       setPanStart({ x: e.clientX, y: e.clientY });
       return;
     }
     if (e.button !== 0) return;
 
+    // 先检测关系标签（+ 按钮和关系名称）
     const hitRel = hitTestRelation(world.x, world.y);
     if (hitRel) {
       if (hitRel.id) { onEditRelation(hitRel); }
@@ -485,7 +560,12 @@ const MindMap: React.FC<MindMapProps> = ({
       }
       setDragging(hit.id);
       setDragStart({ x: world.x - hit.x, y: world.y - hit.y });
+      return;
     }
+
+    // 点击空白区域 → 平移视图
+    setPanning(true);
+    setPanStart({ x: e.clientX, y: e.clientY });
   }
 
   function handleMouseMove(e: React.MouseEvent) {
@@ -567,13 +647,13 @@ const MindMap: React.FC<MindMapProps> = ({
   return (
     <div ref={containerRef} className="h-full flex flex-col bg-gray-950">
       <div className="flex items-center gap-3 px-3 py-1.5 border-b border-gray-800 text-[10px] text-gray-500 shrink-0">
-        <span>🖱 拖拽移动</span>
+        <span>🖱 左键拖拽节点</span>
+        <span className="text-gray-700">|</span>
+        <span>✋ 拖拽空白平移</span>
         <span className="text-gray-700">|</span>
         <span>🔗 Shift+拖拽 连关系</span>
         <span className="text-gray-700">|</span>
         <span>🔄 滚轮缩放</span>
-        <span className="text-gray-700">|</span>
-        <span>✋ Ctrl+拖拽 平移</span>
         <span className="text-gray-700">|</span>
         <span>双击编辑角色</span>
         <span className="flex-1" />
@@ -649,6 +729,58 @@ function drawRelationLabel(ctx: CanvasRenderingContext2D, label: string, x: numb
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(label, x, y);
+}
+
+// 计算从节点中心 (cx,cy) 到某个方向点时，连线与矩形边框的交点
+// 矩形宽 cardW 高 cardH，中心在 (cx, cy)
+// 连线往 (targetX, targetY) 方向射出，返回交点的世界坐标
+function edgeIntersect(cx: number, cy: number, targetX: number, targetY: number, cardW: number, cardH: number) {
+  const dx = targetX - cx;
+  const dy = targetY - cy;
+  const hw = cardW / 2;
+  const hh = cardH / 2;
+
+  // 水平和垂直方向的缩放因子
+  const tRight = dx !== 0 ? hw / dx : Infinity;
+  const tLeft  = dx !== 0 ? -hw / dx : Infinity;
+  const tBottom = dy !== 0 ? hh / dy : Infinity;
+  const tTop   = dy !== 0 ? -hh / dy : Infinity;
+
+  // 取正的最小 t
+  let t = Infinity;
+  if (tRight > 0 && tRight < t) t = tRight;
+  if (tLeft  > 0 && tLeft  < t) t = tLeft;
+  if (tBottom > 0 && tBottom < t) t = tBottom;
+  if (tTop   > 0 && tTop   < t) t = tTop;
+
+  if (t === Infinity) return null;
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+// 在连线末端绘制箭头（toX, toY 为箭头尖端位置，fromX, fromY 为连线另一端点）
+function drawArrowhead(ctx: CanvasRenderingContext2D, toX: number, toY: number, fromX: number, fromY: number, color: string) {
+  const angle = Math.atan2(toY - fromY, toX - fromX);
+  const headLen = 18;      // 箭头长度（加大，宏观可见）
+  const headAngle = 0.55;  // 箭头半角（约 31°，更醒目）
+
+  const x1 = toX - headLen * Math.cos(angle - headAngle);
+  const y1 = toY - headLen * Math.sin(angle - headAngle);
+  const x2 = toX - headLen * Math.cos(angle + headAngle);
+  const y2 = toY - headLen * Math.sin(angle + headAngle);
+
+  // 箭头外框（稍粗的描边，确保在浅色背景上也可见）
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(toX, toY);
+  ctx.lineTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)';
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.restore();
 }
 
 export default MindMap;

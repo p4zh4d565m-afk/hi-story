@@ -7,7 +7,7 @@
     "dev": "npm run electron:rebuild && concurrently \"npm run dev:main\" \"npm run dev:renderer\"",
     "dev:main": "tsc -p tsconfig.main.json && electron .",
     "dev:renderer": "vite",
-    "build:main": "tsc -p tsconfig.main.json",
+    "build:main": "tsc -p tsconfig.main.json && node scripts/copy-assets.js",
     "build:renderer": "vite build",
     "build": "npm run build:main && npm run build:renderer",
     "test": "rm -rf node_modules/better-sqlite3/build && npm rebuild better-sqlite3 && vitest run",

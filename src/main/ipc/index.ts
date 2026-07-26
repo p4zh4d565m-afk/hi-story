@@ -6,6 +6,8 @@ import { registerCharacterIpc, registerWorldEntryIpc, registerReferenceLinkIpc, 
 import { registerImportIpc } from './import.ipc';
 import { registerExportIpc } from './export.ipc';
 import { registerCryptoIpc } from './crypto.ipc';
+import { registerReferenceIpc } from './reference.ipc';
+import { registerDatabaseIpc } from './database.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -19,4 +21,6 @@ export function registerAllIpc(): void {
   registerImportIpc();
   registerExportIpc();
   registerCryptoIpc();
+  registerReferenceIpc();
+  registerDatabaseIpc();
 }

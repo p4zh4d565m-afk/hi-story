@@ -102,6 +102,20 @@ export class OpenAIProvider implements AIProvider {
     }
   }
 
+  async embed(inputs: string[], options?: import('../provider').EmbedOptions): Promise<number[][]> {
+    const client = this.getClient();
+    try {
+      const response = await client.embeddings.create({
+        model: options?.model || 'text-embedding-3-small',
+        input: inputs,
+        dimensions: options?.dimensions,
+      });
+      return response.data.map((d: any) => d.embedding);
+    } catch (err: any) {
+      throw new AIError(err.message || 'OpenAI Embedding error', this.name, err.status);
+    }
+  }
+
   getModels(): string[] {
     return [
       'gpt-4o',

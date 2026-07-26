@@ -65,7 +65,7 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
 
   if (editing) {
     return (
-      <div className="px-4 py-2 border-t border-gray-700 bg-gray-800/50">
+      <div className="px-4 py-2 border-t border-editor-700 bg-editor-800/50">
         <div className="flex items-center gap-3 text-[10px]">
           <span className="text-gray-400">🎯 目标</span>
           <label className="text-gray-500">
@@ -74,7 +74,7 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
               type="number"
               value={form.wordTarget}
               onChange={e => setForm(f => ({ ...f, wordTarget: parseInt(e.target.value) || 0 }))}
-              className="w-16 ml-1 px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-white text-[10px] focus:outline-none focus:border-accent"
+              className="w-16 ml-1 px-1.5 py-0.5 bg-editor-700 border border-gray-600 rounded text-white text-[10px] focus:outline-none focus:border-accent"
             />
           </label>
           <label className="text-gray-500">
@@ -83,7 +83,7 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
               type="number"
               value={form.chapterTarget}
               onChange={e => setForm(f => ({ ...f, chapterTarget: parseInt(e.target.value) || 0 }))}
-              className="w-16 ml-1 px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-white text-[10px] focus:outline-none focus:border-accent"
+              className="w-16 ml-1 px-1.5 py-0.5 bg-editor-700 border border-gray-600 rounded text-white text-[10px] focus:outline-none focus:border-accent"
             />
           </label>
           <label className="text-gray-500">
@@ -92,7 +92,7 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
               type="number"
               value={form.dailyTarget}
               onChange={e => setForm(f => ({ ...f, dailyTarget: parseInt(e.target.value) || 0 }))}
-              className="w-16 ml-1 px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-white text-[10px] focus:outline-none focus:border-accent"
+              className="w-16 ml-1 px-1.5 py-0.5 bg-editor-700 border border-gray-600 rounded text-white text-[10px] focus:outline-none focus:border-accent"
             />
           </label>
           <button onClick={handleSave} className="px-2 py-0.5 bg-accent text-white rounded text-[10px] hover:bg-accent-hover">
@@ -108,12 +108,12 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
 
   if (goal) {
     return (
-      <div className="px-4 py-2 border-t border-gray-700 bg-gray-800/50">
+      <div className="px-4 py-2 border-t border-editor-700 bg-editor-800/50">
         <div className="flex items-center gap-4 text-[10px]">
           {/* Word count progress */}
           <div className="flex items-center gap-1.5 flex-1">
             <span className="text-gray-500">📖 {totalWords.toLocaleString()}/{goal.wordTarget.toLocaleString()}</span>
-            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden max-w-[120px]">
+            <div className="flex-1 h-1.5 bg-editor-700 rounded-full overflow-hidden max-w-[120px]">
               <div
                 className={`h-full rounded-full transition-all ${wordPct >= 100 ? 'bg-green-500' : 'bg-accent'}`}
                 style={{ width: `${wordPct}%` }}
@@ -125,7 +125,7 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
           {/* Chapter progress */}
           <div className="flex items-center gap-1.5 flex-1">
             <span className="text-gray-500">📑 {chapterCount}/{goal.chapterTarget}</span>
-            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden max-w-[80px]">
+            <div className="flex-1 h-1.5 bg-editor-700 rounded-full overflow-hidden max-w-[80px]">
               <div
                 className={`h-full rounded-full transition-all ${chPct >= 100 ? 'bg-green-500' : 'bg-accent'}`}
                 style={{ width: `${chPct}%` }}
@@ -154,7 +154,7 @@ const WritingGoal: React.FC<WritingGoalProps> = ({
 
   // No goal set yet
   return (
-    <div className="px-4 py-1.5 border-t border-gray-700 bg-gray-800/50">
+    <div className="px-4 py-1.5 border-t border-editor-700 bg-editor-800/50">
       <button
         onClick={() => setEditing(true)}
         className="text-[10px] text-gray-500 hover:text-accent transition-colors"

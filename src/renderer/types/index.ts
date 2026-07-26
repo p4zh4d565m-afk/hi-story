@@ -66,6 +66,7 @@ export interface OutlineNode {
   title: string;
   summary: string;
   sortOrder: number;
+  createdAt: string;
 }
 
 export interface Character {
@@ -77,6 +78,7 @@ export interface Character {
   personality: string;
   background: string;
   arc: string;
+  profileOutline: string;   // JSON 树 [{id, text, children}]
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
@@ -90,6 +92,7 @@ export interface WorldEntry {
   name: string;
   description: string;
   sortOrder: number;
+  createdAt: string;
 }
 
 export interface Chapter {
@@ -140,4 +143,13 @@ export interface AIConfig {
   baseUrl: string;
   isActive: boolean;
   createdAt: string;
+}
+
+/** 章节历史快照 */
+export interface ChapterHistorySnapshot {
+  id: string;
+  chapterId: string;
+  content: string;
+  wordCount: number;
+  savedAt: string;
 }

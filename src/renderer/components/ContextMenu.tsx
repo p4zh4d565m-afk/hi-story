@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useCallback } from 'react';
 
 export interface MenuItem {
-  label: string;
+  type?: 'item' | 'separator';
+  label?: string;
   icon?: string;
   danger?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
 }
 
 interface ContextMenuProps {
@@ -51,12 +52,16 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ items, visible, x, y, onClose
       className="fixed z-[9999] min-w-[140px] bg-gray-800 border border-gray-600 rounded-lg shadow-2xl py-1 overflow-hidden"
       style={{ left: adjustedX, top: adjustedY }}
     >
-      {items.map((item, i) => (
+      {items.map((item, i) => {
+        if (item.type === 'separator') {
+          return <div key={i} className="my-1 border-t border-gray-600" />;
+        }
+        return (
         <button
           key={i}
           onClick={(e) => {
             e.stopPropagation();
-            item.onClick();
+            item.onClick?.();
             onClose();
           }}
           className={`
@@ -70,7 +75,8 @@ const ContextMenu: React.FC<ContextMenuProps> = ({ items, visible, x, y, onClose
           {item.icon && <span className="text-xs">{item.icon}</span>}
           {item.label}
         </button>
-      ))}
+        );
+      })}
     </div>
   );
 };

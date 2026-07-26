@@ -27,11 +27,19 @@ export interface AIProvider {
   /** 发送消息并获取流式响应 */
   chatStream(messages: ChatMessage[], callbacks: StreamCallbacks, options?: ChatOptions): Promise<void>;
 
+  /** 文本向量化（Embedding），返回每个输入文本对应的向量数组 */
+  embed(inputs: string[], options?: EmbedOptions): Promise<number[][]>;
+
   /** 检查 API Key 是否有效 */
   validateApiKey(): Promise<boolean>;
 
   /** 获取可用模型列表 */
   getModels(): string[];
+}
+
+export interface EmbedOptions {
+  model?: string;
+  dimensions?: number; // 向量维度（部分模型支持调低维度）
 }
 
 export interface ChatOptions {

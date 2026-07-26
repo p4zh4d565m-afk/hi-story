@@ -1,11 +1,9 @@
 import React from 'react';
 import ProjectList from './ProjectList';
 import ChapterList from './ChapterList';
-import OutlineTree from './OutlineTree';
-import OutlineBoard from './OutlineBoard';
 import ContextMenu from './ContextMenu';
-import type { MenuItem } from './ContextMenu';
-import type { Project, Chapter, OutlineNode, Character, WorldEntry } from '../types';
+import type { Project, Chapter, Character, WorldEntry } from '../types';
+import { useUndo } from '../hooks/useUndoManager';
 
 interface SidebarProps {
   projects: Project[];
@@ -20,17 +18,10 @@ interface SidebarProps {
   activeChapterId: string | null;
   onSelectChapter: (id: string) => void;
   onCreateChapter: (title: string) => void;
+  onInsertChapterAfter: (afterChapterId: string, title: string) => void;
   onDeleteChapter: (id: string) => void;
   onRenameChapter: (id: string, title: string) => void;
   chaptersLoading: boolean;
-  // Outline props
-  outlineNodes: OutlineNode[];
-  activeOutlineNodeId: string | null;
-  onSelectOutlineNode: (id: string) => void;
-  onCreateOutlineNode: (parentId: string | null, title: string) => void;
-  onDeleteOutlineNode: (id: string) => void;
-  onUpdateOutlineNode: (id: string, title: string, summary: string) => void;
-  outlineLoading: boolean;
   // Character & World Entry list props
   characters: Character[];
   worldEntries: WorldEntry[];
@@ -46,9 +37,11 @@ interface SidebarProps {
   onDeleteWorldEntry: (id: string) => void;
   onRenameWorldEntry: (id: string, name: string) => void;
   worldEntriesLoading: boolean;
+  // 项目 ID（用于回收站过滤）
+  projectId: string | null;
 }
 
-type TabId = 'structure' | 'characters' | 'world';
+type TabId = 'chapters' | 'characters' | 'world';
 
 const Sidebar: React.FC<SidebarProps> = ({
   projects,
@@ -62,16 +55,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   activeChapterId,
   onSelectChapter,
   onCreateChapter,
+  onInsertChapterAfter,
   onDeleteChapter,
   onRenameChapter,
   chaptersLoading,
-  outlineNodes,
-  activeOutlineNodeId,
-  onSelectOutlineNode,
-  onCreateOutlineNode,
-  onDeleteOutlineNode,
-  onUpdateOutlineNode,
-  outlineLoading,
   characters,
   worldEntries,
   activeCharacterId,
@@ -86,9 +73,9 @@ const Sidebar: React.FC<SidebarProps> = ({
   onDeleteWorldEntry,
   onRenameWorldEntry,
   worldEntriesLoading,
+  projectId,
 }) => {
-  const [tab, setTab] = React.useState<TabId>('structure');
-  const [outlineView, setOutlineView] = React.useState<'tree' | 'board'>('tree');
+  const [tab, setTab] = React.useState<TabId>('chapters');
 
   // === Character context menu & inline rename ===
   const [charCtxMenu, setCharCtxMenu] = React.useState<{ visible: boolean; x: number; y: number; id: string }>({ visible: false, x: 0, y: 0, id: '' });
@@ -106,10 +93,13 @@ const Sidebar: React.FC<SidebarProps> = ({
     place: '🌍', faction: '🏛️', race: '🧬', law: '⚖️', history: '📜', culture: '🎭',
   };
 
+  // 撤销管理器
+  const { undo } = useUndo();
+
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+      <div className="px-4 py-3 border-b border-sidebar-700 flex items-center justify-between">
         <h1 className="text-lg font-bold text-accent">hi story</h1>
         <div className="flex items-center gap-0.5">
           <button
@@ -130,7 +120,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto divide-y divide-gray-700/50">
+      <div className="flex-1 overflow-y-auto divide-y divide-sidebar-700/50">
         <ProjectList
           projects={projects}
           activeProjectId={activeProjectId}
@@ -142,9 +132,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         {activeProjectId && (
           <>
             {/* Tab bar */}
-            <div className="flex border-b border-gray-700">
+            <div className="flex border-b border-sidebar-700">
               {([
-                { id: 'structure' as TabId, label: '结构', icon: '🗂' },
+                { id: 'chapters' as TabId, label: '目录', icon: '📑' },
                 { id: 'characters' as TabId, label: '角色', icon: '👤' },
                 { id: 'world' as TabId, label: '世界', icon: '🌍' },
               ]).map(({ id, label, icon }) => (
@@ -164,65 +154,17 @@ const Sidebar: React.FC<SidebarProps> = ({
               ))}
             </div>
 
-            {tab === 'structure' && (
-              <>
-                {/* View toggle */}
-                <div className="px-4 py-1.5 flex items-center justify-between bg-gray-850/50 border-b border-gray-700/30">
-                  <span className="text-[10px] text-gray-600">大纲视图</span>
-                  <div className="flex bg-gray-700 rounded overflow-hidden">
-                    <button
-                      onClick={() => setOutlineView('tree')}
-                      className={`px-2 py-0.5 text-[10px] transition-colors ${
-                        outlineView === 'tree'
-                          ? 'bg-accent text-white'
-                          : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      🌲 树形
-                    </button>
-                    <button
-                      onClick={() => setOutlineView('board')}
-                      className={`px-2 py-0.5 text-[10px] transition-colors ${
-                        outlineView === 'board'
-                          ? 'bg-accent text-white'
-                          : 'text-gray-400 hover:text-white'
-                      }`}
-                    >
-                      📋 看板
-                    </button>
-                  </div>
-                </div>
-                {outlineView === 'tree' ? (
-                  <OutlineTree
-                    nodes={outlineNodes}
-                    activeNodeId={activeOutlineNodeId}
-                    onSelect={onSelectOutlineNode}
-                    onCreate={onCreateOutlineNode}
-                    onDelete={onDeleteOutlineNode}
-                    onUpdate={onUpdateOutlineNode}
-                    loading={outlineLoading}
-                  />
-                ) : (
-                  <OutlineBoard
-                    nodes={outlineNodes}
-                    activeNodeId={activeOutlineNodeId}
-                    onSelect={onSelectOutlineNode}
-                    onCreate={onCreateOutlineNode}
-                    onDelete={onDeleteOutlineNode}
-                    onUpdate={onUpdateOutlineNode}
-                    loading={outlineLoading}
-                  />
-                )}
+            {tab === 'chapters' && (
                 <ChapterList
                   chapters={chapters}
                   activeChapterId={activeChapterId}
                   onSelect={onSelectChapter}
                   onCreate={onCreateChapter}
+                  onInsertAfter={onInsertChapterAfter}
                   onDelete={onDeleteChapter}
                   onRename={onRenameChapter}
                   loading={chaptersLoading}
                 />
-              </>
             )}
 
             {tab === 'characters' && (
@@ -269,7 +211,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             if (e.key === 'Escape') setRenamingCharId(null);
                           }}
                           onBlur={() => { onRenameCharacter(ch.id, renameCharName.trim() || ch.name); setRenamingCharId(null); }}
-                          className="flex-1 px-1 py-0 bg-gray-700 border border-gray-600 rounded text-white text-xs
+                          className="flex-1 px-1 py-0 bg-sidebar-700 border border-sidebar-700 rounded text-white text-xs
                                      focus:outline-none focus:border-accent"
                           autoFocus
                           onClick={(e) => e.stopPropagation()}
@@ -354,7 +296,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             if (e.key === 'Escape') setRenamingWeId(null);
                           }}
                           onBlur={() => { onRenameWorldEntry(entry.id, renameWeName.trim() || entry.name); setRenamingWeId(null); }}
-                          className="flex-1 px-1 py-0 bg-gray-700 border border-gray-600 rounded text-white text-xs
+                          className="flex-1 px-1 py-0 bg-sidebar-700 border border-sidebar-700 rounded text-white text-xs
                                      focus:outline-none focus:border-accent"
                           autoFocus
                           onClick={(e) => e.stopPropagation()}
@@ -396,6 +338,16 @@ const Sidebar: React.FC<SidebarProps> = ({
             )}
           </>
         )}
+
+        {/* ===== 撤销按钮 ===== */}
+        <button
+          onClick={() => undo()}
+          className="w-full px-4 py-2 text-[10px] text-gray-500 hover:text-gray-300 transition-colors flex items-center justify-between border-t border-sidebar-700"
+          title="撤销（Ctrl+Z）"
+        >
+          <span>↩ 撤销</span>
+          <span className="text-[8px] text-gray-600">Ctrl+Z</span>
+        </button>
       </div>
     </div>
   );

@@ -111,9 +111,9 @@ const WorldEntryCard: React.FC<WorldEntryCardProps> = ({ entry, onSave, onDelete
       />
 
       {/* Content */}
-      <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+      <div className="flex-1 flex flex-col bg-context-900 min-w-0">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-context-700 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-300">
             {entry ? '编辑世界观' : '创建世界观条目'}
           </h3>
@@ -142,7 +142,7 @@ const WorldEntryCard: React.FC<WorldEntryCardProps> = ({ entry, onSave, onDelete
                     flex items-center justify-center gap-1 px-2 py-1.5 rounded text-xs transition-colors
                     ${form.category === cat.value
                       ? 'bg-accent/20 border border-accent/50 text-white'
-                      : 'bg-gray-800 border border-gray-700 text-gray-400 hover:border-gray-500'
+                      : 'bg-context-800 border border-context-700 text-gray-400 hover:border-gray-500'
                     }
                   `}
                 >
@@ -163,7 +163,7 @@ const WorldEntryCard: React.FC<WorldEntryCardProps> = ({ entry, onSave, onDelete
               value={form.name}
               onChange={(e) => handleChange('name', e.target.value)}
               placeholder="条目名称"
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
             />
           </div>
@@ -176,14 +176,14 @@ const WorldEntryCard: React.FC<WorldEntryCardProps> = ({ entry, onSave, onDelete
               onChange={(e) => handleChange('description', e.target.value)}
               placeholder="详细描述这个世界观条目的内容..."
               rows={Math.max(6, Math.floor(panelWidth / 50))}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
               style={{ minHeight: '120px' }}
             />
           </div>
 
           {/* Actions */}
-          <div className="flex justify-between items-center pt-2 border-t border-gray-700">
+          <div className="flex justify-between items-center pt-2 border-t border-context-700">
             <div>
               {entry && (
                 <button

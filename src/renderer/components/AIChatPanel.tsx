@@ -12,6 +12,7 @@ interface ProviderPreset {
   type: 'claude' | 'openai-compatible';
   defaultModel: string;
   models: string[];
+  hint?: string; // 提示信息（如火山方舟需要 ep- ID）
 }
 
 interface SavedConfig {
@@ -43,7 +44,8 @@ const PROVIDERS: ProviderPreset[] = [
   { id: 'claude', name: 'claude', displayName: 'Claude (Anthropic)', baseUrl: 'https://api.anthropic.com', type: 'claude', defaultModel: 'claude-sonnet-4-6', models: ['claude-sonnet-4-6', 'claude-haiku-4-5-20251001', 'claude-opus-4-8', 'claude-fable-5'] },
   { id: 'openai', name: 'openai', displayName: 'OpenAI / ChatGPT', baseUrl: 'https://api.openai.com/v1', type: 'openai-compatible', defaultModel: 'gpt-4o', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'o4-mini', 'o3-mini'] },
   { id: 'deepseek', name: 'deepseek', displayName: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', type: 'openai-compatible', defaultModel: 'deepseek-chat', models: ['deepseek-chat', 'deepseek-reasoner'] },
-  { id: 'doubao', name: 'doubao', displayName: '豆包 (字节)', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', type: 'openai-compatible', defaultModel: 'doubao-pro-32k', models: ['doubao-pro-32k', 'doubao-lite-32k', 'doubao-pro-128k'] },
+  { id: 'doubao', name: 'doubao', displayName: '豆包 (火山方舟)', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', type: 'openai-compatible', defaultModel: 'doubao-seed-evolving', models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro', 'doubao-seed-2-0-pro', 'doubao-seed-2-0-lite', 'doubao-seed-1-8', 'doubao-seed-1-6', 'doubao-seed-1-6-flash'], hint: '也可直接填入 ep- 接入点 ID 或任意豆包模型名' },
+  { id: 'volcengine', name: 'volcengine', displayName: '火山方舟 (全模型)', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', type: 'openai-compatible', defaultModel: 'doubao-seed-evolving', models: ['doubao-seed-evolving', 'doubao-seed-2-1-pro', 'doubao-seed-2-0-pro', 'doubao-seed-2-0-lite', 'deepseek-v4-pro', 'deepseek-v4-flash', 'kimi-k2.6', 'glm-5.2'], hint: '也可直接填入 ep- 接入点 ID 或任意模型名' },
   { id: 'qwen', name: 'qwen', displayName: '通义千问 (阿里)', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1', type: 'openai-compatible', defaultModel: 'qwen-plus', models: ['qwen-turbo', 'qwen-plus', 'qwen-max'] },
   { id: 'zhipu', name: 'zhipu', displayName: '智谱 GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', type: 'openai-compatible', defaultModel: 'glm-4-flash', models: ['glm-4-flash', 'glm-4', 'glm-4-plus'] },
   { id: 'moonshot', name: 'moonshot', displayName: 'Moonshot (Kimi)', baseUrl: 'https://api.moonshot.cn/v1', type: 'openai-compatible', defaultModel: 'moonshot-v1-8k', models: ['moonshot-v1-8k', 'moonshot-v1-32k', 'moonshot-v1-128k'] },
@@ -54,7 +56,8 @@ const PROVIDER_PRICING: Record<string, { input: number; output: number }> = {
   'claude': { input: 80, output: 160 },
   'openai': { input: 8.7, output: 37 },
   'deepseek': { input: 2, output: 8 },
-  'doubao': { input: 0.8, output: 2 },
+  'doubao': { input: 3, output: 12 },
+  'volcengine': { input: 3, output: 12 },
   'qwen': { input: 3, output: 12 },
   'zhipu': { input: 3, output: 9 },
   'moonshot': { input: 3.5, output: 12 },
@@ -169,6 +172,22 @@ function saveConfigsRaw(configs: SavedConfig[]): void {
   try { localStorage.setItem(AI_CONFIGS_KEY, JSON.stringify(configs)); } catch {}
 }
 
+// ═══════════════════════════════════════════════════════════
+// Embedding provider 自动检测
+// ═══════════════════════════════════════════════════════════
+const EMBEDDING_SUPPORT: Record<string, string> = {
+  qwen: 'text-embedding-v3',
+  openai: 'text-embedding-3-small',
+  doubao: 'doubao-embedding',
+  volcengine: 'doubao-embedding',
+};
+
+/** 检查已保存的配置中是否有支持 Embedding 的 */
+async function hasEmbeddingConfig(): Promise<boolean> {
+  const configs = await loadConfigsDecrypted();
+  return configs.some(c => EMBEDDING_SUPPORT[c.providerId] && c.apiKey);
+}
+
 // Generate a UUID v4 without relying on crypto.randomUUID (safer across Electron versions)
 function generateId(): string {
   try {
@@ -248,10 +267,12 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [configsLoaded, setConfigsLoaded] = useState(false);
 
   // New config form
-  const [editingProviderId, setEditingProviderId] = useState('deepseek');
+  const [editingProviderId, setEditingProviderId] = useState('');
   const [editingApiKey, setEditingApiKey] = useState('');
-  const [editingModel, setEditingModel] = useState('deepseek-chat');
+  const [editingModel, setEditingModel] = useState('');
   const [editingLabel, setEditingLabel] = useState('');
+  // 追踪用户是否已经开始填写表单，防止切换提供商后意外清空
+  const formDirtyRef = useRef(false);
 
   // ===== Chat state =====
   const [threadData, setThreadData] = useState<ThreadData>(() => loadThreadData(projectId || ''));
@@ -265,6 +286,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const initialScrollDoneRef = useRef(false);
   // Track previous project to detect switch
   const prevProjectRef = useRef<string | null | undefined>(undefined);
   // Pending AI requests from context menu
@@ -288,8 +310,17 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const activeProvider = PROVIDERS.find(p => p.id === activeConfig?.providerId);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // 首次打开弹到最底部，后续不自动滚（用户自己往上翻）
+    if (!initialScrollDoneRef.current && messages.length > 0) {
+      initialScrollDoneRef.current = true;
+      messagesEndRef.current?.scrollIntoView({ behavior: 'auto' });
+    }
   }, [messages, streamingText]);
+
+  // 项目切换时重置滚动标记
+  useEffect(() => {
+    initialScrollDoneRef.current = false;
+  }, [projectId]);
 
   // Load configs async on mount (decrypt keys via IPC)
   useEffect(() => {
@@ -363,7 +394,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       (async () => {
         try {
           let fullResponse = '';
-          const generator = aiService.chatStream(chatMessages, { model: activeConfig.model });
+          const generator = aiService.chatStream(chatMessages, { model: activeConfig.model, maxTokens: 2048 });
           for await (const token of generator) {
             fullResponse = token;
             setStreamingText(fullResponse);
@@ -412,6 +443,25 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   // Handle thread deletion
   const handleDeleteThread = (threadId: string) => {
     if (!projectId) return;
+    const thread = threadData.threads.find(t => t.id === threadId);
+    const msgs = threadData.messages[threadId] || [];
+
+    // 保存到回收站
+    try {
+      const raw = localStorage.getItem('hi-story-trash-bin');
+      const trash = raw ? JSON.parse(raw) : [];
+      trash.unshift({
+        id: 'trash_' + Date.now(),
+        entityType: 'aiThread',
+        entityId: threadId,
+        entityName: thread?.name || '对话',
+        projectId,
+        data: { thread, messages: msgs },
+        deletedAt: new Date().toISOString(),
+      });
+      localStorage.setItem('hi-story-trash-bin', JSON.stringify(trash.slice(0, 100)));
+    } catch {}
+
     const { [threadId]: _, ...remainingMessages } = threadData.messages;
     const updated: ThreadData = {
       threads: threadData.threads.filter(t => t.id !== threadId),
@@ -433,8 +483,22 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         };
         saveThreadData(prevProjectRef.current!, updated);
       }
-      setThreadData(projectId ? loadThreadData(projectId) : { threads: [], messages: {} });
-      setActiveThreadId(null);
+      const newData = projectId ? loadThreadData(projectId) : { threads: [], messages: {} };
+      // 如果新项目没有 thread，自动创建一个默认对话
+      if (newData.threads.length === 0 && projectId) {
+        const defaultThread: Thread = {
+          id: generateId(),
+          name: '默认对话',
+          category: 'general',
+          createdAt: new Date().toISOString(),
+        };
+        newData.threads = [defaultThread];
+        newData.messages[defaultThread.id] = [];
+        saveThreadData(projectId, newData);
+      }
+      setThreadData(newData);
+      // 自动选中第一个 thread（保留对话历史）
+      setActiveThreadId(newData.threads[0]?.id ?? null);
       setMessages([]);
       setError(null);
       setStreamingText('');
@@ -443,8 +507,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   }, [projectId]);
 
   const handleAddConfig = async () => {
-    if (!editingApiKey.trim()) return;
-    const provider = PROVIDERS.find(p => p.id === editingProviderId)!;
+    if (!editingApiKey.trim() || !editingProviderId) return;
+    const provider = PROVIDERS.find(p => p.id === editingProviderId);
+    if (!provider) return;
     const model = editingModel || provider.defaultModel;
     const label = editingLabel || `${provider.displayName} #${savedConfigs.length + 1}`;
 
@@ -452,7 +517,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       id: generateId(),
       providerId: editingProviderId,
       apiKey: editingApiKey.trim(),
-      model,
+      model: model || 'ep-',
       label,
     };
 
@@ -460,11 +525,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setSavedConfigs(updated);
     await saveConfigsEncrypted(updated);
     setActiveConfigId(newConfig.id);
+    // 保存后不清空表单，方便继续添加
+    formDirtyRef.current = false;
     setShowSettings(false);
-
-    // Reset form
-    setEditingApiKey('');
-    setEditingLabel('');
   };
 
   const handleDeleteConfig = async (id: string) => {
@@ -481,7 +544,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   };
 
   // Merge all provider models into one list for the dropdown
-  const currentProviderModels = PROVIDERS.find(p => p.id === editingProviderId)?.models || [];
+  const currentProviderPreset = PROVIDERS.find(p => p.id === editingProviderId);
+  const currentProviderModels = currentProviderPreset?.models || [];
+  const currentProviderHint = currentProviderPreset?.hint;
 
   const sendMessage = async () => {
     const text = input.trim();
@@ -526,7 +591,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
     try {
       let fullResponse = '';
-      const generator = aiService.chatStream(chatMessages, { model: activeConfig.model });
+      const generator = aiService.chatStream(chatMessages, { model: activeConfig.model, maxTokens: 2048 });
 
       for await (const token of generator) {
         fullResponse = token;
@@ -572,9 +637,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     : null;
 
   return (
-    <div className="h-full flex flex-col bg-gray-900">
+    <div className="h-full flex flex-col bg-aichat-900">
       {/* === Header with thread management === */}
-      <div className="px-4 py-3 border-b border-gray-700 bg-gray-800 flex items-center justify-between gap-2">
+      <div className="px-4 py-3 border-b border-aichat-700 bg-aichat-800 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-gray-300 flex-shrink-0">AI 对话</h3>
         <div className="flex items-center gap-1">
           <button
@@ -592,7 +657,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             🔍
           </button>
           <button
-            onClick={() => setShowSettings(!showSettings)}
+            onClick={() => {
+              setShowSettings(!showSettings);
+            }}
             className="text-gray-400 hover:text-white transition-colors text-sm"
             title="管理 AI 配置"
           >
@@ -602,7 +669,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       </div>
       {/* Thread tabs */}
       {threadData.threads.length > 0 && (
-        <div className="flex items-center gap-0.5 px-2 py-1.5 bg-gray-800/50 border-b border-gray-700 overflow-x-auto">
+        <div className="flex items-center gap-0.5 px-2 py-1.5 bg-aichat-800/50 border-b border-aichat-700 overflow-x-auto">
           {threadData.threads.map(t => (
             <div
               key={t.id}
@@ -613,7 +680,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                 className={`px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors ${
                   t.id === activeThreadId
                     ? 'bg-accent text-white'
-                    : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                    : 'text-gray-400 hover:bg-aichat-700 hover:text-white'
                 }`}
                 title={`${THREAD_CATEGORY_LABELS[t.category]} — ${t.name}`}
               >
@@ -633,14 +700,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
       {/* New thread form */}
       {showNewThread && (
-        <div className="px-3 py-2 border-b border-gray-700 bg-gray-800/50 space-y-2">
+        <div className="px-3 py-2 border-b border-aichat-700 bg-aichat-800/50 space-y-2">
           <input
             type="text"
             value={newThreadName}
             onChange={(e) => setNewThreadName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleCreateThread(); if (e.key === 'Escape') setShowNewThread(false); }}
             placeholder="对话名称..."
-            className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+            className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500"
             autoFocus
           />
@@ -648,7 +715,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             <select
               value={newThreadCategory}
               onChange={(e) => setNewThreadCategory(e.target.value as Thread['category'])}
-              className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-[10px]
+              className="flex-1 px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-[10px]
                          focus:outline-none focus:border-accent"
             >
               {(Object.entries(THREAD_CATEGORY_LABELS) as [Thread['category'], string][]).map(([k, v]) => (
@@ -674,7 +741,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
       {/* Chat history search */}
       {showChatSearch && (
-        <div className="px-3 py-2 border-b border-gray-700 bg-gray-800/50 space-y-2">
+        <div className="px-3 py-2 border-b border-aichat-700 bg-aichat-800/50 space-y-2">
           <div className="flex gap-1">
             <input
               type="text"
@@ -697,7 +764,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                 if (e.key === 'Escape') { setShowChatSearch(false); setChatSearchResults([]); }
               }}
               placeholder="搜索所有对话..."
-              className="flex-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+              className="flex-1 px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
                          focus:outline-none focus:border-accent placeholder-gray-500"
             />
             <button
@@ -717,7 +784,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {r.entries.slice(0, 5).map(entry => (
                     <div
                       key={entry.id}
-                      className="px-2 py-1 my-0.5 bg-gray-900/50 rounded cursor-pointer hover:bg-gray-700 text-[10px] text-gray-400"
+                      className="px-2 py-1 my-0.5 bg-aichat-900/50 rounded cursor-pointer hover:bg-aichat-700 text-[10px] text-gray-400"
                       onClick={() => {
                         setActiveThreadId(r.threadId);
                         setShowChatSearch(false);
@@ -741,13 +808,13 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       )}
 
       {/* Active config display + quick switch */}
-      <div className="px-4 py-1.5 border-b border-gray-700 bg-gray-800/30 flex items-center justify-between gap-2">
+      <div className="px-4 py-1.5 border-b border-aichat-700 bg-aichat-800/30 flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 min-w-0">
           {savedConfigs.length > 0 && (
             <select
               value={activeConfigId ?? ''}
               onChange={(e) => handleSwitchConfig(e.target.value)}
-              className="text-[10px] bg-gray-700 border border-gray-600 rounded px-2 py-1 text-gray-300
+              className="text-[10px] bg-aichat-700 border border-aichat-600 rounded px-2 py-1 text-gray-300
                          focus:outline-none focus:border-accent max-w-[120px] truncate"
             >
               {savedConfigs.map(c => (
@@ -787,23 +854,23 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
       {/* Usage stats panel */}
       {showUsage && (
-        <div className="px-4 py-3 border-b border-gray-700 bg-gray-800/50 space-y-2 text-[10px] max-h-[200px] overflow-y-auto">
+        <div className="px-4 py-3 border-b border-aichat-700 bg-aichat-800/50 space-y-2 text-[10px] max-h-[200px] overflow-y-auto">
           <div className="flex items-center justify-between">
             <span className="text-gray-400 font-medium">📊 用量统计</span>
             <button onClick={() => setShowUsage(false)} className="text-gray-500 hover:text-white text-xs">✕</button>
           </div>
           <div className="grid grid-cols-3 gap-2">
-            <div className="bg-gray-900 rounded p-2 text-center">
+            <div className="bg-aichat-900 rounded p-2 text-center">
               <div className="text-gray-400">总输入</div>
               <div className="text-white font-mono">{(usage.totalInputTokens / 1000).toFixed(1)}k</div>
               <div className="text-gray-600">tokens</div>
             </div>
-            <div className="bg-gray-900 rounded p-2 text-center">
+            <div className="bg-aichat-900 rounded p-2 text-center">
               <div className="text-gray-400">总输出</div>
               <div className="text-white font-mono">{(usage.totalOutputTokens / 1000).toFixed(1)}k</div>
               <div className="text-gray-600">tokens</div>
             </div>
-            <div className="bg-gray-900 rounded p-2 text-center">
+            <div className="bg-aichat-900 rounded p-2 text-center">
               <div className="text-gray-400">总花费</div>
               <div className="text-accent font-mono">¥{usage.totalCost.toFixed(4)}</div>
               <div className="text-gray-600">CNY</div>
@@ -817,7 +884,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
               <summary className="text-gray-500 hover:text-gray-300">按日期/服务展开</summary>
               <div className="mt-1 space-y-1">
                 {Object.entries(usage.sessions).slice(-10).reverse().map(([key, s]) => (
-                  <div key={key} className="flex justify-between text-gray-400 bg-gray-900/50 px-2 py-0.5 rounded">
+                  <div key={key} className="flex justify-between text-gray-400 bg-aichat-900/50 px-2 py-0.5 rounded">
                     <span>{key}</span>
                     <span className="font-mono">
                       i:{(s.inputTokens / 1000).toFixed(1)}k o:{(s.outputTokens / 1000).toFixed(1)}k
@@ -838,7 +905,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
       {/* === Settings panel === */}
       {showSettings && (
-        <div className="px-4 py-3 border-b border-gray-700 bg-gray-800/50 space-y-4 max-h-[350px] overflow-y-auto">
+        <div className="px-4 py-3 border-b border-aichat-700 bg-aichat-800/50 space-y-4 max-h-[350px] overflow-y-auto">
           {/* Existing configs list */}
           {savedConfigs.length > 0 && (
             <div>
@@ -849,16 +916,17 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   return (
                     <div key={c.id}
                       className={`flex items-center gap-2 px-2 py-1.5 rounded text-xs cursor-pointer transition-colors
-                        ${c.id === activeConfigId ? 'bg-accent/20 border border-accent/30' : 'bg-gray-700/50 border border-gray-700 hover:bg-gray-700'}`}
+                        ${c.id === activeConfigId ? 'bg-accent/20 border border-accent/30' : 'bg-aichat-700/50 border border-aichat-700 hover:bg-aichat-700'}`}
                       onClick={() => handleSwitchConfig(c.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (confirm(`删除配置「${c.label}」？`)) handleDeleteConfig(c.id);
+                      }}
                     >
                       <span className="text-[10px]">{c.id === activeConfigId ? '✅' : '○'}</span>
                       <span className="flex-1 text-gray-300 truncate">{c.label}</span>
                       <span className="text-gray-500 text-[10px]">{p?.displayName} · {c.model}</span>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); handleDeleteConfig(c.id); }}
-                        className="text-gray-600 hover:text-red-400 text-xs"
-                      >🗑</button>
                     </div>
                   );
                 })}
@@ -877,7 +945,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   value={editingLabel}
                   onChange={(e) => setEditingLabel(e.target.value)}
                   placeholder="如: 我的豆包 / 公司DeepSeek..."
-                  className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+                  className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
                              focus:outline-none focus:border-accent placeholder-gray-500"
                 />
               </div>
@@ -888,14 +956,25 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   onChange={(e) => {
                     setEditingProviderId(e.target.value);
                     const p = PROVIDERS.find(p => p.id === e.target.value);
-                    if (p) setEditingModel(p.defaultModel);
+                    if (p) {
+                      // 切换提供商时同时更新模型名
+                      // 如果用户已经很填了自定义模型名，切换到有 preset 模型的提供商时才自动切
+                      if (p.models.length > 0) {
+                        setEditingModel(p.defaultModel);
+                      } else {
+                        setEditingModel('');
+                      }
+                    }
                   }}
-                  className="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-xs
+                  className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
                              focus:outline-none focus:border-accent"
                 >
                   {PROVIDERS.map(p => (
                     <option key={p.id} value={p.id}>{p.displayName}</option>
                   ))}
+                  {!editingProviderId && (
+                    <option value="" disabled>-- 请选择 --</option>
+                  )}
                 </select>
               </div>
               <div>
@@ -910,44 +989,67 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   {editingProviderId === 'doubao' && (
                     <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" target="_blank" className="ml-1 text-accent hover:underline" rel="noreferrer">(获取 ↗)</a>
                   )}
+                  {editingProviderId === 'volcengine' && (
+                    <a href="https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey" target="_blank" className="ml-1 text-accent hover:underline" rel="noreferrer">(获取 ↗)</a>
+                  )}
                 </label>
                 <input
                   type="password"
                   value={editingApiKey}
                   onChange={(e) => setEditingApiKey(e.target.value)}
                   placeholder="sk-..."
-                  className="w-full px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
+                  className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
                              focus:outline-none focus:border-accent placeholder-gray-500 font-mono"
                 />
               </div>
               <div>
                 <label className="text-[10px] text-gray-500">模型</label>
-                <select
-                  value={editingModel}
-                  onChange={(e) => setEditingModel(e.target.value)}
-                  className="w-full px-2 py-1.5 bg-gray-700 border border-gray-600 rounded text-white text-xs
-                             focus:outline-none focus:border-accent"
-                >
-                  {currentProviderModels.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  {!currentProviderModels.includes(editingModel) && editingModel && (
-                    <option value={editingModel}>{editingModel} (自定义)</option>
-                  )}
-                </select>
-                {/* Custom model input */}
+                {currentProviderModels.length > 0 && (
+                  <select
+                    value={editingModel}
+                    onChange={(e) => setEditingModel(e.target.value)}
+                    className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                               focus:outline-none focus:border-accent"
+                  >
+                    {currentProviderModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                    {!currentProviderModels.includes(editingModel) && editingModel && (
+                      <option value={editingModel}>{editingModel} (自定义)</option>
+                    )}
+                  </select>
+                )}
+                {/* 模型选择：豆包/火山方舟有下拉列表，其他提供商也有对应列表 */}
+                {currentProviderModels.length > 0 && (
+                  <select
+                    value={editingModel}
+                    onChange={(e) => setEditingModel(e.target.value)}
+                    className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                               focus:outline-none focus:border-accent"
+                  >
+                    {currentProviderModels.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                    {!currentProviderModels.includes(editingModel) && editingModel && (
+                      <option value={editingModel}>{editingModel} (自定义)</option>
+                    )}
+                  </select>
+                )}
+                {/* 自定义模型名输入（始终显示，方便用户输入任意模型名或 ep- ID） */}
                 <input
                   type="text"
                   value={editingModel}
                   onChange={(e) => setEditingModel(e.target.value)}
-                  placeholder="或输入自定义模型名..."
-                  className="w-full mt-1 px-2 py-1 bg-gray-700 border border-gray-600 rounded text-white text-xs
-                             focus:outline-none focus:border-accent placeholder-gray-500"
+                  placeholder={currentProviderModels.length > 0
+                    ? '或输入其他模型名 / ep- 接入点 ID...'
+                    : '输入模型名（必填）...'}
+                  className={`${currentProviderModels.length > 0 ? 'mt-1 ' : ''}w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                             focus:outline-none focus:border-accent placeholder-gray-500`}
                 />
               </div>
               <button
                 onClick={handleAddConfig}
-                disabled={!editingApiKey.trim()}
+                disabled={!editingApiKey.trim() || !editingProviderId}
                 className="w-full py-1.5 text-xs bg-accent text-white rounded hover:bg-accent-hover
                            disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
@@ -983,7 +1085,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         {messages.map((msg) => (
           <div key={msg.id} id={`msg-${msg.id}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             <div className={`max-w-[80%] rounded-lg px-4 py-2.5 text-sm
-              ${msg.role === 'user' ? 'bg-accent text-white' : 'bg-gray-800 text-gray-200 border border-gray-700'}`}>
+              ${msg.role === 'user' ? 'bg-accent text-white' : 'bg-aichat-800 text-gray-200 border border-aichat-700'}`}>
               <div className="whitespace-pre-wrap">{msg.content}</div>
               <div className={`text-[10px] mt-1 ${msg.role === 'user' ? 'text-white/60' : 'text-gray-600'}`}>
                 {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
@@ -994,7 +1096,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
         {isStreaming && streamingText && (
           <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-lg px-4 py-2.5 text-sm bg-gray-800 text-gray-200 border border-gray-700">
+            <div className="max-w-[80%] rounded-lg px-4 py-2.5 text-sm bg-aichat-800 text-gray-200 border border-aichat-700">
               <div className="whitespace-pre-wrap">{streamingText}</div>
               <span className="inline-block w-2 h-4 bg-accent animate-pulse ml-0.5 align-text-bottom" />
             </div>
@@ -1003,7 +1105,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
         {isStreaming && !streamingText && (
           <div className="flex justify-start">
-            <div className="rounded-lg px-4 py-2.5 bg-gray-800 border border-gray-700">
+            <div className="rounded-lg px-4 py-2.5 bg-aichat-800 border border-aichat-700">
               <div className="flex items-center gap-1.5">
                 <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
                 <span className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
@@ -1024,7 +1126,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       </div>
 
       {/* === Input === */}
-      <div className="p-3 border-t border-gray-700 bg-gray-800">
+      <div className="p-3 border-t border-aichat-700 bg-aichat-800">
         <div className="flex gap-2">
           <textarea
             value={input}
@@ -1032,7 +1134,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={savedConfigs.length > 0 ? '和 AI 讨论你的小说...' : '请先点击 ⚙️ 添加 AI 配置...'}
             rows={2}
-            className="flex-1 resize-none rounded bg-gray-900 border border-gray-700 px-3 py-2 text-sm text-white
+            className="flex-1 resize-none rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white
                        focus:outline-none focus:border-accent placeholder-gray-600"
             disabled={isStreaming}
           />

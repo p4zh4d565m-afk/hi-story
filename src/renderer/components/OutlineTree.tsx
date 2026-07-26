@@ -174,7 +174,7 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
                   if (e.key === 'Enter') handleSaveEdit();
                   if (e.key === 'Escape') setEditingId(null);
                 }}
-                className="flex-1 px-1 py-0 bg-gray-700 border border-gray-600 rounded text-white text-xs
+                className="flex-1 px-1 py-0 bg-float-700 border border-float-600 rounded text-white text-xs
                            focus:outline-none focus:border-accent"
                 autoFocus
               />
@@ -238,7 +238,7 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
                 if (e.key === 'Escape') { setIsCreating(null); setNewTitle(''); }
               }}
               placeholder="子节点标题..."
-              className="flex-1 px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-white text-xs
+              className="flex-1 px-1.5 py-0.5 bg-float-700 border border-float-600 rounded text-white text-xs
                          focus:outline-none focus:border-accent placeholder-gray-500"
               autoFocus
             />
@@ -287,7 +287,7 @@ const OutlineTree: React.FC<OutlineTreeProps> = ({
               if (e.key === 'Escape') { setIsCreating(null); setNewTitle(''); }
             }}
             placeholder="大纲节点标题..."
-            className="flex-1 px-1.5 py-0.5 bg-gray-700 border border-gray-600 rounded text-white text-xs
+            className="flex-1 px-1.5 py-0.5 bg-float-700 border border-float-600 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500"
             autoFocus
           />

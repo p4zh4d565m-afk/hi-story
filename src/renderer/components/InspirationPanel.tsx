@@ -172,9 +172,9 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
   }
 
   return (
-    <div className="h-full flex flex-col bg-gray-900 border-l border-gray-700">
+    <div className="h-full flex flex-col bg-inspiration-900 border-l border-inspiration-700">
       {/* Header */}
-      <div className="px-3 py-2 border-b border-gray-700 flex items-center justify-between">
+      <div className="px-3 py-2 border-b border-inspiration-700 flex items-center justify-between">
         <div>
           <h3 className="text-xs font-semibold text-gray-300 uppercase tracking-wide">灵感与知识库</h3>
           <p className="text-[10px] text-gray-600 mt-0.5">文学、历史、神话、成语词典</p>
@@ -184,7 +184,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
 
       {/* How to use section */}
       {showHowToUse && (
-        <div className="p-3 border-b border-gray-700">
+        <div className="p-3 border-b border-inspiration-700">
           <div className="flex items-center justify-between mb-2">
             <p className="text-[10px] text-gray-500 uppercase">💡 文学数据库怎么用？</p>
             <button onClick={() => setShowHowToUse(false)} className="text-gray-600 hover:text-white text-[10px]">收起</button>
@@ -211,11 +211,11 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
 
       {/* What AI knows */}
       {!showHowToUse && (
-        <div className="p-3 border-b border-gray-700">
+        <div className="p-3 border-b border-inspiration-700">
           <p className="text-[10px] text-gray-500 mb-2 uppercase">🧠 AI 已掌握的知识（无需下载）</p>
           <div className="flex flex-wrap gap-1">
             {AI_KNOWLEDGE.map(item => (
-              <span key={item} className="px-1.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-[9px] text-gray-400">{item}</span>
+              <span key={item} className="px-1.5 py-0.5 bg-inspiration-800 border border-inspiration-700 rounded text-[9px] text-gray-400">{item}</span>
             ))}
           </div>
         </div>
@@ -238,7 +238,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
       </div>
 
       {/* Search bar */}
-      <div className="px-3 py-2 border-b border-gray-700">
+      <div className="px-3 py-2 border-b border-inspiration-700">
         <div className="flex gap-1">
           <input
             type="text"
@@ -246,7 +246,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="搜索数据库..."
-            className="flex-1 px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-white text-xs
+            className="flex-1 px-2 py-1.5 bg-inspiration-800 border border-inspiration-700 rounded text-white text-xs
                        focus:outline-none focus:border-accent placeholder-gray-600"
             autoFocus
           />
@@ -269,7 +269,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
               className={`px-1.5 py-0.5 rounded text-[10px] transition-colors
                 ${activeLayers.has(name)
                   ? 'bg-accent/30 text-accent border border-accent/50'
-                  : 'bg-gray-800 text-gray-500 border border-gray-700 hover:text-gray-300'
+                  : 'bg-inspiration-800 text-gray-500 border border-inspiration-700 hover:text-gray-300'
                 }`}
               title={description}
             >
@@ -288,7 +288,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
 
       {/* Search tabs */}
       {tabs.length > 0 && (
-        <div className="flex items-center gap-0.5 px-2 py-1.5 bg-gray-800/50 border-b border-gray-700 overflow-x-auto">
+        <div className="flex items-center gap-0.5 px-2 py-1.5 bg-inspiration-800/50 border-b border-inspiration-700 overflow-x-auto">
           {tabs.map(t => (
             <div key={t.id} className="flex items-center gap-0.5 flex-shrink-0">
               <button
@@ -296,7 +296,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
                 className={`px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors ${
                   t.id === activeTabId
                     ? 'bg-accent text-white'
-                    : 'text-gray-400 hover:bg-gray-700 hover:text-white'
+                    : 'text-gray-400 hover:bg-inspiration-700 hover:text-white'
                 }`}
               >
                 🔍 {t.query.slice(0, 12)}
@@ -336,7 +336,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
           const layerInfo = LAYERS.find(l => l.name === layerName);
           return (
             <div key={layerName} className="border-b border-gray-800">
-              <div className="px-3 py-1.5 bg-gray-800/50 text-[10px] text-gray-500 sticky top-0 flex items-center gap-1">
+              <div className="px-3 py-1.5 bg-inspiration-800/50 text-[10px] text-gray-500 sticky top-0 flex items-center gap-1">
                 <span>{layerInfo?.label || layerName}</span>
                 <span className="text-gray-700">({layerResults.length})</span>
               </div>
@@ -346,7 +346,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
                 return (
                   <div
                     key={resultId}
-                    className={`px-3 py-2 cursor-pointer transition-colors ${isActive ? 'bg-sidebar-active' : 'hover:bg-gray-800/70'}`}
+                    className={`px-3 py-2 cursor-pointer transition-colors ${isActive ? 'bg-sidebar-active' : 'hover:bg-inspiration-800/70'}`}
                     onClick={() => setActiveResultId(isActive ? null : resultId)}
                   >
                     <div className="text-xs text-gray-300 font-medium truncate">{result.title}</div>
@@ -360,7 +360,7 @@ const InspirationPanel: React.FC<InspirationPanelProps> = ({
                         >💬 发到对话</button>
                         <button
                           onClick={(e) => { e.stopPropagation(); handleSaveAsMaterial?.(result); }}
-                          className="text-[10px] px-2 py-0.5 bg-gray-700 text-gray-400 rounded hover:bg-gray-600 transition-colors"
+                          className="text-[10px] px-2 py-0.5 bg-inspiration-700 text-gray-400 rounded hover:bg-inspiration-600 transition-colors"
                         >{savedMaterialId ? '📌 已收藏' : '📌 收藏'}</button>
                       </div>
                     )}

@@ -23,16 +23,16 @@ interface RelationshipGraphProps {
 }
 
 const RELATION_COLORS: Record<string, string> = {
-  '父母': '#f43f5e',
-  '子女': '#f43f5e',
-  '恋人': '#ec4899',
-  '配偶': '#ec4899',
-  '仇敌': '#ef4444',
-  '师徒': '#8b5cf6',
-  '朋友': '#3b82f6',
-  '盟友': '#3b82f6',
-  '上下级': '#eab308',
-  '其他': '#6b7280',
+  '父母': '#F0A5BC',
+  '子女': '#F0A5BC',
+  '恋人': '#E89078',
+  '配偶': '#E89078',
+  '仇敌': '#F0A890',
+  '师徒': '#B4A5D9',
+  '朋友': '#8ECAE6',
+  '盟友': '#8ECAE6',
+  '上下级': '#F5D97E',
+  '其他': '#B8B0AC',
 };
 
 const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
@@ -193,14 +193,14 @@ const RelationshipGraph: React.FC<RelationshipGraphProps> = ({
       // Circle
       ctx.beginPath();
       ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-      ctx.fillStyle = isHovered ? '#7c5cfc' : '#363650';
+      ctx.fillStyle = isHovered ? '#5EC49A' : '#1C3D4A';
       ctx.fill();
-      ctx.strokeStyle = isHovered ? '#a78bfa' : '#6b7280';
+      ctx.strokeStyle = isHovered ? '#7DDDBF' : '#417085';
       ctx.lineWidth = isHovered ? 2 : 1;
       ctx.stroke();
 
       // Name
-      ctx.fillStyle = '#e5e7eb';
+      ctx.fillStyle = '#E1ECF0';
       ctx.font = `${isHovered ? 'bold ' : ''}11px "Microsoft YaHei", sans-serif`;
       ctx.textAlign = 'center';
       ctx.fillText(node.name.length > 4 ? node.name.slice(0, 4) + '..' : node.name, node.x, node.y - r - 6);

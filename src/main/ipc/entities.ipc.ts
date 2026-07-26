@@ -19,6 +19,7 @@ export function registerCharacterIpc(): void {
   ipcMain.handle('db:character:findByProject', (_e, pid: string) => { try { return c().findByProject(pid); } catch (err) { return { success: false, error: (err as Error).message }; } });
   ipcMain.handle('db:character:update', (_e, i: UpdateCharacterInput) => { try { return c().update(i); } catch (err) { return { success: false, error: (err as Error).message }; } });
   ipcMain.handle('db:character:remove', (_e, id: string) => { try { return c().remove(id); } catch (err) { return { success: false, error: (err as Error).message }; } });
+  ipcMain.handle('db:character:restore', (_e, data: any) => { try { return c().restore(data); } catch (err) { return { success: false, error: (err as Error).message }; } });
 }
 
 export function registerWorldEntryIpc(): void {
@@ -27,6 +28,7 @@ export function registerWorldEntryIpc(): void {
   ipcMain.handle('db:worldEntry:findByProject', (_e, pid: string) => { try { return w().findByProject(pid); } catch (err) { return { success: false, error: (err as Error).message }; } });
   ipcMain.handle('db:worldEntry:update', (_e, i: UpdateWorldEntryInput) => { try { return w().update(i); } catch (err) { return { success: false, error: (err as Error).message }; } });
   ipcMain.handle('db:worldEntry:remove', (_e, id: string) => { try { return w().remove(id); } catch (err) { return { success: false, error: (err as Error).message }; } });
+  ipcMain.handle('db:worldEntry:restore', (_e, data: any) => { try { return w().restore(data); } catch (err) { return { success: false, error: (err as Error).message }; } });
 }
 
 export function registerReferenceLinkIpc(): void {
@@ -36,6 +38,7 @@ export function registerReferenceLinkIpc(): void {
   ipcMain.handle('db:referenceLink:findAllForEntity', (_e, type: string, id: string) => { try { return r().findAllForEntity(type, id); } catch (err) { return { success: false, error: (err as Error).message }; } });
   ipcMain.handle('db:referenceLink:findAllCharacterRelations', (_e, pid: string) => { try { return r().findAllCharacterRelations(pid); } catch (err) { return { success: false, error: (err as Error).message }; } });
   ipcMain.handle('db:referenceLink:remove', (_e, id: string) => { try { return r().remove(id); } catch (err) { return { success: false, error: (err as Error).message }; } });
+  ipcMain.handle('db:referenceLink:restore', (_e, data: any) => { try { return r().restore(data); } catch (err) { return { success: false, error: (err as Error).message }; } });
 }
 
 export function registerSearchIpc(): void {

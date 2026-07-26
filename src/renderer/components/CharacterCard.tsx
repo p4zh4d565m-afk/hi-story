@@ -106,9 +106,9 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
       />
 
       {/* Content */}
-      <div className="flex-1 flex flex-col bg-gray-900 min-w-0">
+      <div className="flex-1 flex flex-col bg-context-900 min-w-0">
         {/* Header */}
-        <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between">
+        <div className="px-4 py-3 border-b border-context-700 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-gray-300">
             {character ? '编辑角色' : '创建角色'}
           </h3>
@@ -134,7 +134,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
               value={form.name}
               onChange={(e) => handleChange('name', e.target.value)}
               placeholder="角色姓名"
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
             />
           </div>
@@ -147,7 +147,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
               value={form.aliases}
               onChange={(e) => handleChange('aliases', e.target.value)}
               placeholder="如：剑圣、北境之王、小师妹..."
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600"
             />
           </div>
@@ -160,7 +160,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
               onChange={(e) => handleChange('appearance', e.target.value)}
               placeholder="容貌、体型、穿着、标志性特征..."
               rows={Math.max(3, Math.floor(panelWidth / 80))}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
               style={{ minHeight: '60px' }}
             />
@@ -174,7 +174,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
               onChange={(e) => handleChange('personality', e.target.value)}
               placeholder="性格层次：表层 / 深层 / 隐藏面..."
               rows={Math.max(3, Math.floor(panelWidth / 80))}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
               style={{ minHeight: '60px' }}
             />
@@ -188,7 +188,7 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
               onChange={(e) => handleChange('background', e.target.value)}
               placeholder="出身、成长经历、关键事件、内心创伤..."
               rows={Math.max(4, Math.floor(panelWidth / 60))}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
               style={{ minHeight: '80px' }}
             />
@@ -202,14 +202,14 @@ const CharacterCard: React.FC<CharacterCardProps> = ({ character, onSave, onClos
               onChange={(e) => handleChange('arc', e.target.value)}
               placeholder="角色的成长/改变轨迹：起点 → 转折 → 终点..."
               rows={Math.max(3, Math.floor(panelWidth / 80))}
-              className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded text-white text-sm
+              className="w-full px-3 py-2 bg-context-800 border border-context-700 rounded text-white text-sm
                          focus:outline-none focus:border-accent placeholder-gray-600 resize-y"
               style={{ minHeight: '60px' }}
             />
           </div>
 
           {/* Actions */}
-          <div className="flex justify-end gap-3 pt-2 border-t border-gray-700">
+          <div className="flex justify-end gap-3 pt-2 border-t border-context-700">
             <button
               type="button"
               onClick={onClose}

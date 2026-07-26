@@ -125,6 +125,11 @@ export class ClaudeProvider implements AIProvider {
     }
   }
 
+  /** Claude 不支持 Embedding API，调用此方法会抛出错误 */
+  async embed(_inputs: string[], _options?: import('../provider').EmbedOptions): Promise<number[][]> {
+    throw new AIError('Claude provider 不支持 Embedding API，请使用 OpenAI 兼容 provider（如通义千问）', this.name);
+  }
+
   getModels(): string[] {
     return [
       'claude-opus-4-8',

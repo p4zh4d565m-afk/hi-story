@@ -48,6 +48,14 @@ export function registerOutlineIpc(): void {
     }
   });
 
+  ipcMain.handle('db:outline:restore', (_event, data: OutlineNode): IpcResult<OutlineNode> => {
+    try {
+      return getRepo().restore(data);
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
+  });
+
   ipcMain.handle('db:outline:reorder', (_event, input: ReorderOutlineNodesInput): IpcResult<void> => {
     try {
       return getRepo().reorder(input);

@@ -140,6 +140,88 @@ const MIGRATIONS = [
       );
     `,
   },
+
+  // 002: 关系箭头方向
+  {
+    version: 2,
+    sql: `
+      ALTER TABLE reference_links ADD COLUMN arrow_direction TEXT NOT NULL DEFAULT 'none';
+      CREATE INDEX IF NOT EXISTS idx_rl_arrow ON reference_links(arrow_direction);
+    `,
+  },
+
+  // 003: 角色幕布式大纲
+  {
+    version: 3,
+    sql: `
+      ALTER TABLE characters ADD COLUMN profile_outline TEXT NOT NULL DEFAULT '[]';
+    `,
+  },
+
+  // 004: 章节历史版本
+  {
+    version: 4,
+    sql: `
+      CREATE TABLE IF NOT EXISTS chapter_history (
+        id TEXT PRIMARY KEY,
+        chapter_id TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        word_count INTEGER NOT NULL DEFAULT 0,
+        saved_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_chapter_history_chapter ON chapter_history(chapter_id);
+    `,
+  },
+  // 005: 参考文档库（导入小说作为写作参考）
+  {
+    version: 5,
+    sql: `
+      -- 参考文档元数据（全局共享，不关联项目）
+      CREATE TABLE IF NOT EXISTS reference_docs (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        author TEXT,
+        format TEXT NOT NULL CHECK(format IN ('txt','epub','markdown')),
+        total_words INTEGER NOT NULL DEFAULT 0,
+        source_file TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      -- 文档分块（用于相似度匹配）
+      CREATE TABLE IF NOT EXISTS reference_chunks (
+        id TEXT PRIMARY KEY,
+        doc_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        word_count INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (doc_id) REFERENCES reference_docs(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_ref_chunks_doc ON reference_chunks(doc_id);
+
+      -- FTS5 全文索引（加速候选召回）
+      CREATE VIRTUAL TABLE IF NOT EXISTS reference_chunks_fts USING fts5(
+        content,
+        content='reference_chunks',
+        content_rowid='rowid'
+      );
+    `,
+  },
+
+  // 006: 向量索引（语义搜索）
+  {
+    version: 6,
+    sql: `
+      -- reference_chunks 加向量列（text2vec-base-chinese: 768 维 × 4字节 = 3072 B）
+      ALTER TABLE reference_chunks ADD COLUMN embedding BLOB;
+
+      -- 文学库向量表（literary.db 为只读，向量存主库）
+      CREATE TABLE IF NOT EXISTS lit_embeddings (
+        lit_rowid INTEGER PRIMARY KEY,
+        embedding BLOB NOT NULL
+      );
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

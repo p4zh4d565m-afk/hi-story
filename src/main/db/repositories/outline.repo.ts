@@ -108,6 +108,16 @@ export class OutlineNodeRepo {
     return { success: true };
   }
 
+  /** 恢复已删除的大纲节点（保留原始 ID） */
+  restore(node: OutlineNode): IpcResult<OutlineNode> {
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO outline_nodes (id, project_id, parent_id, title, summary, sort_order, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(node.id, node.projectId, node.parentId, node.title, node.summary, node.sortOrder, node.createdAt, now);
+    return this.findById(node.id);
+  }
+
   /** Remove all nodes belonging to a project (for cascade cleanup) */
   removeByProject(projectId: string): void {
     this.db.prepare('DELETE FROM outline_nodes WHERE project_id = ?').run(projectId);
@@ -144,6 +154,7 @@ export class OutlineNodeRepo {
       title: row.title as string,
       summary: row.summary as string,
       sortOrder: row.sort_order as number,
+      createdAt: row.created_at as string,
     };
   }
 }

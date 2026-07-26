@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
@@ -18,11 +18,21 @@ interface RichEditorProps {
   editable?: boolean;
   /** Called when user wants to search selected text in inspiration panel */
   onSearchInInspiration?: (text: string) => void;
+  /** Called when user wants to search selected text in reference panel via AI ranking */
+  onSearchInReference?: (text: string) => void;
   /** Called when user wants AI to polish selected text */
   onAIPolish?: (text: string) => void;
   /** Called when user wants AI to continue writing from context */
   onAIContinue?: () => void;
+  /** 编辑器字号预设: 0=小 1=中 2=大 3=特大 */
+  fontSizePreset?: 0 | 1 | 2 | 3;
+  /** 编辑器字号变更回调 */
+  onSetFontSize?: (preset: 0 | 1 | 2 | 3) => void;
 }
+
+/** 字号 CSS 类映射 */
+const FONT_SIZE_CLASSES = ['prose-font-s', 'prose-font-m', 'prose-font-l', 'prose-font-xl'] as const;
+const FONT_SIZE_LABELS = ['小 14px', '中 16px', '大 18px', '特大 20px'];
 
 const RichEditor: React.FC<RichEditorProps> = ({
   content = '',
@@ -30,8 +40,11 @@ const RichEditor: React.FC<RichEditorProps> = ({
   placeholder = '开始写作...',
   editable = true,
   onSearchInInspiration,
+  onSearchInReference,
   onAIPolish,
   onAIContinue,
+  fontSizePreset = 1,
+  onSetFontSize,
 }) => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ open: false, x: 0, y: 0, selectedText: '' });
   const editor = useEditor({
@@ -50,10 +63,19 @@ const RichEditor: React.FC<RichEditorProps> = ({
     },
     editorProps: {
       attributes: {
-        class: 'prose prose-invert max-w-none focus:outline-none min-h-[200px] px-8 py-6',
+        class: `prose prose-invert max-w-none focus:outline-none min-h-[200px] px-8 py-6 ${FONT_SIZE_CLASSES[fontSizePreset]}`,
       },
     },
   });
+  // 编辑器创建后不再重建，但 fontSizePreset 变化时需更新 attributes.class
+  const fontSizeClass = FONT_SIZE_CLASSES[fontSizePreset];
+  useEffect(() => {
+    if (!editor) return;
+    const el = editor.view.dom;
+    // 移除旧的字号类，添加新的
+    el.classList.remove(...FONT_SIZE_CLASSES);
+    el.classList.add(fontSizeClass);
+  }, [editor, fontSizeClass]);
 
   // ===== Smart formatting =====
   const handleSmartFormat = useCallback(() => {
@@ -162,6 +184,15 @@ const RichEditor: React.FC<RichEditorProps> = ({
           <button
             onClick={() => {
               handleCloseContextMenu();
+              onSearchInReference?.(contextMenu.selectedText);
+            }}
+            className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-700 flex items-center gap-2 transition-colors"
+          >
+            🔍 检索相似句
+          </button>
+          <button
+            onClick={() => {
+              handleCloseContextMenu();
               onAIPolish?.(contextMenu.selectedText);
             }}
             className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-700 flex items-center gap-2 transition-colors"
@@ -261,6 +292,18 @@ const RichEditor: React.FC<RichEditorProps> = ({
         >
           📐 排版
         </button>
+        <Divider />
+        {/* 编辑器字号选择 */}
+        <select
+          value={fontSizePreset}
+          onChange={(e) => onSetFontSize?.(Number(e.target.value) as 0|1|2|3)}
+          className="bg-gray-700 border border-gray-600 rounded text-[10px] text-gray-400 px-1.5 py-1 focus:outline-none focus:border-accent cursor-pointer"
+          title="编辑器字号"
+        >
+          {FONT_SIZE_LABELS.map((label, i) => (
+            <option key={i} value={i}>{label}</option>
+          ))}
+        </select>
       </div>
 
       {/* Editor content */}

@@ -10,6 +10,7 @@
 import fs from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import * as iconv from 'iconv-lite';
 import { readZip, stripHtml, type ZipEntry } from './zip-reader';
 
 export interface ImportedChapter {
@@ -64,15 +65,59 @@ function detectChapterHeadings(text: string): number[] {
 }
 
 // ============================================================
-// TXT import
+// TXT import — 智能编码检测
 // ============================================================
+
+/**
+ * 读取文本文件并自动检测编码
+ * 策略: 优先 BOM 判断 → UTF-8 → iconv-lite GBK (最常用中文编码)
+ */
+function readTextFile(filePath: string): string {
+  const buffer = fs.readFileSync(filePath);
+
+  // 检查 BOM
+  if (buffer.length >= 3 && buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) {
+    // UTF-8 BOM
+    return buffer.toString('utf-8', 3);
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xfe) {
+    // UTF-16 LE BOM
+    return buffer.toString('utf16le', 2);
+  }
+  if (buffer.length >= 2 && buffer[0] === 0xfe && buffer[1] === 0xff) {
+    // UTF-16 BE BOM
+    return iconv.decode(buffer.slice(2), 'utf16-be');
+  }
+
+  // 先尝试 UTF-8
+  const utf8 = buffer.toString('utf-8');
+  const replacementCount = (utf8.match(/�/g) || []).length;
+  // 替换字符率低于 5% → UTF-8 解码成功
+  if (replacementCount < utf8.length * 0.05) {
+    return utf8;
+  }
+
+  // UTF-8 失败，用 iconv-lite 尝试 GBK（覆盖 GB2312/GB18030）
+  const gbk = iconv.decode(buffer, 'gbk');
+  const gbkReplacement = (gbk.match(/�/g) || []).length;
+  if (gbkReplacement < gbk.length * 0.05) {
+    return gbk;
+  }
+
+  // 再尝试 Big5（繁体中文）
+  const big5 = iconv.decode(buffer, 'big5');
+  const big5Replacement = (big5.match(/�/g) || []).length;
+  if (big5Replacement < big5.length * 0.05) {
+    return big5;
+  }
+
+  // 降级：返回 UTF-8 结果（尽管有乱码）
+  return utf8;
+}
 
 function importTxt(filePath: string): ImportResult {
   const warnings: string[] = [];
-  let raw = fs.readFileSync(filePath, 'utf-8');
-
-  // Remove BOM
-  if (raw.charCodeAt(0) === 0xfeff) raw = raw.slice(1);
+  let raw = readTextFile(filePath);
 
   // Normalize line endings
   raw = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -303,6 +348,69 @@ function importMarkdown(filePath: string): ImportResult {
   const totalWords = countCjk(raw);
 
   return { title, chapters, format: 'markdown', totalWords, warnings };
+}
+
+// ============================================================
+// 分块工具 — 用于参考库导入
+// ============================================================
+
+/**
+ * 将纯文本按自然段落分块，每块约 300-500 字
+ */
+export function chunkText(text: string, maxChunkSize: number = 400): { content: string; wordCount: number }[] {
+  const chunks: { content: string; wordCount: number }[] = [];
+  // 按空行分割为段落
+  const paragraphs = text.split(/\n{2,}/).map(p => p.trim()).filter(p => p.length > 0);
+
+  let current = '';
+  let currentCjk = 0;
+
+  const flushCurrent = () => {
+    if (current.trim().length > 0) {
+      chunks.push({
+        content: current.trim(),
+        wordCount: currentCjk || countCjk(current.trim()),
+      });
+    }
+    current = '';
+    currentCjk = 0;
+  };
+
+  for (const para of paragraphs) {
+    const paraCjk = (para.match(/[一-鿿㐀-䶿]/g) || []).length;
+
+    if (currentCjk + paraCjk > maxChunkSize && currentCjk > 0) {
+      flushCurrent();
+    }
+
+    current = current ? current + '\n\n' + para : para;
+    currentCjk += paraCjk;
+
+    // 超长段落按句号分割
+    if (currentCjk > maxChunkSize * 2) {
+      flushCurrent();
+    }
+  }
+
+  // 剩余部分
+  flushCurrent();
+
+  return chunks;
+}
+
+export function markdownToText(md: string): string {
+  // Strip markdown formatting to get plain text
+  return md
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*(.+?)\*\*/g, '$1')
+    .replace(/\*(.+?)\*/g, '$1')
+    .replace(/`(.+?)`/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/^[-*+]\s/gm, '')
+    .replace(/^\d+\.\s/gm, '')
+    .replace(/^>\s/gm, '')
+    .replace(/```[\s\S]*?```/g, '')
+    .trim();
 }
 
 // ============================================================

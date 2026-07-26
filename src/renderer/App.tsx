@@ -1,22 +1,30 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import DockLayout from './components/DockLayout';
 import Sidebar from './components/Sidebar';
 import WritingArea from './components/WritingArea';
 import AIChatPanel from './components/AIChatPanel';
-import ContextPanel from './components/ContextPanel';
 import InspirationPanel from './components/InspirationPanel';
 import MindMap from './components/MindMap';
 import MaterialPanel from './components/MaterialPanel';
-import RelationMatrix from './components/RelationMatrix';
+import OutlinePanel from './components/OutlinePanel';
+import ReferencePanel from './components/ReferencePanel';
+import NameGenerator from './components/NameGenerator';
+import DatabaseBrowser from './components/DatabaseBrowser';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import ImportDialog from './components/ImportDialog';
 import CharacterEditDialog from './components/CharacterEditDialog';
 import RelationEditDialog from './components/RelationEditDialog';
 import { useProject } from './hooks/useProject';
 import { ContextBuilder } from '../main/ai/context-builder';
+import { decrypt } from './services/crypto';
+import type { ProviderConfig } from '../main/ai/provider';
+import { useUndo, type UndoCommand } from './hooks/useUndoManager';
+import UndoToast from './components/UndoToast';
 import type { CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
 import type { ImportResult } from '../main/importer';
+import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
+import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -31,7 +39,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
   render() {
     if (this.state.error) {
       return (
-        <div className="h-screen flex items-center justify-center bg-gray-900 text-gray-300">
+        <div className="h-screen flex items-center justify-center bg-gray-950 text-gray-300">
           <div className="text-center max-w-md">
             <p className="text-lg mb-2">⚠️ 出现错误</p>
             <p className="text-xs text-gray-500 mb-4 font-mono">{this.state.error.message}</p>
@@ -55,6 +63,7 @@ const App: React.FC = () => {
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
+  const [showDatabaseBrowser, setShowDatabaseBrowser] = useState(false);
   const [importing, setImporting] = useState(false);
 
   // ===== Entity state =====
@@ -82,6 +91,9 @@ const App: React.FC = () => {
   // ===== WorldEntry editing — context panel =====
   const editingWorldEntry = activeWorldEntryId ? worldEntries.find(e => e.id === activeWorldEntryId) ?? null : null;
 
+  // ===== 撤销管理（Word/Excel 命令模式）=====
+  const { pushUndo, undo, redo, toastLabel, dismissToast } = useUndo();
+
   // ===== Relations =====
   const [relations, setRelations] = useState<CharacterRelation[]>([]);
   const [relationDialog, setRelationDialog] = useState<{
@@ -94,15 +106,40 @@ const App: React.FC = () => {
   // ===== Panel state =====
   const [panelState, setPanelState] = useState({
     sidebarOpen: true,
-    aiChatOpen: true,
+    aiChatOpen: false,       // 默认关闭，用户点击「✨ 辅助」或「💬 AI」时才打开
     aiChatMinimized: false,
-    contextOpen: false,
     inspirationOpen: false,
     mindmapOpen: false,
     materialOpen: false,
-    relationMatrixOpen: false,
-    aiLevel: 'assist' as 'off' | 'assist' | 'deep',
+    outlineOpen: false,
+    referenceOpen: false,    // 参考面板
+    namegenOpen: false,      // 起名助手
+    aiLevel: 'off' as 'off' | 'assist',  // 默认纯写模式，AI 模块不出现
   });
+
+  // ===== 字体大小设定 =====
+  // 三个独立域: editor(编辑器字号) / panels(面板zoom) / ui(界面zoom)
+  type FontSizePreset = 0 | 1 | 2 | 3; // 0=小 1=中 2=大 3=特大
+  interface FontSizes { editor: FontSizePreset; panels: FontSizePreset; ui: FontSizePreset; }
+  const FONT_SIZE_KEY = 'hi-story-font-sizes';
+  const DEFAULT_FONT_SIZES: FontSizes = { editor: 1, panels: 1, ui: 1 };
+
+  function loadFontSizes(): FontSizes {
+    try {
+      const raw = localStorage.getItem(FONT_SIZE_KEY);
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return DEFAULT_FONT_SIZES;
+  }
+
+  const [fontSizes, setFontSizes] = useState<FontSizes>(loadFontSizes);
+  const setFontSize = useCallback((domain: keyof FontSizes, preset: FontSizePreset) => {
+    setFontSizes(prev => {
+      const next = { ...prev, [domain]: preset };
+      localStorage.setItem(FONT_SIZE_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   const activeChapter = activeChapterId ? chapters.find(ch => ch.id === activeChapterId) ?? null : null;
   const activeOutlineNode = activeOutlineNodeId ? outlineNodes.find(n => n.id === activeOutlineNodeId) ?? null : null;
@@ -233,6 +270,7 @@ const App: React.FC = () => {
           sourceId: r.sourceId,
           targetId: r.targetId,
           relationType: r.relationType,
+          arrowDirection: r.arrowDirection || 'none',
         })));
       }
     } catch {}
@@ -274,16 +312,49 @@ const App: React.FC = () => {
     if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
   }, [activeProject]);
 
+  const handleInsertChapterAfter = useCallback(async (afterChapterId: string, title: string) => {
+    const res = await window.electronAPI.invoke('db:chapter:insertAfter', afterChapterId, title) as any;
+    if (res.success && res.data) {
+      // 重新加载全部章节以获取正确的排序顺序
+      if (!activeProject) return;
+      const allRes = await window.electronAPI.invoke('db:chapter:findByProject', activeProject.id) as any;
+      if (allRes.success && allRes.data) {
+        setChapters(allRes.data);
+        setActiveChapterId(res.data.id);
+      }
+    }
+  }, [activeProject]);
+
   const handleRenameChapter = useCallback(async (id: string, title: string) => {
     await window.electronAPI.invoke('db:chapter:update', { id, title });
     setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, title } : ch));
   }, []);
 
   const handleDeleteChapter = useCallback(async (id: string) => {
+    const ch = chapters.find(c => c.id === id);
+    if (!ch) return;
+
+    // 执行删除
     await window.electronAPI.invoke('db:chapter:remove', id);
     setChapters(prev => prev.filter(ch => ch.id !== id));
     if (activeChapterId === id) { const r = chapters.filter(ch => ch.id !== id); setActiveChapterId(r[0]?.id ?? null); }
-  }, [activeChapterId, chapters]);
+
+    // 推入撤销栈（命令模式）
+    pushUndo({
+      id: 'undo_' + Date.now(),
+      label: `删除章节「${ch.title}」`,
+      undo: async () => {
+        const res = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
+        if (res.success && res.data) {
+          setChapters(prev => [...prev, res.data].sort((a, b) => a.sortOrder - b.sortOrder));
+        }
+      },
+      redo: async () => {
+        await window.electronAPI.invoke('db:chapter:remove', ch.id);
+        setChapters(prev => prev.filter(c => c.id !== ch.id));
+      },
+    });
+  }, [activeChapterId, chapters, pushUndo]);
 
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
@@ -306,10 +377,26 @@ const App: React.FC = () => {
   }, [activeProject]);
 
   const handleDeleteOutlineNode = useCallback(async (id: string) => {
+    const node = outlineNodes.find(n => n.id === id);
+    if (!node) return;
+
     await window.electronAPI.invoke('db:outline:remove', id);
     setOutlineNodes(prev => prev.filter(n => n.id !== id));
     if (activeOutlineNodeId === id) setActiveOutlineNodeId(null);
-  }, [activeOutlineNodeId]);
+
+    if (node) pushUndo({
+      id: 'undo_' + Date.now(),
+      label: `删除大纲节点「${node.title}」`,
+      undo: async () => {
+        const res = await window.electronAPI.invoke('db:outline:restore', node) as any;
+        if (res.success && res.data) setOutlineNodes(prev => [...prev, res.data].sort((a, b) => a.sortOrder - b.sortOrder));
+      },
+      redo: async () => {
+        await window.electronAPI.invoke('db:outline:remove', node.id);
+        setOutlineNodes(prev => prev.filter(n => n.id !== node.id));
+      },
+    });
+  }, [activeOutlineNodeId, outlineNodes, pushUndo]);
 
   const handleUpdateOutlineNode = useCallback(async (id: string, title: string, summary: string) => {
     await window.electronAPI.invoke('db:outline:update', { id, title, summary });
@@ -336,11 +423,27 @@ const App: React.FC = () => {
   }, []);
 
   const handleDeleteCharacter = useCallback(async (id: string) => {
+    const ch = characters.find(c => c.id === id);
+    if (!ch) return;
+
     await window.electronAPI.invoke('db:character:remove', id);
     setCharacters(prev => prev.filter(c => c.id !== id));
     if (activeCharacterId === id) setActiveCharacterId(null);
     if (editingCharacterId === id) setEditingCharacterId(null);
-  }, [activeCharacterId, editingCharacterId]);
+
+    pushUndo({
+      id: 'undo_' + Date.now(),
+      label: `删除角色「${ch.name}」`,
+      undo: async () => {
+        const res = await window.electronAPI.invoke('db:character:restore', ch) as any;
+        if (res.success && res.data) setCharacters(prev => [...prev, res.data].sort((a, b) => a.sortOrder - b.sortOrder));
+      },
+      redo: async () => {
+        await window.electronAPI.invoke('db:character:remove', ch.id);
+        setCharacters(prev => prev.filter(c => c.id !== ch.id));
+      },
+    });
+  }, [activeCharacterId, editingCharacterId, characters, pushUndo]);
 
   const handleRenameCharacter = useCallback(async (id: string, name: string) => {
     await window.electronAPI.invoke('db:character:update', { id, name });
@@ -361,7 +464,7 @@ const App: React.FC = () => {
     });
   }, []);
 
-  const handleSaveRelation = useCallback(async (sourceId: string, targetId: string, relationType: string, existingId?: string) => {
+  const handleSaveRelation = useCallback(async (sourceId: string, targetId: string, relationType: string, arrowDirection: string, existingId?: string) => {
     if (!activeProject) return;
     try {
       if (existingId) {
@@ -383,6 +486,7 @@ const App: React.FC = () => {
         targetType: 'character',
         targetId,
         relationType,
+        arrowDirection,
       }) as any;
       if (res.success && res.data) {
         setRelations(prev => {
@@ -392,6 +496,7 @@ const App: React.FC = () => {
             sourceId: res.data.sourceId,
             targetId: res.data.targetId,
             relationType: res.data.relationType,
+            arrowDirection: res.data.arrowDirection || 'none',
           }];
         });
       }
@@ -399,9 +504,34 @@ const App: React.FC = () => {
   }, [activeProject, relations]);
 
   const handleDeleteRelation = useCallback(async (relationId: string) => {
+    const rel = relations.find(r => r.id === relationId);
+    if (!rel) return;
+
     await window.electronAPI.invoke('db:referenceLink:remove', relationId);
     setRelations(prev => prev.filter(r => r.id !== relationId));
-  }, []);
+
+    pushUndo({
+      id: 'undo_' + Date.now(),
+      label: `删除角色关系`,
+      undo: async () => {
+        const res = await window.electronAPI.invoke('db:referenceLink:restore', {
+          id: rel.id,
+          sourceType: 'character',
+          sourceId: rel.sourceId,
+          targetType: 'character',
+          targetId: rel.targetId,
+          relationType: rel.relationType,
+          arrowDirection: rel.arrowDirection,
+          createdAt: new Date().toISOString(),
+        }) as any;
+        if (res.success && res.data) setRelations(prev => [...prev, res.data]);
+      },
+      redo: async () => {
+        await window.electronAPI.invoke('db:referenceLink:remove', rel.id);
+        setRelations(prev => prev.filter(r => r.id !== rel.id));
+      },
+    });
+  }, [relations, pushUndo]);
 
   const handleCreateWorldEntry = useCallback(async (category: WorldEntry['category']) => {
     if (!activeProject) return;
@@ -423,10 +553,26 @@ const App: React.FC = () => {
   }, []);
 
   const handleDeleteWorldEntry = useCallback(async (id: string) => {
+    const we = worldEntries.find(e => e.id === id);
+    if (!we) return;
+
     await window.electronAPI.invoke('db:worldEntry:remove', id);
     setWorldEntries(prev => prev.filter(e => e.id !== id));
     if (activeWorldEntryId === id) setActiveWorldEntryId(null);
-  }, [activeWorldEntryId]);
+
+    pushUndo({
+      id: 'undo_' + Date.now(),
+      label: `删除世界观条目「${we.name}」`,
+      undo: async () => {
+        const res = await window.electronAPI.invoke('db:worldEntry:restore', we) as any;
+        if (res.success && res.data) setWorldEntries(prev => [...prev, res.data].sort((a, b) => a.sortOrder - b.sortOrder));
+      },
+      redo: async () => {
+        await window.electronAPI.invoke('db:worldEntry:remove', we.id);
+        setWorldEntries(prev => prev.filter(e => e.id !== we.id));
+      },
+    });
+  }, [activeWorldEntryId, worldEntries, pushUndo]);
 
   const handleCreateProject = async (input: CreateProjectInput) => {
     const project = await createProject(input);
@@ -440,6 +586,7 @@ const App: React.FC = () => {
   };
 
   const handleImportNovel = useCallback(async (result: ImportResult) => {
+    // 旧的导入到章节流程（保留兼容）
     if (!activeProject) {
       const project = await createProject({
         name: result.title,
@@ -475,6 +622,180 @@ const App: React.FC = () => {
       } finally { setImporting(false); }
     }
   }, [activeProject, createProject, setActiveProjectId, loadEntities, loadRelations]);
+
+  // 新的导入到参考库的处理
+  const handleImportToReference = useCallback(async (result: ImportToRefResult) => {
+    console.log('📚 已导入参考库:', result.doc.title,
+      `(${result.chapterCount} 章, ${result.chunkCount} 块)`);
+    // 后续可以显示导入成功提示
+  }, []);
+
+  // 相似度匹配状态 — 分组返回
+  const [userMatches, setUserMatches] = useState<SimilarityResult[]>([]);
+  const [openMatches, setOpenMatches] = useState<SimilarityResult[]>([]);
+  const [refAutoSearch, setRefAutoSearch] = useState(false); // 自动检测默认关闭
+  const [refSearching, setRefSearching] = useState(false); // 搜索进行中（防闪烁）
+
+  // 使用 ref 保存最新内容引用，避免自动检测因为 content 变化频繁重设定时器
+  const activeChapterContentRef = useRef(activeChapter?.content ?? '');
+  useEffect(() => {
+    activeChapterContentRef.current = activeChapter?.content ?? '';
+  }, [activeChapter?.content]);
+
+  // 获取 Embedding 专用 provider（优先通义千问/OpenAI，排除 DeepSeek/Claude）
+  // 如果当前 AI chat provider 不支持 Embedding，查所有已保存的配置找第一个支持的
+  async function getEmbeddingConfigAsync(): Promise<ProviderConfig | null> {
+    try {
+      const raw = localStorage.getItem('hi-story-ai-configs');
+      if (!raw) return null;
+      const configs: Array<{ id: string; providerId: string; apiKey: string; model: string }> = JSON.parse(raw);
+      if (configs.length === 0) return null;
+
+      const PRESETS_BASE_URL: Record<string, string> = {
+        qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        openai: 'https://api.openai.com/v1',
+        doubao: 'https://ark.cn-beijing.volces.com/api/v3',
+        volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
+        moonshot: 'https://api.moonshot.cn/v1',
+        zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+      };
+
+      const EMBEDDING_MODELS: Record<string, string> = {
+        qwen: 'text-embedding-v3',
+        openai: 'text-embedding-3-small',
+        doubao: 'doubao-embedding',
+        volcengine: 'doubao-embedding',
+      };
+
+      // 优先找支持 Embedding 的 provider
+      for (const c of configs) {
+        if (PRESETS_BASE_URL[c.providerId] && c.apiKey) {
+          const decryptedKey = await decrypt(c.apiKey);
+          if (decryptedKey) {
+            console.log('[App] Embedding provider:', c.providerId);
+            return {
+              name: c.providerId,
+              apiKey: decryptedKey,
+              model: EMBEDDING_MODELS[c.providerId] || 'text-embedding-v3',
+              baseUrl: PRESETS_BASE_URL[c.providerId],
+            };
+          }
+        }
+      }
+      return null;
+    } catch { return null; }
+  }
+
+  /** AI provider 优先级：通义千问 > 豆包 > DeepSeek > 其他 */
+  const AI_PRIORITY: Record<string, number> = {
+    qwen: 10,
+    doubao: 9,
+    volcengine: 8,
+    deepseek: 7,
+  };
+
+  /** 从 localStorage 获取所有已配置、可用的 AI 配置（按优先级排序，解密） */
+  async function getAllAiConfigsAsync(): Promise<ProviderConfig[]> {
+    try {
+      const raw = localStorage.getItem('hi-story-ai-configs');
+      if (!raw) { console.log('[App] 无 AI 配置'); return []; }
+      const configs: Array<{ id: string; providerId: string; apiKey: string; model: string; baseUrl?: string }> = JSON.parse(raw);
+      console.log('[App] 共 ' + configs.length + ' 个 AI 配置');
+
+      const PRESETS_BASE_URL: Record<string, string> = {
+        claude: 'https://api.anthropic.com',
+        openai: 'https://api.openai.com/v1',
+        deepseek: 'https://api.deepseek.com/v1',
+        doubao: 'https://ark.cn-beijing.volces.com/api/v3',
+        volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
+        qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        zhipu: 'https://open.bigmodel.cn/api/paas/v4',
+        moonshot: 'https://api.moonshot.cn/v1',
+      };
+
+      const result: ProviderConfig[] = [];
+      for (const c of configs) {
+        if (!c.apiKey) continue;
+        const decryptedKey = await decrypt(c.apiKey);
+        if (!decryptedKey) { console.log('[App] 解密失败: ' + c.providerId); continue; }
+        result.push({
+          name: c.providerId,
+          apiKey: decryptedKey,
+          model: c.model,
+          baseUrl: c.baseUrl || PRESETS_BASE_URL[c.providerId] || '',
+        });
+      }
+
+      // 按优先级排序：通义千问 > 豆包 > DeepSeek > 其他
+      result.sort((a, b) => (AI_PRIORITY[b.name] || 0) - (AI_PRIORITY[a.name] || 0));
+      console.log('[App] 可用 AI 配置（按优先级）: ' + result.map(r => r.name).join(' → '));
+      return result;
+    } catch { return []; }
+  }
+
+  // 手动搜索参考库 — 简化流程：
+  //   LIKE 搜索 → 候选池 → AI 精排（多 provider 降级）→ 返回结果
+  const handleManualReferenceSearch = useCallback(async (query: string) => {
+    setRefSearching(true);
+    try {
+      const allConfigs = await getAllAiConfigsAsync();
+      const firstConfig = allConfigs.length > 0 ? allConfigs[0] : null;
+      console.log('[App] 直接使用 LIKE + AI 精排搜索, 可用 provider 数=' + allConfigs.length);
+
+      // 传所有配置给主进程，主进程按优先级逐个尝试
+      const res = await window.electronAPI.invoke('db:reference:fallbackSearch', query, 20, allConfigs) as any;
+      console.log('[App] 搜索结果: success=' + (res?.success) + ', user=' + (res?.data?.userResults?.length || 0) + ', open=' + (res?.data?.openResults?.length || 0));
+      // 打印主进程返回的诊断日志
+      if (res?.data?.debugLog && res.data.debugLog.length > 0) {
+        console.log('[App] === 主进程 AI 精排诊断日志 ===');
+        (res.data.debugLog as string[]).forEach(line => console.log('[App] ' + line));
+        console.log('[App] === 诊断日志结束 ===');
+      }
+      if (res.success && res.data) {
+        const data = res.data as SearchAllResult;
+        const aiUser = data.userResults.filter(r => r.matchSource === 'ai_ranked').length;
+        const aiOpen = data.openResults.filter(r => r.matchSource === 'ai_ranked').length;
+        console.log('[App] 结果: user=' + data.userResults.length + '(AI精排' + aiUser + '条), open=' + data.openResults.length + '(AI精排' + aiOpen + '条)');
+        setUserMatches(data.userResults);
+        setOpenMatches(data.openResults);
+      } else {
+        setUserMatches([]);
+        setOpenMatches([]);
+      }
+    } catch (err) {
+      console.error('Reference search error:', err);
+    } finally {
+      setRefSearching(false);
+    }
+  }, []);
+
+  const refThresholdRef = useRef(0.65);
+
+  // 自动检测：每 3 秒检测一次，使用 ref 避免因 content 变化频繁重建定时器
+  useEffect(() => {
+    if (!refAutoSearch || !panelState.referenceOpen) return;
+
+    const interval = setInterval(async () => {
+      const plainText = activeChapterContentRef.current
+        .replace(/<[^>]*>/g, '')
+        .replace(/\s+/g, '');
+      if (plainText.length < 50) return; // 内容太少不匹配
+
+      try {
+        const res = await window.electronAPI.invoke('db:reference:findSimilar', {
+          queryText: plainText,
+          threshold: refThresholdRef.current,
+          maxResults: 5,
+        }) as any;
+        if (res.success && res.data) {
+          setUserMatches(res.data);
+          setOpenMatches([]);
+        }
+      } catch {}
+    }, 3000);
+
+    return () => { clearInterval(interval); setUserMatches([]); setOpenMatches([]); };
+  }, [refAutoSearch, panelState.referenceOpen]);
 
   // === Menu events ===
   useEffect(() => {
@@ -530,21 +851,52 @@ const App: React.FC = () => {
     return () => { window.electronAPI.removeListener('menu:backup-db', h); };
   }, []);
 
+  // 数据库浏览器菜单事件
+  useEffect(() => {
+    const h = () => setShowDatabaseBrowser(true);
+    window.electronAPI.on('menu:browse-database', h);
+    return () => { window.electronAPI.removeListener('menu:browse-database', h); };
+  }, []);
+
   // === Keyboard shortcuts ===
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
+      // Ctrl+Z: 通用撤销（命令模式，与 Word/Excel 一致）
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+        // 检查焦点是否在 TipTap 编辑器中（让编辑器自己处理文本撤销）
+        const target = e.target as HTMLElement;
+        if (target.closest('.ProseMirror') || target.isContentEditable) return;
+        // 检查是否在 input/textarea 中
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+        if (isInput) return;
+
+        e.preventDefault();
+        undo();
+        return;
+      }
+      // Ctrl+Y: 重做
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'y') {
+        const target = e.target as HTMLElement;
+        if (target.closest('.ProseMirror') || target.isContentEditable) return;
+        const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
+        if (isInput) return;
+        e.preventDefault();
+        redo();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
         if (e.key === 'I') { e.preventDefault(); setPanelState(p => ({ ...p, inspirationOpen: !p.inspirationOpen })); }
+        if (e.key === 'N') { e.preventDefault(); setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen })); }
         if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
       }
       if (e.key === 'Escape') {
-        setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false, inspirationOpen: false, contextOpen: false }));
+        setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false, inspirationOpen: false }));
       }
     };
     window.addEventListener('keydown', h);
     return () => window.removeEventListener('keydown', h);
-  }, []);
+  }, [undo]);
 
   // === AI context ===
   const contextMessages = useMemo(() => {
@@ -565,17 +917,21 @@ const App: React.FC = () => {
         onToggleSidebar={() => setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen }))}
         onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
         onMinimizeAiChat={() => setPanelState(p => ({ ...p, aiChatMinimized: !p.aiChatMinimized }))}
-        onToggleContext={() => setPanelState(p => ({ ...p, contextOpen: !p.contextOpen }))}
+        onToggleContext={() => { /* deprecated — no longer used */ }}
         onToggleInspiration={() => setPanelState(p => ({ ...p, inspirationOpen: !p.inspirationOpen }))}
         onToggleMindmap={() => setPanelState(p => ({ ...p, mindmapOpen: !p.mindmapOpen }))}
         onToggleMaterial={() => setPanelState(p => ({ ...p, materialOpen: !p.materialOpen }))}
-        onToggleRelationMatrix={() => setPanelState(p => ({ ...p, relationMatrixOpen: !p.relationMatrixOpen }))}
+        onToggleOutline={() => setPanelState(p => ({ ...p, outlineOpen: !p.outlineOpen }))}
+        onToggleReference={() => setPanelState(p => ({ ...p, referenceOpen: !p.referenceOpen }))}
+        onToggleNamegen={() => setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen }))}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
           aiLevel: level,
           aiChatOpen: level !== 'off',
           aiChatMinimized: false,
         }))}
+        fontSizes={fontSizes}
+        onSetFontSize={setFontSize}
         sidebar={
           <Sidebar
             projects={projects}
@@ -589,16 +945,10 @@ const App: React.FC = () => {
             activeChapterId={activeChapterId}
             onSelectChapter={setActiveChapterId}
             onCreateChapter={handleCreateChapter}
+            onInsertChapterAfter={handleInsertChapterAfter}
             onDeleteChapter={handleDeleteChapter}
             onRenameChapter={handleRenameChapter}
             chaptersLoading={chaptersLoading}
-            outlineNodes={outlineNodes}
-            activeOutlineNodeId={activeOutlineNodeId}
-            onSelectOutlineNode={setActiveOutlineNodeId}
-            onCreateOutlineNode={handleCreateOutlineNode}
-            onDeleteOutlineNode={handleDeleteOutlineNode}
-            onUpdateOutlineNode={handleUpdateOutlineNode}
-            outlineLoading={outlineLoading}
             characters={characters}
             worldEntries={worldEntries}
             activeCharacterId={activeCharacterId}
@@ -608,11 +958,12 @@ const App: React.FC = () => {
             onRenameCharacter={handleRenameCharacter}
             charactersLoading={charactersLoading}
             activeWorldEntryId={activeWorldEntryId}
-            onSelectWorldEntry={(id) => { setActiveWorldEntryId(id); setPanelState(p => ({ ...p, contextOpen: true })); }}
+            onSelectWorldEntry={(id) => { setActiveWorldEntryId(id); /* context panel deprecated */ }}
             onCreateWorldEntry={handleCreateWorldEntry}
             onDeleteWorldEntry={handleDeleteWorldEntry}
             onRenameWorldEntry={handleRenameWorldEntry}
             worldEntriesLoading={worldEntriesLoading}
+            projectId={activeProject?.id ?? null}
           />
         }
         writingArea={
@@ -628,11 +979,18 @@ const App: React.FC = () => {
             onCreateProject={() => setShowCreateDialog(true)}
             onImportNovel={() => setShowImportDialog(true)}
             saving={saving}
+            editorFontSize={fontSizes.editor}
+            onSetEditorFontSize={(p: FontSizePreset) => setFontSize('editor', p)}
             onSearchInInspiration={(text) => {
               setPanelState(p => ({ ...p, inspirationOpen: true }));
               // The inspiration panel will receive the search query via a ref or global state
               // For now we can store it in localStorage for the panel to pick up
               localStorage.setItem('hi-story-pending-inspiration-search', text);
+            }}
+            onSearchInReference={(text) => {
+              // 打开检索面板并将选中文字传入，由 ReferencePanel 自动触发 AI 精排搜索
+              setPanelState(p => ({ ...p, referenceOpen: true }));
+              localStorage.setItem('hi-story-pending-reference-search', text);
             }}
             onAIPolish={(text) => {
               // Ensure AI chat is open and not minimized
@@ -642,7 +1000,7 @@ const App: React.FC = () => {
             }}
             onAIContinue={() => {
               // Ensure AI chat is open
-              setPanelState(p => ({ ...p, aiChatOpen: true, aiChatMinimized: false, aiLevel: 'deep' }));
+              setPanelState(p => ({ ...p, aiChatOpen: true, aiChatMinimized: false, aiLevel: 'assist' }));
               localStorage.setItem('hi-story-pending-ai-continue', 'true');
             }}
           />
@@ -652,24 +1010,6 @@ const App: React.FC = () => {
             contextMessages={contextMessages}
             projectId={activeProject?.id ?? null}
             onSaveMessage={() => {}}
-          />
-        }
-        contextPanel={
-          <ContextPanel
-            activeProject={activeProject}
-            activeChapter={activeChapter}
-            activeOutlineNode={activeOutlineNode}
-            characters={characters}
-            worldEntries={worldEntries}
-            relationships={relations.map(r => ({ source: r.sourceId, target: r.targetId, type: r.relationType }))}
-            selectedCharacter={null}
-            selectedWorldEntry={editingWorldEntry}
-            onSelectCharacter={(ch) => { if (ch) { setEditingCharacterId(ch.id); } }}
-            onSaveCharacter={handleSaveCharacter}
-            onCloseCharacter={() => setActiveCharacterId(null)}
-            onSaveWorldEntry={handleSaveWorldEntry}
-            onDeleteWorldEntry={handleDeleteWorldEntry}
-            onCloseWorldEntry={() => setActiveWorldEntryId(null)}
           />
         }
         inspirationPanel={
@@ -704,15 +1044,40 @@ const App: React.FC = () => {
             onClose={() => setPanelState(p => ({ ...p, materialOpen: false }))}
           />
         }
-        relationMatrixPanel={
-          <RelationMatrix
-            open={panelState.relationMatrixOpen}
-            projectId={activeProject?.id ?? null}
-            characters={characters}
-            chapters={chapters}
-            worldEntries={worldEntries}
-            outlineNodes={outlineNodes}
-            onClose={() => setPanelState(p => ({ ...p, relationMatrixOpen: false }))}
+        outlinePanel={
+          <OutlinePanel
+            nodes={outlineNodes}
+            activeNodeId={activeOutlineNodeId}
+            onSelect={setActiveOutlineNodeId}
+            onCreate={handleCreateOutlineNode}
+            onDelete={handleDeleteOutlineNode}
+            onUpdate={handleUpdateOutlineNode}
+            loading={outlineLoading}
+          />
+        }
+        referencePanel={
+          <ReferencePanel
+            open={true}
+            userMatches={userMatches}
+            openMatches={openMatches}
+            autoSearch={refAutoSearch}
+            onToggleAutoSearch={() => setRefAutoSearch(v => !v)}
+            onManualSearch={handleManualReferenceSearch}
+            onClose={() => setPanelState(p => ({ ...p, referenceOpen: false }))}
+            searching={refSearching}
+            pendingSearchText={
+              (() => {
+                const t = localStorage.getItem('hi-story-pending-reference-search');
+                if (t) { localStorage.removeItem('hi-story-pending-reference-search'); return t; }
+                return undefined;
+              })()
+            }
+          />
+        }
+        namegenPanel={
+          <NameGenerator
+            open={true}
+            onClose={() => setPanelState(p => ({ ...p, namegenOpen: false }))}
           />
         }
       />
@@ -728,6 +1093,12 @@ const App: React.FC = () => {
         open={showImportDialog}
         onClose={() => setShowImportDialog(false)}
         onImport={handleImportNovel}
+        onImportToReference={handleImportToReference}
+      />
+
+      <DatabaseBrowser
+        open={showDatabaseBrowser}
+        onClose={() => setShowDatabaseBrowser(false)}
       />
 
       <CharacterEditDialog
@@ -753,6 +1124,12 @@ const App: React.FC = () => {
         onSave={handleSaveRelation}
         onDelete={handleDeleteRelation}
         onClose={() => setRelationDialog({ open: false, sourceId: '', targetId: '' })}
+      />
+      {/* 撤销提示条 */}
+      <UndoToast
+        label={toastLabel}
+        onUndo={undo}
+        onDismiss={dismissToast}
       />
       </ErrorBoundary>
   );
