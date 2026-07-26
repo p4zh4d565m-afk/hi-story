@@ -26,6 +26,8 @@ interface PanelState {
   outlineOpen: boolean;
   referenceOpen: boolean;
   namegenOpen: boolean;
+  aiWriteOpen: boolean;
+  aiReviewOpen: boolean;
   aiLevel: 'off' | 'assist';  // AI participation level
 }
 
@@ -42,6 +44,8 @@ interface DockLayoutProps {
   outlinePanel: React.ReactNode;
   referencePanel: React.ReactNode;
   namegenPanel: React.ReactNode;
+  aiWritePanel: React.ReactNode;
+  aiReviewPanel: React.ReactNode;
   panelState: PanelState;
   onToggleSidebar: () => void;
   onToggleAiChat: () => void;
@@ -52,6 +56,8 @@ interface DockLayoutProps {
   onToggleOutline: () => void;
   onToggleReference: () => void;
   onToggleNamegen: () => void;
+  onToggleAiWrite: () => void;
+  onToggleAiReview: () => void;
   onSetAiLevel: (level: 'off' | 'assist') => void;
   fontSizes: FontSizes;
   onSetFontSize: (domain: keyof FontSizes, preset: FontSizePreset) => void;
@@ -76,8 +82,10 @@ const FontSizeSelect: React.FC<{
 const DockLayout: React.FC<DockLayoutProps> = ({
   sidebar, writingArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
   materialPanel, outlinePanel, referencePanel, namegenPanel,
+  aiWritePanel, aiReviewPanel,
   panelState, onToggleSidebar, onToggleAiChat, onMinimizeAiChat, onToggleInspiration, onToggleMindmap,
   onToggleMaterial, onToggleOutline, onToggleReference, onToggleNamegen,
+  onToggleAiWrite, onToggleAiReview,
   onSetAiLevel,
   fontSizes, onSetFontSize,
 }) => {
@@ -348,6 +356,20 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             🧙 起名
           </button>
 
+          {/* AI Write toggle — AI 写章 */}
+          <button onClick={onToggleAiWrite}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiWriteOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            title="AI 写章 (Ctrl+Shift+W)">
+            🤖 写章
+          </button>
+
+          {/* AI Review toggle — AI 审稿 */}
+          <button onClick={onToggleAiReview}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiReviewOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            title="AI 审稿 (Ctrl+Shift+R)">
+            🔍 审稿
+          </button>
+
           {/* AI Chat toggle — hidden when aiLevel is 'off' */}
           {panelState.aiLevel !== 'off' && (
             panelState.aiChatMinimized ? (
@@ -512,6 +534,16 @@ const DockLayout: React.FC<DockLayoutProps> = ({
           </div>
         </div>
       )}
+
+      {/* ===== FLOATING AI WRITE PANEL ===== */}
+      <div style={{ display: panelState.aiWriteOpen ? 'block' : 'none' }}>
+        {aiWritePanel}
+      </div>
+
+      {/* ===== FLOATING AI REVIEW PANEL ===== */}
+      <div style={{ display: panelState.aiReviewOpen ? 'block' : 'none' }}>
+        {aiReviewPanel}
+      </div>
     </div>
   );
 };

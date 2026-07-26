@@ -153,3 +153,40 @@ export interface ChapterHistorySnapshot {
   wordCount: number;
   savedAt: string;
 }
+
+// ===== AI 写章 =====
+export interface WriteChapterConfig {
+  outlineNodeId: string;
+  targetWords: number;
+  styleGuide: string;
+  includeContext: boolean;
+  includeCharacters: boolean;
+  includeWorld: boolean;
+  extraRequirement: string;
+}
+
+// ===== AI 审稿 =====
+export interface AIReviewResult {
+  totalScore: number;      // 0-100
+  summary: string;
+  criticalCount: number;
+  warningCount: number;
+  passedCount: number;
+  dimensions: ReviewDimension[];
+  issues: ReviewIssue[];
+}
+
+export interface ReviewDimension {
+  id: number;
+  name: string;
+  score: number;          // 0-100
+  passed: boolean;        // 60 分以上通过
+}
+
+export interface ReviewIssue {
+  severity: 'critical' | 'warning' | 'info';
+  dimensionId: number;
+  location: string;       // 问题位置（段落文本片段）
+  description: string;
+  suggestion: string;
+}

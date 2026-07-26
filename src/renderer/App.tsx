@@ -9,6 +9,8 @@ import MaterialPanel from './components/MaterialPanel';
 import OutlinePanel from './components/OutlinePanel';
 import ReferencePanel from './components/ReferencePanel';
 import NameGenerator from './components/NameGenerator';
+import AIWritePanel from './components/AIWritePanel';
+import AIReviewPanel from './components/AIReviewPanel';
 import DatabaseBrowser from './components/DatabaseBrowser';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import ImportDialog from './components/ImportDialog';
@@ -114,6 +116,8 @@ const App: React.FC = () => {
     outlineOpen: false,
     referenceOpen: false,    // 参考面板
     namegenOpen: false,      // 起名助手
+    aiWriteOpen: false,      // AI 写章
+    aiReviewOpen: false,     // AI 审稿
     aiLevel: 'off' as 'off' | 'assist',  // 默认纯写模式，AI 模块不出现
   });
 
@@ -889,6 +893,8 @@ const App: React.FC = () => {
         if (e.key === 'N') { e.preventDefault(); setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen })); }
         if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
+        if (e.key === 'W') { e.preventDefault(); setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen })); }
+        if (e.key === 'R') { e.preventDefault(); setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen })); }
       }
       if (e.key === 'Escape') {
         setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false, inspirationOpen: false }));
@@ -924,6 +930,8 @@ const App: React.FC = () => {
         onToggleOutline={() => setPanelState(p => ({ ...p, outlineOpen: !p.outlineOpen }))}
         onToggleReference={() => setPanelState(p => ({ ...p, referenceOpen: !p.referenceOpen }))}
         onToggleNamegen={() => setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen }))}
+        onToggleAiWrite={() => setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen }))}
+        onToggleAiReview={() => setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen }))}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
           aiLevel: level,
@@ -1078,6 +1086,53 @@ const App: React.FC = () => {
           <NameGenerator
             open={true}
             onClose={() => setPanelState(p => ({ ...p, namegenOpen: false }))}
+          />
+        }
+        aiWritePanel={
+          <AIWritePanel
+            open={panelState.aiWriteOpen}
+            onClose={() => setPanelState(p => ({ ...p, aiWriteOpen: false }))}
+            outlineNodes={outlineNodes}
+            activeOutlineNodeId={activeOutlineNodeId}
+            characters={characters}
+            worldEntries={worldEntries}
+            chapters={chapters}
+            projectName={activeProject?.name || ''}
+            typeTags={activeProject?.typeTags || []}
+            style={activeProject?.style || ''}
+            onSaveAsChapter={async (title, content) => {
+              await handleCreateChapter(title);
+              // 找到刚创建的章节（sortOrder 最大的），更新内容
+              setTimeout(async () => {
+                const res = await window.electronAPI.invoke('db:chapter:findByProject', activeProject?.id) as any;
+                if (res.success && res.data) {
+                  const sorted = [...res.data].sort((a: Chapter, b: Chapter) => b.sortOrder - a.sortOrder);
+                  if (sorted.length > 0) {
+                    handleSaveChapter(sorted[0].id, content);
+                    setActiveChapterId(sorted[0].id);
+                  }
+                }
+              }, 300);
+            }}
+          />
+        }
+        aiReviewPanel={
+          <AIReviewPanel
+            open={panelState.aiReviewOpen}
+            onClose={() => setPanelState(p => ({ ...p, aiReviewOpen: false }))}
+            chapters={chapters}
+            activeChapterId={activeChapterId}
+            characters={characters}
+            worldEntries={worldEntries}
+            outlineNodes={outlineNodes}
+            projectName={activeProject?.name || ''}
+            typeTags={activeProject?.typeTags || []}
+            onNavigateToParagraph={(searchText) => {
+              // 通过 localStorage 通知 WritingArea 跳转到段落
+              localStorage.setItem('hi-story-jump-to-paragraph', searchText);
+              // 触发 WritingArea 响应
+              window.dispatchEvent(new CustomEvent('hi-story:jump-paragraph', { detail: searchText }));
+            }}
           />
         }
       />
