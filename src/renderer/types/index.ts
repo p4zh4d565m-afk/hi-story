@@ -190,3 +190,33 @@ export interface ReviewIssue {
   description: string;
   suggestion: string;
 }
+
+// ===== 反 AI 痕迹检测 =====
+export interface AntiAICheckResult {
+  totalScore: number;       // 0-100，越高越好（越不像AI）
+  checks: AntiAICheckItem[];
+}
+
+export interface AntiAICheckItem {
+  name: string;
+  passed: boolean;
+  score: number;            // 0-100
+  detail: string;
+  suggestions: string[];
+}
+
+// ===== 伏笔追踪 =====
+export interface Foreshadowing {
+  id: string;
+  project_id: string;
+  title: string;
+  description: string;
+  status: 'planted' | 'pending' | 'resolved';
+  planted_chapter_id: string | null;
+  resolved_chapter_id: string | null;
+  related_characters: string;
+  related_outline_nodes: string;
+  note: string;
+  created_at: string;
+  updated_at: string;
+}

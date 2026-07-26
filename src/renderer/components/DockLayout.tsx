@@ -28,6 +28,7 @@ interface PanelState {
   namegenOpen: boolean;
   aiWriteOpen: boolean;
   aiReviewOpen: boolean;
+  foreshadowingOpen: boolean;
   aiLevel: 'off' | 'assist';  // AI participation level
 }
 
@@ -46,6 +47,7 @@ interface DockLayoutProps {
   namegenPanel: React.ReactNode;
   aiWritePanel: React.ReactNode;
   aiReviewPanel: React.ReactNode;
+  foreshadowingPanel: React.ReactNode;
   panelState: PanelState;
   onToggleSidebar: () => void;
   onToggleAiChat: () => void;
@@ -58,6 +60,7 @@ interface DockLayoutProps {
   onToggleNamegen: () => void;
   onToggleAiWrite: () => void;
   onToggleAiReview: () => void;
+  onToggleForeshadowing: () => void;
   onSetAiLevel: (level: 'off' | 'assist') => void;
   fontSizes: FontSizes;
   onSetFontSize: (domain: keyof FontSizes, preset: FontSizePreset) => void;
@@ -82,10 +85,10 @@ const FontSizeSelect: React.FC<{
 const DockLayout: React.FC<DockLayoutProps> = ({
   sidebar, writingArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
   materialPanel, outlinePanel, referencePanel, namegenPanel,
-  aiWritePanel, aiReviewPanel,
+  aiWritePanel, aiReviewPanel, foreshadowingPanel,
   panelState, onToggleSidebar, onToggleAiChat, onMinimizeAiChat, onToggleInspiration, onToggleMindmap,
   onToggleMaterial, onToggleOutline, onToggleReference, onToggleNamegen,
-  onToggleAiWrite, onToggleAiReview,
+  onToggleAiWrite, onToggleAiReview, onToggleForeshadowing,
   onSetAiLevel,
   fontSizes, onSetFontSize,
 }) => {
@@ -370,6 +373,13 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             🔍 审稿
           </button>
 
+          {/* Foreshadowing toggle — 伏笔追踪 */}
+          <button onClick={onToggleForeshadowing}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.foreshadowingOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            title="伏笔追踪 (Ctrl+Shift+F)">
+            🪢 伏笔
+          </button>
+
           {/* AI Chat toggle — hidden when aiLevel is 'off' */}
           {panelState.aiLevel !== 'off' && (
             panelState.aiChatMinimized ? (
@@ -543,6 +553,11 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       {/* ===== FLOATING AI REVIEW PANEL ===== */}
       <div style={{ display: panelState.aiReviewOpen ? 'block' : 'none' }}>
         {aiReviewPanel}
+      </div>
+
+      {/* ===== FLOATING FORESHADOWING PANEL ===== */}
+      <div style={{ display: panelState.foreshadowingOpen ? 'block' : 'none' }}>
+        {foreshadowingPanel}
       </div>
     </div>
   );

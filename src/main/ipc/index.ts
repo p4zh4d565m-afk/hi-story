@@ -8,6 +8,7 @@ import { registerExportIpc } from './export.ipc';
 import { registerCryptoIpc } from './crypto.ipc';
 import { registerReferenceIpc } from './reference.ipc';
 import { registerDatabaseIpc } from './database.ipc';
+import { registerForeshadowingIpc } from './foreshadowing.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -23,4 +24,5 @@ export function registerAllIpc(): void {
   registerCryptoIpc();
   registerReferenceIpc();
   registerDatabaseIpc();
+  registerForeshadowingIpc();
 }

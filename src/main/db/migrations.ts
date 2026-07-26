@@ -222,6 +222,30 @@ const MIGRATIONS = [
       );
     `,
   },
+
+  // 007: 伏笔追踪系统
+  {
+    version: 7,
+    sql: `
+      CREATE TABLE IF NOT EXISTS foreshadowings (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'planted' CHECK(status IN ('planted','pending','resolved')),
+        planted_chapter_id TEXT,
+        resolved_chapter_id TEXT,
+        related_characters TEXT NOT NULL DEFAULT '[]',
+        related_outline_nodes TEXT NOT NULL DEFAULT '[]',
+        note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_foreshadowings_project ON foreshadowings(project_id);
+      CREATE INDEX IF NOT EXISTS idx_foreshadowings_status ON foreshadowings(status);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

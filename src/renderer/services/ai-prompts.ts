@@ -284,3 +284,214 @@ export function extractSummary(content: string, maxChars: number = 300): string 
   if (text.length <= maxChars) return text;
   return text.slice(0, maxChars) + '...';
 }
+
+// ============================================================
+// 反 AI 痕迹检测（纯前端，零 LLM 消耗）
+// ============================================================
+
+export interface AntiAICheckResult {
+  totalScore: number;
+  checks: AntiAICheckItem[];
+}
+
+export interface AntiAICheckItem {
+  name: string;
+  passed: boolean;
+  score: number;
+  detail: string;
+  suggestions: string[];
+}
+
+/**
+ * 运行反 AI 痕迹检测 — 纯规则引擎，秒级完成
+ */
+export function runAntiAICheck(text: string): AntiAICheckResult {
+  const plainText = text.replace(/<[^>]+>/g, '');
+  const paragraphs = plainText.split('\n').filter(l => l.trim().length > 0);
+  const totalChars = plainText.replace(/\s/g, '').length;
+  const checkResults: AntiAICheckItem[] = [];
+
+  // ── 1. 段落均匀度（AI 检测最经典的指标）──
+  {
+    const paraLens = paragraphs.map(p => p.length);
+    if (paraLens.length >= 4) {
+      const mean = paraLens.reduce((a, b) => a + b, 0) / paraLens.length;
+      const variance = paraLens.reduce((sum, l) => sum + (l - mean) ** 2, 0) / paraLens.length;
+      const std = Math.sqrt(variance);
+      const cv = mean > 0 ? std / mean : 0;
+      if (cv < 0.2) {
+        checkResults.push({
+          name: '段落均匀度', passed: false, score: 30,
+          detail: `段落长度变异系数为 ${cv.toFixed(2)}（< 0.2 为高度可疑），平均每段 ${Math.round(mean)} 字，标准差 ${Math.round(std)} 字。真人写作段落长度通常有较大变化。`,
+          suggestions: ['故意拉长或缩短某些段落', '在动作场面前插入短段落', '在描写段落中增加细节变化'],
+        });
+      } else if (cv < 0.35) {
+        checkResults.push({
+          name: '段落均匀度', passed: true, score: 70,
+          detail: `段落长度变异系数为 ${cv.toFixed(2)}（0.2-0.35 之间），有轻微均匀倾向但尚可接受。`,
+          suggestions: ['适当增加段落长度变化'],
+        });
+      } else {
+        checkResults.push({
+          name: '段落均匀度', passed: true, score: 95,
+          detail: `段落长度变异系数为 ${cv.toFixed(2)}，变化丰富，接近真人写作。`,
+          suggestions: [],
+        });
+      }
+    } else {
+      checkResults.push({
+        name: '段落均匀度', passed: true, score: 80,
+        detail: '段落数不足 4 个，无法可靠评估。',
+        suggestions: [],
+      });
+    }
+  }
+
+  // ── 2. 套话密度 ──
+  {
+    const cliches = ['似乎', '可能', '或许', '大概', '某种程度上', '某种意义上', '不得不说', '不可否认'];
+    let totalHits = 0;
+    const hits: string[] = [];
+    for (const word of cliches) {
+      const count = (plainText.match(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+      totalHits += count;
+      if (count > 0) hits.push(`「${word}」${count}次`);
+    }
+    const density = totalChars > 0 ? totalHits / (totalChars / 1000) : 0;
+    if (density > 3) {
+      checkResults.push({
+        name: '套话密度', passed: false, score: 20,
+        detail: `模糊表达密度为 ${density.toFixed(1)} 次/千字（> 3 次/千字），共 ${totalHits} 处。发现：${hits.join('，')}`,
+        suggestions: ['用具体描写替代模糊词', '把"似乎"改为确切感官描述', '删掉不必要的限定词'],
+      });
+    } else if (density > 1.5) {
+      checkResults.push({
+        name: '套话密度', passed: true, score: 70,
+        detail: `模糊表达密度为 ${density.toFixed(1)} 次/千字（1.5-3 之间），共 ${totalHits} 处。${hits.length > 0 ? `发现：${hits.join('，')}` : ''}`,
+        suggestions: ['审视这些模糊词是否必要'],
+      });
+    } else {
+      checkResults.push({
+        name: '套话密度', passed: true, score: 95,
+        detail: `模糊表达密度为 ${density.toFixed(1)} 次/千字，在健康范围内。`,
+        suggestions: [],
+      });
+    }
+  }
+
+  // ── 3. 转折词复用 ──
+  {
+    const transitions = ['然而', '不过', '与此同时', '另一方面', '与此同时', '换言之', '总之', '综上所述'];
+    let totalHits = 0;
+    const hits: string[] = [];
+    for (const word of transitions) {
+      const count = (plainText.match(new RegExp(word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g')) || []).length;
+      totalHits += count;
+      if (count >= 3) hits.push(`「${word}」${count}次`);
+    }
+    if (totalHits >= 6) {
+      checkResults.push({
+        name: '转折词复用', passed: false, score: 25,
+        detail: `转折词使用 ${totalHits} 次（≥ 6 次），过于频繁。${hits.length > 0 ? `高频词：${hits.join('，')}` : ''}`,
+        suggestions: ['减半转折词使用', '用情节铺陈代替"然而"', '让读者自己发现转折'],
+      });
+    } else if (totalHits >= 4) {
+      checkResults.push({
+        name: '转折词复用', passed: true, score: 70,
+        detail: `转折词使用 ${totalHits} 次（4-5 次），略多但可接受。`,
+        suggestions: ['适当减少转折词'],
+      });
+    } else {
+      checkResults.push({
+        name: '转折词复用', passed: true, score: 95,
+        detail: `转折词使用 ${totalHits} 次，在合理范围内。`,
+        suggestions: [],
+      });
+    }
+  }
+
+  // ── 4. 列表式结构 ──
+  {
+    let consecutiveLists = 0;
+    let maxConsecutive = 0;
+    const listPattern = /^[\d一二三四五六七八九十]+[、.．)）]|^[·•●\-—]/;
+    for (const para of paragraphs) {
+      if (listPattern.test(para.trim())) {
+        consecutiveLists++;
+        if (consecutiveLists > maxConsecutive) maxConsecutive = consecutiveLists;
+      } else {
+        consecutiveLists = 0;
+      }
+    }
+    if (maxConsecutive >= 4) {
+      checkResults.push({
+        name: '列表式结构', passed: false, score: 20,
+        detail: `连续 ${maxConsecutive} 段使用序号/列表结构（≥ 4 段），这是典型的 AI 写作特征。`,
+        suggestions: ['打破列表结构，用叙事段落替代', '把信息揉进对话或场景描写中'],
+      });
+    } else if (maxConsecutive >= 3) {
+      checkResults.push({
+        name: '列表式结构', passed: true, score: 65,
+        detail: `连续 ${maxConsecutive} 段使用列表结构（3 段），有 AI 痕迹倾向。`,
+        suggestions: ['考虑用叙述段落替代部分列表'],
+      });
+    } else {
+      checkResults.push({
+        name: '列表式结构', passed: true, score: 95,
+        detail: `未检测到连续列表式结构。`,
+        suggestions: [],
+      });
+    }
+  }
+
+  // ── 5. 总结性套话 ──
+  {
+    const summaryWords = ['综上所述', '总而言之', '总的说来', '如上所述', '一言以蔽之'];
+    const hits: string[] = [];
+    for (const word of summaryWords) {
+      if (plainText.includes(word)) hits.push(`「${word}」`);
+    }
+    if (hits.length > 0) {
+      checkResults.push({
+        name: '总结性套话', passed: false, score: 30,
+        detail: `发现 ${hits.length} 处总结性套话：${hits.join('，')}。这些词在小说中很不自然。`,
+        suggestions: ['直接删除这些总结语', '让读者自己从叙事中得出结论'],
+      });
+    } else {
+      checkResults.push({
+        name: '总结性套话', passed: true, score: 100,
+        detail: '未检测到总结性套话。',
+        suggestions: [],
+      });
+    }
+  }
+
+  // ── 6. 元叙事检测 ──
+  {
+    const metaWords = ['值得一提的是', '在这个世界里', '我们都知道', '正如前文所述', '读者可能注意到'];
+    const hits: string[] = [];
+    for (const word of metaWords) {
+      if (plainText.includes(word)) hits.push(`「${word}」`);
+    }
+    if (hits.length > 0) {
+      checkResults.push({
+        name: '元叙事', passed: false, score: 20,
+        detail: `发现 ${hits.length} 处元叙事（打破第四面墙/作者直接对读者说话）：${hits.join('，')}。`,
+        suggestions: ['删除所有作者旁白', '用角色的视角展示信息', '保持叙事视角一致'],
+      });
+    } else {
+      checkResults.push({
+        name: '元叙事', passed: true, score: 100,
+        detail: '未检测到元叙事。',
+        suggestions: [],
+      });
+    }
+  }
+
+  // 计算总分
+  const totalScore = Math.round(
+    checkResults.reduce((sum, c) => sum + c.score, 0) / Math.max(1, checkResults.length),
+  );
+
+  return { totalScore, checks: checkResults };
+}

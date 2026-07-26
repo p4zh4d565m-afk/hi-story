@@ -55,12 +55,24 @@ export class ContextBuilder {
     // 7. 文学知识库（本地已导入的数据）
     parts.push(this.getLiteratureKnowledge());
 
-    // 8. 最近对话摘要（压缩长对话）
+    // 8. 创作罗盘（author_intent + current_focus）
+    if (sources.project) {
+      const compass = this.getCompassContext(sources.project.id);
+      if (compass) parts.push(compass);
+    }
+
+    // 9. 风格指纹
+    if (sources.project) {
+      const styleFp = this.getStyleFingerprintContext(sources.project.id);
+      if (styleFp) parts.push(styleFp);
+    }
+
+    // 10. 最近对话摘要（压缩长对话）
     if (sources.recentMessages && sources.recentMessages.length > 0) {
       parts.push(this.getConversationSummary(sources.recentMessages));
     }
 
-    // 9. 行为约束
+    // 11. 行为约束
     parts.push(this.getBehaviorRules());
 
     const systemContent = parts.filter(Boolean).join('\n\n---\n\n');
@@ -215,5 +227,40 @@ export class ContextBuilder {
 - 如果作者要求你帮助写具体段落，你可以提供示例，但始终提醒作者这是可修改的建议。
 - 避免过度"鸡汤式"的鼓励，专注于实质性的创作帮助。
 - 对于中国历史、神话、文学相关内容，优先使用准确的考据。`;
+  }
+
+  private static getCompassContext(projectId: string): string | null {
+    try {
+      const raw = (globalThis as any).localStorage?.getItem(`hi-story-compass-${projectId}`);
+      if (!raw) return null;
+      const compass = JSON.parse(raw);
+      if (!compass.authorIntent && !compass.currentFocus && !compass.avoid) return null;
+      const lines: string[] = ['## 🧭 创作罗盘（作者的最高优先级指导）'];
+      if (compass.authorIntent) lines.push(`### 长期作者意图\n${compass.authorIntent}`);
+      if (compass.currentFocus) lines.push(`### 近期写作焦点（本次最高优先级）\n${compass.currentFocus}`);
+      if (compass.avoid) lines.push(`### 禁止方向（请避免以下内容）\n${compass.avoid}`);
+      return lines.join('\n');
+    } catch {
+      return null;
+    }
+  }
+
+  private static getStyleFingerprintContext(projectId: string): string | null {
+    try {
+      const raw = (globalThis as any).localStorage?.getItem(`hi-story-style-fingerprint-${projectId}`);
+      if (!raw) return null;
+      const fp = JSON.parse(raw);
+      if (!fp.sentenceStyle && !fp.moodTone && !fp.vocabTraits) return null;
+      const lines: string[] = ['## 🎨 写作风格指纹（来自作者样章分析）'];
+      if (fp.sentenceStyle) lines.push(`- 句式：${fp.sentenceStyle}`);
+      if (fp.rhetoricStyle) lines.push(`- 修辞：${fp.rhetoricStyle}`);
+      if (fp.dialogueStyle) lines.push(`- 对话：${fp.dialogueStyle}`);
+      if (fp.moodTone) lines.push(`- 基调：${fp.moodTone}`);
+      if (fp.vocabTraits) lines.push(`- 用词：${fp.vocabTraits}`);
+      if (fp.chapterStructure) lines.push(`- 结构：${fp.chapterStructure}`);
+      return lines.join('\n');
+    } catch {
+      return null;
+    }
   }
 }

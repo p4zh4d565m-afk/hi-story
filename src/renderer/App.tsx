@@ -11,6 +11,7 @@ import ReferencePanel from './components/ReferencePanel';
 import NameGenerator from './components/NameGenerator';
 import AIWritePanel from './components/AIWritePanel';
 import AIReviewPanel from './components/AIReviewPanel';
+import ForeshadowingPanel from './components/ForeshadowingPanel';
 import DatabaseBrowser from './components/DatabaseBrowser';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import ImportDialog from './components/ImportDialog';
@@ -118,6 +119,7 @@ const App: React.FC = () => {
     namegenOpen: false,      // 起名助手
     aiWriteOpen: false,      // AI 写章
     aiReviewOpen: false,     // AI 审稿
+    foreshadowingOpen: false, // 伏笔追踪
     aiLevel: 'off' as 'off' | 'assist',  // 默认纯写模式，AI 模块不出现
   });
 
@@ -895,6 +897,7 @@ const App: React.FC = () => {
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
         if (e.key === 'W') { e.preventDefault(); setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen })); }
         if (e.key === 'R') { e.preventDefault(); setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen })); }
+        if (e.key === 'F') { e.preventDefault(); setPanelState(p => ({ ...p, foreshadowingOpen: !p.foreshadowingOpen })); }
       }
       if (e.key === 'Escape') {
         setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false, inspirationOpen: false }));
@@ -932,6 +935,7 @@ const App: React.FC = () => {
         onToggleNamegen={() => setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen }))}
         onToggleAiWrite={() => setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen }))}
         onToggleAiReview={() => setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen }))}
+        onToggleForeshadowing={() => setPanelState(p => ({ ...p, foreshadowingOpen: !p.foreshadowingOpen }))}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
           aiLevel: level,
@@ -1133,6 +1137,16 @@ const App: React.FC = () => {
               // 触发 WritingArea 响应
               window.dispatchEvent(new CustomEvent('hi-story:jump-paragraph', { detail: searchText }));
             }}
+          />
+        }
+        foreshadowingPanel={
+          <ForeshadowingPanel
+            open={panelState.foreshadowingOpen}
+            onClose={() => setPanelState(p => ({ ...p, foreshadowingOpen: false }))}
+            projectId={activeProject?.id ?? null}
+            chapters={chapters.map(c => ({ id: c.id, title: c.title }))}
+            characters={characters.map(c => ({ id: c.id, name: c.name }))}
+            outlineNodes={outlineNodes.map(n => ({ id: n.id, title: n.title }))}
           />
         }
       />
