@@ -6,3 +6,36 @@ dist/
 *.db-wal
 .DS_Store
 thumbs.db
+
+# 临时文件与调试脚本
+*.pyc
+__pycache__/
+*.log
+build_embeddings.py
+check-db.js
+check-literary-db.js
+check-migration.js
+check_embeddings.py
+run-migration-v6.js
+semantic_reranker.py
+test-extract-groups.js
+test-vector-search.js
+
+# 临时标记文件
+LIKE
+empty
+merge
+pure
+skip
+仅用
+合并排序
+向量候选池为空
+纯
+跳过向量搜索
+跳过精排
+
+# 截图
+screenshot_resized.png
+
+# 外部项目 zip
+Openwrite-main.zip
