@@ -10,72 +10,213 @@ export interface ContextSources {
   recentMessages?: ChatMessage[];
 }
 
+// ============================================================
+// Token 预算管理器 — 参考 OpenWrite context_builder.py
+// 给每个上下文块分配明确 token 上限，超限时按优先级降级
+// ============================================================
+
+const TOKEN_BUDGET = {
+  /** 总 system prompt token 上限（留余量给 user message + AI 回复） */
+  total: 16000,
+  allocation: {
+    aiRole: 600,
+    project: 400,
+    currentChapter: 1500,
+    outline: 3000,
+    characters: 2500,
+    world: 2500,
+    literatureKnowledge: 500,
+    compass: 1000,
+    styleFingerprint: 800,
+    conversationSummary: 1000,
+    behaviorRules: 500,
+  },
+};
+
+/**
+ * CJK 字符约 1.5 token/字，英文约 4 char/token
+ * 参考 OpenWrite 的估算策略
+ */
+function estimateTokens(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0) ?? 0;
+    if (
+      (code >= 0x4E00 && code <= 0x9FFF) ||   // CJK 统一汉字
+      (code >= 0x3400 && code <= 0x4DBF) ||   // CJK 扩展 A
+      (code >= 0x20000 && code <= 0x2A6DF) || // CJK 扩展 B
+      (code >= 0xF900 && code <= 0xFAFF) ||   // CJK 兼容汉字
+      (code >= 0x3040 && code <= 0x309F) ||   // 平假名
+      (code >= 0x30A0 && code <= 0x30FF)      // 片假名
+    ) {
+      cjk++;
+    } else {
+      other++;
+    }
+  }
+  return Math.ceil(cjk / 1.5 + other / 4);
+}
+
+/**
+ * 按 token 预算截断文本
+ * @returns [截断后文本, 是否被截断]
+ */
+function truncateByBudget(
+  text: string,
+  budget: number,
+  options?: { takeEnd?: boolean; preserveSentence?: boolean }
+): [string, boolean] {
+  if (!text) return [text, false];
+
+  // 快速路径：小文本不截断（~2x token 估算）
+  if (text.length < budget * 1.5) return [text, false];
+
+  let truncated: string;
+  if (options?.takeEnd) {
+    // 取末尾（如章节最近内容）
+    truncated = text.slice(-Math.floor(budget * 1.2));
+  } else {
+    truncated = text.slice(0, Math.floor(budget * 1.2));
+  }
+
+  if (options?.preserveSentence && truncated.length > 50) {
+    // 尝试在句号/换行处截断
+    const lastBreak = Math.max(
+      truncated.lastIndexOf('。'),
+      truncated.lastIndexOf('！'),
+      truncated.lastIndexOf('？'),
+      truncated.lastIndexOf('\n'),
+    );
+    if (lastBreak > truncated.length * 0.6) {
+      truncated = truncated.slice(0, lastBreak + 1);
+    }
+  }
+
+  return [truncated + (options?.takeEnd ? '…' : '…'), true];
+}
+
+/**
+ * 检查总 token 是否超限，超限时从低优先级块逐步降级
+ */
+function enforceTotalBudget(parts: { text: string; priority: number }[], maxTokens: number): string[] {
+  const totalTokens = parts.reduce((sum, p) => sum + estimateTokens(p.text), 0);
+  if (totalTokens <= maxTokens) {
+    return parts.map(p => p.text);
+  }
+
+  // 从最低优先级（高数字）开始压缩
+  const sorted = parts.map((p, i) => ({ ...p, idx: i }));
+  sorted.sort((a, b) => b.priority - a.priority); // 高优先级在前
+
+  let budget = maxTokens;
+  const results: (string | null)[] = new Array(parts.length).fill(null);
+
+  // 先分配高优先级
+  for (const item of sorted) {
+    if (budget <= 0) break;
+    const tokens = estimateTokens(item.text);
+    if (tokens <= budget) {
+      results[item.idx] = item.text;
+      budget -= tokens;
+    } else {
+      // 超限：压缩策略
+      if (item.priority >= 8) {
+        // 高优先级：尽力保留，截断
+        const [compressed] = truncateByBudget(item.text, budget, { preserveSentence: true });
+        results[item.idx] = compressed;
+        budget = 0;
+      } else if (item.priority >= 5) {
+        // 中优先级：去掉内容只保留标题行
+        const firstLine = item.text.split('\n')[0];
+        const t = estimateTokens(firstLine);
+        if (t <= budget) {
+          results[item.idx] = firstLine + '\n（内容已压缩）';
+          budget -= t;
+        }
+      }
+      // 低优先级：跳过
+    }
+  }
+
+  return results.filter((r): r is string => r !== null);
+}
+
+// ============================================================
+// ContextBuilder
+// ============================================================
+
 /**
  * Builds the system context for AI conversations.
- * Automatically injects project info, current chapter,
- * linked characters/world entries, outline nodes,
- * and recent conversation summary.
+ * 带 token 预算管理：每个上下文块有明确上限，超限按优先级降级
  */
 export class ContextBuilder {
   /**
    * Build a full context as chat-ready messages.
-   * Returns system messages to prepend to the conversation.
    */
   static build(sources: ContextSources): ChatMessage[] {
-    const parts: string[] = [];
+    // 收集所有上下文块（带优先级，数字越大越优先保留）
+    const blocks: { text: string; priority: number }[] = [];
 
-    // 1. AI 角色定位
-    parts.push(this.getAIRole());
+    // 1. AI 角色定位 [priority=10 — 最高，绝对不能丢]
+    blocks.push({ text: getAIRole(), priority: 10 });
 
-    // 2. 小说项目信息
+    // 2. 小说项目信息 [priority=9]
     if (sources.project) {
-      parts.push(this.getProjectContext(sources.project));
+      blocks.push({ text: getProjectContext(sources.project), priority: 9 });
     }
 
-    // 3. 当前正在写的章节
+    // 3. 当前章节 [priority=9]
     if (sources.currentChapter) {
-      parts.push(this.getChapterContext(sources.currentChapter));
+      const text = getChapterContext(sources.currentChapter);
+      blocks.push({ text, priority: 9 });
     }
 
-    // 4. 关联大纲节点
+    // 4. 关联大纲节点 [priority=8]
     if (sources.outlineNodes && sources.outlineNodes.length > 0) {
-      parts.push(this.getOutlineContext(sources.outlineNodes));
+      const text = getOutlineContext(sources.outlineNodes);
+      blocks.push({ text, priority: 8 });
     }
 
-    // 5. 关联角色
+    // 5. 关联角色 [priority=8]
     if (sources.characters && sources.characters.length > 0) {
-      parts.push(this.getCharactersContext(sources.characters));
+      const text = getCharactersContext(sources.characters);
+      blocks.push({ text, priority: 8 });
     }
 
-    // 6. 关联世界观
+    // 6. 关联世界观 [priority=8]
     if (sources.worldEntries && sources.worldEntries.length > 0) {
-      parts.push(this.getWorldContext(sources.worldEntries));
+      const text = getWorldContext(sources.worldEntries);
+      blocks.push({ text, priority: 8 });
     }
 
-    // 7. 文学知识库（本地已导入的数据）
-    parts.push(this.getLiteratureKnowledge());
-
-    // 8. 创作罗盘（author_intent + current_focus）
+    // 7. 创作罗盘 [priority=9 — 作者的直接指令，高优先级]
     if (sources.project) {
       const compass = this.getCompassContext(sources.project.id);
-      if (compass) parts.push(compass);
+      if (compass) blocks.push({ text: compass, priority: 9 });
     }
 
-    // 9. 风格指纹
+    // 8. 风格指纹 [priority=7]
     if (sources.project) {
       const styleFp = this.getStyleFingerprintContext(sources.project.id);
-      if (styleFp) parts.push(styleFp);
+      if (styleFp) blocks.push({ text: styleFp, priority: 7 });
     }
 
-    // 10. 最近对话摘要（压缩长对话）
+    // 9. 最近对话摘要 [priority=6]
     if (sources.recentMessages && sources.recentMessages.length > 0) {
-      parts.push(this.getConversationSummary(sources.recentMessages));
+      const text = getConversationSummary(sources.recentMessages);
+      blocks.push({ text, priority: 6 });
     }
 
-    // 11. 行为约束
-    parts.push(this.getBehaviorRules());
+    // 10. 文学知识库 [priority=4 — 静态数据，可被压缩]
+    blocks.push({ text: getLiteratureKnowledge(), priority: 4 });
 
-    const systemContent = parts.filter(Boolean).join('\n\n---\n\n');
+    // 11. 行为约束 [priority=10 — 必须保留]
+    blocks.push({ text: getBehaviorRules(), priority: 10 });
+
+    // Token 预算检查 & 降级
+    const finalParts = enforceTotalBudget(blocks, TOKEN_BUDGET.total);
+    const systemContent = finalParts.join('\n\n---\n\n');
 
     return [{
       role: 'system',
@@ -84,150 +225,13 @@ export class ContextBuilder {
   }
 
   /**
-   * Estimate token count for messaging (approx 1 token ≈ 3 chars for CJK, 4 chars for EN)
+   * Estimate token count for a given text (≈1 token per 1.5 CJK chars)
    */
   static estimateTokens(text: string): number {
-    const cjkChars = (text.match(/[一-鿿一-鿿㐀-䶿]/g) || []).length;
-    const otherChars = text.length - cjkChars;
-    return Math.ceil(cjkChars / 1.5 + otherChars / 4);
+    return estimateTokens(text);
   }
 
-  private static getAIRole(): string {
-    return `你是一位资深的文学创作助手，正在帮助作者进行小说创作。
-
-你的核心能力：
-1. 【作品讨论】你可以讨论用户的小说设定、角色、情节走向，提供建议和分析。
-2. 【知识查询】你拥有丰富的文学、历史、神话知识。用户问你成语典故、历史事件、神话传说、名著片段时，请直接回答。例如用户问"'破釜沉舟'出自哪里？"你应该直接告诉他出自《史记·项羽本纪》并讲述完整故事。
-3. 【灵感搜索】如果用户想要查找某个典故、某段名言、某个文学描述，而你记忆中确实有相关内容，请直接引用并提供出处。
-
-行为准则：
-- 你的任务是提供建设性的建议、补充设定细节、分析角色和情节，但始终保持作者的主导权。
-- 你不会替代作者写长篇正文，而是提供框架、思路和润色建议。
-- 区分事实和建议：明确指出哪些是基于文学惯例的建议，哪些是必须遵守的规则。
-- 对于中国历史、神话、文学相关内容，优先使用准确的考据和原文引用。
-- 避免过度"鸡汤式"的鼓励，专注于实质性的创作帮助。
-- 使用中文进行对话。`;
-  }
-
-  private static getProjectContext(project: Project): string {
-    const lines: string[] = ['## 当前小说项目'];
-    lines.push(`- 书名: 《${project.name}》`);
-    if (project.typeTags.length > 0) {
-      lines.push(`- 类型: ${project.typeTags.join(' · ')}`);
-    }
-    if (project.style) {
-      lines.push(`- 风格: ${project.style}`);
-    }
-    if (project.summary) {
-      lines.push(`- 简介: ${project.summary}`);
-    }
-    return lines.join('\n');
-  }
-
-  private static getChapterContext(chapter: Chapter): string {
-    const lines: string[] = ['## 当前章节'];
-    lines.push(`- 标题: ${chapter.title}`);
-    lines.push(`- 状态: ${chapter.status === 'final' ? '定稿' : '草稿'}`);
-    lines.push(`- 字数: ${chapter.wordCount.toLocaleString()}`);
-
-    if (chapter.content) {
-      // Strip HTML tags and truncate to ~500 chars for context
-      const plainText = chapter.content
-        .replace(/<[^>]*>/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      const excerpt = plainText.length > 500
-        ? plainText.slice(-500) + '...'  // Take the end (most recent writing)
-        : plainText;
-
-      lines.push(`\n最近内容:\n\`\`\`\n${excerpt}\n\`\`\``);
-    }
-    return lines.join('\n');
-  }
-
-  private static getOutlineContext(nodes: OutlineNode[]): string {
-    const lines: string[] = ['## 相关大纲'];
-    const buildTree = (parentId: string | null, depth: number = 0): string[] => {
-      const children = nodes.filter(n => n.parentId === parentId);
-      return children.map(n => {
-        const indent = '  '.repeat(depth);
-        const line = `${indent}- ${n.title}${n.summary ? `: ${n.summary}` : ''}`;
-        return [line, ...buildTree(n.id, depth + 1)];
-      }).flat();
-    };
-    lines.push(...buildTree(null));
-    return lines.join('\n');
-  }
-
-  private static getCharactersContext(characters: Character[]): string {
-    const lines: string[] = ['## 关联角色'];
-    for (const ch of characters.slice(0, 5)) {  // Max 5 characters for context
-      lines.push(`### ${ch.name}`);
-      if (ch.aliases) lines.push(`- 别名: ${ch.aliases}`);
-      if (ch.appearance) lines.push(`- 外貌: ${ch.appearance}`);
-      if (ch.personality) lines.push(`- 性格: ${ch.personality}`);
-      if (ch.background) lines.push(`- 背景: ${ch.background}`);
-      if (ch.arc) lines.push(`- 角色弧线: ${ch.arc}`);
-      lines.push('');
-    }
-    return lines.join('\n');
-  }
-
-  private static getWorldContext(entries: WorldEntry[]): string {
-    const lines: string[] = ['## 关联世界观'];
-    for (const entry of entries.slice(0, 5)) {
-      lines.push(`### ${entry.name} [${entry.category}]`);
-      if (entry.description) {
-        const desc = entry.description.length > 200
-          ? entry.description.slice(0, 200) + '...'
-          : entry.description;
-        lines.push(desc);
-      }
-      lines.push('');
-    }
-    return lines.join('\n');
-  }
-
-  private static getConversationSummary(messages: ChatMessage[]): string {
-    const recentMsgs = messages.slice(-10);  // Last 10 messages
-    const summary = recentMsgs
-      .filter(m => m.role !== 'system')
-      .map(m => {
-        const prefix = m.role === 'user' ? '作者' : '助手';
-        const text = m.content.length > 100
-          ? m.content.slice(0, 100) + '...'
-          : m.content;
-        return `${prefix}: ${text}`;
-      })
-      .join('\n');
-    return `## 最近对话\n${summary}`;
-  }
-
-  private static getLiteratureKnowledge(): string {
-    return `## 本地文学知识库
-你的训练数据中已包含大量文学知识。此外，用户已导入以下本地数据可供参考：
-
-- 📖 成语词典 (103条) — 含出处、释义、例句
-- ⚔️ 孙子兵法 + 三十六计 (42篇) — 完整原文
-- 🦊 希腊神话 + 北欧神话 (12篇) — 体系化介绍
-- 📚 唐诗宋词精选 (20首) — 名家名篇原文
-- 🎭 修辞手法大全 (11条) — 含例句
-
-如果用户询问关于这些主题的问题，请尽量给出详细的解答，并引用原文或出处。不要仅仅因为'本地数据库可能没有'就回避回答——你是 AI 模型，本身就掌握这些知识。`;
-  }
-
-  private static getBehaviorRules(): string {
-    return `## 知识能力
-你可以直接回答文学、历史、神话、成语典故相关的问题，无需依赖外部数据库。如果用户问的是你熟悉的知识点（如成语出处、历史事件、神话传说、名著内容），请引用原文并提供出处。
-
-## 行为准则
-- 使用中文回复。
-- 保持对作者的尊重，以建议而非命令的方式提供意见。
-- 区分事实和建议：明确指出哪些是基于文学惯例的建议，哪些是必须遵守的规则。
-- 如果作者要求你帮助写具体段落，你可以提供示例，但始终提醒作者这是可修改的建议。
-- 避免过度"鸡汤式"的鼓励，专注于实质性的创作帮助。
-- 对于中国历史、神话、文学相关内容，优先使用准确的考据。`;
-  }
+  // ── 创作罗盘（来自 OpenWrite 移植，不改动） ──
 
   private static getCompassContext(projectId: string): string | null {
     try {
@@ -244,6 +248,8 @@ export class ContextBuilder {
       return null;
     }
   }
+
+  // ── 风格指纹（来自 OpenWrite 移植，不改动） ──
 
   private static getStyleFingerprintContext(projectId: string): string | null {
     try {
@@ -263,4 +269,213 @@ export class ContextBuilder {
       return null;
     }
   }
+}
+
+// ============================================================
+// 各上下文块的构建函数（从类方法提取为模块级函数）
+// ============================================================
+
+function getAIRole(): string {
+  return `你是一位资深的文学创作助手，正在帮助作者进行小说创作。
+
+你的核心能力：
+1. 【作品讨论】你可以讨论用户的小说设定、角色、情节走向，提供建议和分析。
+2. 【知识查询】你拥有丰富的文学、历史、神话知识。用户问你成语典故、历史事件、神话传说、名著片段时，请直接回答。例如用户问"'破釜沉舟'出自哪里？"你应该直接告诉他出自《史记·项羽本纪》并讲述完整故事。
+3. 【灵感搜索】如果用户想要查找某个典故、某段名言、某个文学描述，而你记忆中确实有相关内容，请直接引用并提供出处。
+
+行为准则：
+- 你的任务是提供建设性的建议、补充设定细节、分析角色和情节，但始终保持作者的主导权。
+- 你不会替代作者写长篇正文，而是提供框架、思路和润色建议。
+- 区分事实和建议：明确指出哪些是基于文学惯例的建议，哪些是必须遵守的规则。
+- 对于中国历史、神话、文学相关内容，优先使用准确的考据和原文引用。
+- 避免过度"鸡汤式"的鼓励，专注于实质性的创作帮助。
+- 使用中文进行对话。`;
+}
+
+function getProjectContext(project: Project): string {
+  const lines: string[] = ['## 当前小说项目'];
+  lines.push(`- 书名: 《${project.name}》`);
+  if (project.typeTags.length > 0) {
+    lines.push(`- 类型: ${project.typeTags.join(' · ')}`);
+  }
+  if (project.style) {
+    lines.push(`- 风格: ${project.style}`);
+  }
+  if (project.summary) {
+    lines.push(`- 简介: ${project.summary}`);
+  }
+  return lines.join('\n');
+}
+
+function getChapterContext(chapter: Chapter): string {
+  const lines: string[] = ['## 当前章节'];
+  lines.push(`- 标题: ${chapter.title}`);
+  lines.push(`- 状态: ${chapter.status === 'final' ? '定稿' : '草稿'}`);
+  lines.push(`- 字数: ${chapter.wordCount.toLocaleString()}`);
+
+  if (chapter.content) {
+    // Strip HTML tags
+    const plainText = chapter.content
+      .replace(/<[^>]*>/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    // 不再硬截断 500 字 — 用 token 预算动态控制
+    const [excerpt, wasTruncated] = truncateByBudget(
+      plainText,
+      TOKEN_BUDGET.allocation.currentChapter - 200, // 留出标题行的 token
+      { takeEnd: true, preserveSentence: true }
+    );
+
+    if (wasTruncated || plainText.length > 0) {
+      lines.push(`\n最近内容:\n\`\`\`\n${excerpt}\n\`\`\``);
+    }
+  }
+  return lines.join('\n');
+}
+
+function getOutlineContext(nodes: OutlineNode[]): string {
+  const lines: string[] = ['## 相关大纲'];
+  const buildTree = (parentId: string | null, depth: number = 0): string[] => {
+    const children = nodes.filter(n => n.parentId === parentId);
+    return children.map(n => {
+      const indent = '  '.repeat(depth);
+      const line = `${indent}- ${n.title}${n.summary ? `: ${n.summary}` : ''}`;
+      return [line, ...buildTree(n.id, depth + 1)];
+    }).flat();
+  };
+
+  const treeLines = buildTree(null);
+  // 大纲超限时截断（保留前面部分，即高层级节点）
+  const treeText = treeLines.join('\n');
+  const [result] = truncateByBudget(
+    treeText,
+    TOKEN_BUDGET.allocation.outline,
+    { preserveSentence: false }
+  );
+  lines.push(result);
+  return lines.join('\n');
+}
+
+function getCharactersContext(characters: Character[]): string {
+  const lines: string[] = ['## 关联角色'];
+  // 不再硬截断 slice(0,5) — 用 token 预算动态计算
+  let charBudget = TOKEN_BUDGET.allocation.characters;
+  const charsPerItem: { name: string; text: string; tokens: number }[] = [];
+
+  for (const ch of characters) {
+    const parts: string[] = [];
+    parts.push(`### ${ch.name}`);
+    let fieldCount = 0;
+    const FIELDS = ['aliases', 'appearance', 'personality', 'background', 'arc'] as const;
+    const FIELD_KEYS: Record<string, string> = {
+      aliases: '别名', appearance: '外貌', personality: '性格',
+      background: '背景', arc: '角色弧线',
+    };
+    const FIELD_VALUES: Record<string, string> = {
+      aliases: ch.aliases, appearance: ch.appearance, personality: ch.personality,
+      background: ch.background, arc: ch.arc,
+    };
+
+    for (const field of FIELDS) {
+      const value = FIELD_VALUES[field];
+      if (value) {
+        parts.push(`- ${FIELD_KEYS[field]}: ${value}`);
+        fieldCount++;
+      }
+    }
+
+    // 如果没有有效字段（空卷标角色），跳过
+    if (fieldCount === 0) continue;
+
+    const text = parts.join('\n');
+    const tokens = estimateTokens(text);
+    charsPerItem.push({ name: ch.name, text, tokens });
+  }
+
+  // 按预算填充角色：先放完整信息，放不下的只保留名称
+  for (const item of charsPerItem) {
+    if (charBudget >= item.tokens) {
+      lines.push(item.text);
+      charBudget -= item.tokens;
+    } else if (charBudget > 50) {
+      // 预算不够完整字段，但可以放精简版
+      lines.push(`### ${item.name}（信息已压缩）`);
+      charBudget -= 30;
+    }
+    // 预算耗尽则跳过剩余角色
+  }
+
+  return lines.join('\n');
+}
+
+function getWorldContext(entries: WorldEntry[]): string {
+  const lines: string[] = ['## 关联世界观'];
+  let worldBudget = TOKEN_BUDGET.allocation.world;
+
+  for (const entry of entries) {
+    if (worldBudget <= 50) break;
+
+    const entryText = buildWorldEntryText(entry);
+    const tokens = estimateTokens(entryText);
+
+    if (worldBudget >= tokens) {
+      lines.push(entryText);
+      worldBudget -= tokens;
+    } else if (worldBudget > 50) {
+      // 精简版：只放名称+category，描述截断
+      const compact = `### ${entry.name} [${entry.category}]\n（信息已压缩）`;
+      lines.push(compact);
+      worldBudget -= 30;
+    }
+  }
+  return lines.join('\n');
+}
+
+function buildWorldEntryText(entry: WorldEntry): string {
+  const parts = [`### ${entry.name} [${entry.category}]`];
+  if (entry.description) {
+    const [desc] = truncateByBudget(entry.description, 1500);
+    parts.push(desc);
+  }
+  return parts.join('\n');
+}
+
+function getConversationSummary(messages: ChatMessage[]): string {
+  const recentMsgs = messages.slice(-10);
+  const summary = recentMsgs
+    .filter(m => m.role !== 'system')
+    .map(m => {
+      const prefix = m.role === 'user' ? '作者' : '助手';
+      const [text] = truncateByBudget(m.content, 200);
+      return `${prefix}: ${text}`;
+    })
+    .join('\n');
+  return `## 最近对话\n${summary}`;
+}
+
+function getLiteratureKnowledge(): string {
+  return `## 本地文学知识库
+你的训练数据中已包含大量文学知识。此外，用户已导入以下本地数据可供参考：
+
+- 📖 成语词典 — 含出处、释义、例句
+- ⚔️ 孙子兵法 + 三十六计 — 完整原文
+- 🦊 希腊神话 + 北欧神话 — 体系化介绍
+- 📚 唐诗宋词精选 — 名家名篇原文
+- 🎭 修辞手法大全 — 含例句
+
+如果用户询问关于这些主题的问题，请尽量给出详细的解答，并引用原文或出处。不要仅仅因为'本地数据库可能没有'就回避回答——你是 AI 模型，本身就掌握这些知识。`;
+}
+
+function getBehaviorRules(): string {
+  return `## 知识能力
+你可以直接回答文学、历史、神话、成语典故相关的问题，无需依赖外部数据库。如果用户问的是你熟悉的知识点（如成语出处、历史事件、神话传说、名著内容），请引用原文并提供出处。
+
+## 行为准则
+- 使用中文回复。
+- 保持对作者的尊重，以建议而非命令的方式提供意见。
+- 区分事实和建议：明确指出哪些是基于文学惯例的建议，哪些是必须遵守的规则。
+- 如果作者要求你帮助写具体段落，你可以提供示例，但始终提醒作者这是可修改的建议。
+- 避免过度"鸡汤式"的鼓励，专注于实质性的创作帮助。
+- 对于中国历史、神话、文学相关内容，优先使用准确的考据。`;
 }

@@ -7,9 +7,10 @@ import {
   htmlToPlainText,
   extractSummary,
   REVIEW_DIMENSIONS,
+  runAntiAICheck,
 } from '../services/ai-prompts';
 import AIReviewResultComponent from './AIReviewResult';
-import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode } from '../types';
+import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, AntiAICheckResult } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
 
 // ============================================================
@@ -88,6 +89,8 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [configError, setConfigError] = useState<string | null>(null);
   const [initDone, setInitDone] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [activeTab, setActiveTab] = useState<'review' | 'quickcheck'>('review');
+  const [quickCheckResult, setQuickCheckResult] = useState<AntiAICheckResult | null>(null);
 
   // ===== 初始化 AI =====
   useEffect(() => {
@@ -253,17 +256,32 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       if (i.suggestion) lines.push(`  建议：${i.suggestion}`);
     }
     const report = lines.join('\n');
-    navigator.clipboard.writeText(report).catch(() => {
-      const ta = document.createElement('textarea');
-      ta.value = report;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand('copy');
-      document.body.removeChild(ta);
+    navigator.clipboard.writeText(report).catch((err) => {
+      // 降级：如果 Clipboard API 不可用（如非 HTTPS 环境），提示用户手动复制
+      console.warn('复制到剪贴板失败:', err?.message);
     });
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [result]);
+
+  // ===== 反 AI 痕迹检测 =====
+  const handleQuickCheck = useCallback(() => {
+    if (!selectedChapterId) return;
+    const chapter = chapters.find(ch => ch.id === selectedChapterId);
+    if (!chapter) return;
+    const plainContent = htmlToPlainText(chapter.content || '');
+    if (!plainContent.trim()) return;
+    setActiveTab('quickcheck');
+    const checkResult = runAntiAICheck(plainContent);
+    setQuickCheckResult(checkResult);
+  }, [selectedChapterId, chapters]);
+
+  /** 反AI检测结果颜色 */
+  function quickScoreColor(score: number): string {
+    if (score >= 80) return 'text-green-400';
+    if (score >= 60) return 'text-yellow-400';
+    return 'text-red-400';
+  }
 
   if (!open) return null;
 
@@ -323,6 +341,34 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             >
               {reviewing ? '⏳ 审查中...' : '🔍 开始审稿'}
             </button>
+            <button
+              onClick={handleQuickCheck}
+              disabled={!selectedChapterId}
+              className="px-4 py-1.5 bg-gray-700 text-gray-200 text-xs rounded hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              title="纯前端规则检测，零 AI 消耗，秒级完成"
+            >
+              ⚡ 快速检测
+            </button>
+          </div>
+
+          {/* ── Tab 切换栏 ── */}
+          <div className="flex items-center gap-1 border-b border-gray-800">
+            <button
+              onClick={() => setActiveTab('review')}
+              className={`px-3 py-1.5 text-[11px] border-b-2 transition-colors ${
+                activeTab === 'review' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-white'
+              }`}
+            >
+              🤖 AI 审稿
+            </button>
+            <button
+              onClick={() => setActiveTab('quickcheck')}
+              className={`px-3 py-1.5 text-[11px] border-b-2 transition-colors ${
+                activeTab === 'quickcheck' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-white'
+              }`}
+            >
+              ⚡ 快速检测 (反AI痕迹)
+            </button>
           </div>
 
           {/* 选中章节信息 */}
@@ -357,16 +403,90 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
           )}
 
           {/* 审稿结果 */}
-          {result && !reviewing && (
+          {result && !reviewing && activeTab === 'review' && (
             <AIReviewResultComponent
               result={result}
               onJumpToIssue={handleJumpToIssue}
             />
           )}
+
+          {/* 反AI痕迹检测结果 */}
+          {activeTab === 'quickcheck' && (
+            <div>
+              {quickCheckResult ? (
+                <div className="space-y-3 text-sm">
+                  {/* 总分 */}
+                  <div className="flex items-center gap-3 p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <div className={`text-2xl font-bold ${quickScoreColor(quickCheckResult.totalScore)}`}>
+                      {quickCheckResult.totalScore}<span className="text-xs text-gray-500">/100</span>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-[11px] text-gray-300">
+                        {quickCheckResult.totalScore >= 80
+                          ? '🎉 自然度较高，无明显AI痕迹'
+                          : quickCheckResult.totalScore >= 60
+                            ? '⚠️ 有轻微AI痕迹，建议手动润色'
+                            : '🔴 AI痕迹明显，强烈建议重写相关段落'}
+                      </p>
+                      <p className="text-[9px] text-gray-600 mt-0.5">
+                        {quickCheckResult.checks.filter(c => !c.passed).length}/{quickCheckResult.checks.length} 项未通过
+                        · 纯规则检测 · 零AI消耗 · 秒级完成
+                      </p>
+                    </div>
+                  </div>
+                  {/* 各项详情 */}
+                  <div className="space-y-2">
+                    {quickCheckResult.checks.map((check, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-3 rounded border text-[11px] ${
+                          check.passed
+                            ? 'bg-green-900/10 border-green-800/30'
+                            : check.score <= 30
+                              ? 'bg-red-900/20 border-red-800/40'
+                              : 'bg-yellow-900/10 border-yellow-800/30'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-semibold text-gray-200 flex-1">{check.name}</span>
+                          <span className={`text-[10px] font-bold ${quickScoreColor(check.score)}`}>
+                            {check.passed ? '✅ 通过' : `⚠️ ${check.score}分`}
+                          </span>
+                        </div>
+                        <p className="text-gray-400 mb-1">{check.detail}</p>
+                        {check.suggestions.length > 0 && (
+                          <div className="flex items-start gap-1 mt-1.5">
+                            <span className="text-[9px] text-gray-500 flex-shrink-0">💡</span>
+                            <div className="text-[10px] text-accent">
+                              {check.suggestions.map((s, si) => (
+                                <span key={si} className="mr-3">{si + 1}. {s}</span>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-10">
+                  <p className="text-xs text-gray-600 mb-2">选择章节后点击「⚡ 快速检测」按钮</p>
+                  <p className="text-[10px] text-gray-700">纯前端规则引擎检测，不需要配置AI</p>
+                  <button
+                    onClick={handleQuickCheck}
+                    disabled={!selectedChapterId}
+                    className="mt-3 px-4 py-1.5 bg-gray-700 text-gray-200 text-xs rounded hover:bg-gray-600 disabled:opacity-40 transition-colors"
+                  >
+                    ⚡ 开始检测
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* ── 底部操作栏 ── */}
-        {result && !reviewing && (
+        {result && !reviewing && activeTab === 'review' && (
           <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-800 shrink-0 bg-gray-950">
             <button
               onClick={handleReview}

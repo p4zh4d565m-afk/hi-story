@@ -365,8 +365,8 @@ const App: React.FC = () => {
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
     try {
-      const cjk = (content.match(/[一-鿿㐀-䶿]/g) || []).length;
-      const wordCount = cjk || content.replace(/<[^>]*>/g, '').replace(/\s+/g, '').length;
+      // 统计所有字符（含标点符号），去掉 HTML 标签和空白字符
+      const wordCount = content.replace(/<[^>]*>/g, '').replace(/\s+/g, '').length;
       const res = await window.electronAPI.invoke('db:chapter:update', { id, content, wordCount }) as any;
       if (!res || !res.success) {
         console.error('Chapter save failed:', res?.error || 'unknown error');
@@ -1142,7 +1142,6 @@ const App: React.FC = () => {
         foreshadowingPanel={
           <ForeshadowingPanel
             open={panelState.foreshadowingOpen}
-            onClose={() => setPanelState(p => ({ ...p, foreshadowingOpen: false }))}
             projectId={activeProject?.id ?? null}
             chapters={chapters.map(c => ({ id: c.id, title: c.title }))}
             characters={characters.map(c => ({ id: c.id, name: c.name }))}

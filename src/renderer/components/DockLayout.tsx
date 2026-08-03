@@ -96,7 +96,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   const [aiChatWidth, setAiChatWidth] = useState(380);
   const [inspWidth, setInspWidth] = useState(360);
 
-  // 当前 zoom 值
+  // 当前缩放值（通过 fontSize 实现，避免 CSS zoom 干扰输入框）
   const panelsZoom = PANEL_ZOOM_VALUES[fontSizes.panels];
   const uiZoom = UI_ZOOM_VALUES[fontSizes.ui];
 
@@ -113,14 +113,19 @@ const DockLayout: React.FC<DockLayoutProps> = ({
     const w = Math.max(600, window.innerWidth - 300), h = Math.max(400, window.innerHeight - 120);
     return { x: Math.max(50, (window.innerWidth - w) / 2), y: 60, w, h };
   };
+  const getInitialForeshadowingRect = () => {
+    const w = Math.max(720, window.innerWidth - 400), h = Math.max(500, window.innerHeight - 120);
+    return { x: Math.max(80, (window.innerWidth - w) / 2), y: 50, w, h };
+  };
 
   const [mindmapRect, setMindmapRect] = useState(getInitialMindmapRect);
   const [materialRect, setMaterialRect] = useState(getInitialMaterialRect);
   const [outlineRect, setOutlineRect] = useState(getInitialOutlineRect);
+  const [foreshadowingRect, setForeshadowingRect] = useState(getInitialForeshadowingRect);
 
   // 浮动面板拖拽/调整大小统一管理
   interface FloatingDrag {
-    panel: 'mindmap' | 'material' | 'outline';
+    panel: 'mindmap' | 'material' | 'outline' | 'foreshadowing';
     type: 'move' | 'resize';
     edge: string; // n, s, e, w, ne, nw, se, sw
     startMouseX: number; startMouseY: number;
@@ -158,7 +163,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       const dy = e.clientY - d.startMouseY;
       const r = d.startRect;
 
-      const setRect = d.panel === 'mindmap' ? setMindmapRect : d.panel === 'material' ? setMaterialRect : setOutlineRect;
+      const setRect = d.panel === 'mindmap' ? setMindmapRect : d.panel === 'material' ? setMaterialRect : d.panel === 'outline' ? setOutlineRect : setForeshadowingRect;
 
       if (d.type === 'move') {
         setRect({ x: r.x + dx, y: r.y + dy, w: r.w, h: r.h });
@@ -263,7 +268,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       {panelState.sidebarOpen && (
         <>
           <aside className="flex-shrink-0 border-r border-sidebar-700 bg-sidebar-900 overflow-hidden"
-            style={{ width: sidebarWidth, zoom: uiZoom }}>
+            style={{ width: sidebarWidth, fontSize: `${uiZoom * 100}%` }}>
             {sidebar}
           </aside>
           <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
@@ -275,7 +280,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       <main className="flex-1 min-w-0 flex flex-col">
         {/* Top toolbar (UI domain zoom) */}
         <div className="flex items-center gap-1 px-2 py-1 bg-editor-800 border-b border-editor-700"
-          style={{ zoom: uiZoom }}>
+          style={{ fontSize: `${uiZoom * 100}%` }}>
           {/* Sidebar toggle */}
           <button onClick={onToggleSidebar}
             className={`px-2 py-1 rounded text-xs transition-colors ${panelState.sidebarOpen ? 'text-gray-400 hover:text-white' : 'text-accent bg-accent/10'}`}
@@ -411,7 +416,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
                 onMouseDown={handleAiChatResize} title="拖拽调整 AI 对话宽度" />
               <aside className="flex-shrink-0 border-l border-aichat-700 bg-aichat-900 overflow-hidden" style={{ width: aiChatWidth }}>
-                <div className="h-full relative" style={{ zoom: panelsZoom }}>
+                <div className="h-full relative zoom-container" style={{ fontSize: `${panelsZoom * 100}%` }}>
                   {/* Minimize button — positioned below the AI header so it doesn't cover ⚙️ */}
                   <button onClick={onMinimizeAiChat}
                     className="absolute top-2 left-2 w-6 h-6 rounded bg-aichat-700 text-gray-400 hover:text-white hover:bg-aichat-600 text-xs z-10"
@@ -434,7 +439,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
               onMouseDown={handleInspResize} title="拖拽调整宽度" />
             <aside className="flex-shrink-0 border-l border-inspiration-700 bg-inspiration-900 overflow-hidden" style={{ width: inspWidth }}>
-              <div style={{ zoom: panelsZoom, height: '100%' }}>
+              <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
                 {inspirationPanel}
               </div>
             </aside>
@@ -447,7 +452,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
               onMouseDown={handleInspResize} title="拖拽调整宽度" />
             <aside className="flex-shrink-0 border-l border-context-700 bg-context-900 overflow-hidden" style={{ width: inspWidth }}>
-              <div style={{ zoom: panelsZoom, height: '100%' }}>
+              <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
                 {referencePanel}
               </div>
             </aside>
@@ -460,7 +465,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
               onMouseDown={handleInspResize} title="拖拽调整宽度" />
             <aside className="flex-shrink-0 border-l border-float-700 bg-float-900 overflow-hidden" style={{ width: inspWidth }}>
-              <div style={{ zoom: panelsZoom, height: '100%' }}>
+              <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
                 {namegenPanel}
               </div>
             </aside>
@@ -512,7 +517,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               <span className="text-xs text-gray-400">📦 素材管理</span>
               <button onClick={onToggleMaterial} className="text-gray-500 hover:text-white text-xs">✕</button>
             </div>
-            <div className="flex-1 overflow-hidden" style={{ zoom: panelsZoom }}>
+            <div className="flex-1 overflow-hidden" style={{ fontSize: `${panelsZoom * 100}%` }}>
               {materialPanel}
             </div>
             {renderResizeHandles('material', materialRect)}
@@ -537,7 +542,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               <span className="text-xs text-gray-400">📋 大纲面板</span>
               <button onClick={onToggleOutline} className="text-gray-500 hover:text-white text-xs">✕</button>
             </div>
-            <div className="flex-1 overflow-hidden" style={{ zoom: panelsZoom }}>
+            <div className="flex-1 overflow-hidden outline-panel-container" style={{ fontSize: `${panelsZoom * 100}%` }}>
               {outlinePanel}
             </div>
             {renderResizeHandles('outline', outlineRect)}
@@ -556,9 +561,29 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       </div>
 
       {/* ===== FLOATING FORESHADOWING PANEL ===== */}
-      <div style={{ display: panelState.foreshadowingOpen ? 'block' : 'none' }}>
-        {foreshadowingPanel}
-      </div>
+      {panelState.foreshadowingOpen && (
+        <div className="fixed inset-0 z-40 pointer-events-none">
+          <div
+            className="absolute pointer-events-auto bg-float-900 border border-float-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
+            style={{
+              left: foreshadowingRect.x, top: foreshadowingRect.y,
+              width: foreshadowingRect.w, height: foreshadowingRect.h,
+            }}
+          >
+            <div
+              className="px-3 py-2 bg-float-800 border-b border-float-700 flex items-center justify-between cursor-move select-none"
+              onMouseDown={e => startFloatingDrag('foreshadowing', 'move', '', foreshadowingRect, e)}
+            >
+              <span className="text-xs text-gray-400">🪢 伏笔追踪</span>
+              <button onClick={onToggleForeshadowing} className="text-gray-500 hover:text-white text-xs">✕</button>
+            </div>
+            <div className="flex-1 overflow-hidden" style={{ fontSize: `${panelsZoom * 100}%` }}>
+              {foreshadowingPanel}
+            </div>
+            {renderResizeHandles('foreshadowing', foreshadowingRect)}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

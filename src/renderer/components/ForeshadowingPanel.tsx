@@ -11,8 +11,6 @@ import type { Foreshadowing } from '../types';
 interface ForeshadowingPanelProps {
   /** 是否显示 */
   open: boolean;
-  /** 关闭回调 */
-  onClose: () => void;
   /** 项目 ID */
   projectId: string | null;
   /** 章节列表（用于关联选择） */
@@ -55,7 +53,7 @@ const STATUS_ICONS: Record<string, string> = {
 };
 
 const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
-  open, onClose, projectId, chapters, characters, outlineNodes,
+  open, projectId, chapters, characters, outlineNodes,
 }) => {
   const [foreshadowings, setForeshadowings] = useState<Foreshadowing[]>([]);
   const [loading, setLoading] = useState(false);
@@ -149,36 +147,22 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-40 pointer-events-none">
-      <div className="absolute inset-0 pointer-events-none" onClick={onClose} />
-      <div
-        className="absolute pointer-events-auto bg-gray-950 border border-gray-700 rounded-lg shadow-2xl flex flex-col overflow-hidden"
-        style={{
-          top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-          width: '680px', maxHeight: '85vh',
-        }}
-      >
-        {/* ── 标题栏 ── */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0">
-          <span className="text-sm font-semibold text-gray-200">🪢 伏笔追踪</span>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setEditing({ ...emptyEdit })}
-              className="px-2 py-1 bg-accent text-white text-[10px] rounded hover:bg-accent-hover transition-colors"
-            >
-              + 新伏笔
-            </button>
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
-          </div>
-        </div>
-
+    <div className="h-full flex flex-col bg-gray-950 relative">
+      {/* ── 顶部操作栏 ── */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0">
+        <button
+          onClick={() => setEditing({ ...emptyEdit })}
+          className="px-3 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover transition-colors"
+        >
+          + 新伏笔
+        </button>
         {/* ── 筛选 tabs ── */}
-        <div className="flex items-center gap-1 px-4 py-2 border-b border-gray-800 shrink-0">
+        <div className="flex items-center gap-1">
           {(['all', 'planted', 'pending', 'resolved'] as const).map(tab => (
             <button
               key={tab}
               onClick={() => setFilter(tab)}
-              className={`px-2 py-1 rounded text-[10px] transition-colors ${
+              className={`px-2.5 py-1 rounded text-[11px] transition-colors ${
                 filter === tab ? 'bg-accent/20 text-accent' : 'text-gray-500 hover:text-white'
               }`}
             >
@@ -186,6 +170,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
             </button>
           ))}
         </div>
+      </div>
 
         {/* ── 主体 ── */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
@@ -401,7 +386,6 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
             </div>
           </div>
         )}
-      </div>
     </div>
   );
 };

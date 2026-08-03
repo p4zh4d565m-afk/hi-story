@@ -225,14 +225,22 @@ function getBuiltinNames(
 ): string[] {
   const key = getBuiltinKey(category, style, gender, era);
   const pool = BUILTIN_NAMES[key] || [];
-  let filtered = style === 'chinese' && surname.trim()
-    ? filterBySurname(pool, surname)
-    : pool;
+  const hasSurname = surname.trim().length > 0;
 
-  // 如果姓氏过滤后太少，忽略姓氏限制
-  if (filtered.length < 3) filtered = pool;
+  if (style === 'chinese' && hasSurname) {
+    // 按姓氏过滤
+    const filtered = filterBySurname(pool, surname);
+    // 内置库是有限的，如果该姓氏匹配不到足够名字，
+    // 保留匹配到的少量名字 + 混入随机名字补充到 15 个（标记来源）
+    if (filtered.length >= 5) {
+      return pickRandom(filtered, 15);
+    }
+    // 姓氏匹配太少：保留匹配到的，用随机名字补足
+    const remaining = pool.filter(n => !n.startsWith(surname.trim()));
+    return [...filtered, ...pickRandom(remaining, 15 - filtered.length)];
+  }
 
-  return pickRandom(filtered);
+  return pickRandom(pool);
 }
 
 // ═══════════════════════════════════════════════════
@@ -441,6 +449,9 @@ const NameGenerator: React.FC<NameGeneratorProps> = ({ open, onClose }) => {
     init();
   }, []);
 
+  // ── 竞态防护：每次新请求递增 generationId，旧请求结果作废 ──
+  const generationRef = useRef(0);
+
   // ── 生成名字（在线 AI + 离线兜底）──
   const generateNames = useCallback(async (
     cat: Category,
@@ -449,6 +460,7 @@ const NameGenerator: React.FC<NameGeneratorProps> = ({ open, onClose }) => {
     sur: string,
     er: Era,
   ) => {
+    const genId = ++generationRef.current; // 递增请求 ID
     setLoading(true);
     let aiNames: string[] = [];
 
@@ -460,14 +472,24 @@ const NameGenerator: React.FC<NameGeneratorProps> = ({ open, onClose }) => {
           [{ role: 'user', content: '请开始生成。' }],
           { maxTokens: 500, temperature: 0.9, systemPrompt },
         );
+        // 竞态检查：如果已有更新的请求，忽略此结果
+        if (generationRef.current !== genId) {
+          console.log('[起名助手] 丢弃过期 AI 响应（请求#' + genId + '，当前#' + generationRef.current + '）');
+          return;
+        }
         aiNames = parseNameArray(rawResponse);
         if (aiNames.length > 0) {
           console.log('[起名助手] AI 生成成功:', aiNames.length, '个名字');
         }
       } catch (err) {
+        // 竞态检查：如果已有更新请求，不处理错误
+        if (generationRef.current !== genId) return;
         console.warn('[起名助手] AI 调用失败，使用内置库:', (err as Error).message);
       }
     }
+
+    // 再次竞态检查（AI 路径外）
+    if (generationRef.current !== genId) return;
 
     // ── 决定最终来源 ──
     if (aiNames.length >= 5) {
