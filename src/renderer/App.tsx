@@ -1102,6 +1102,7 @@ const App: React.FC = () => {
             worldEntries={worldEntries}
             chapters={chapters}
             projectName={activeProject?.name || ''}
+            projectId={activeProject?.id || ''}
             typeTags={activeProject?.typeTags || []}
             style={activeProject?.style || ''}
             onSaveAsChapter={async (title, content) => {
@@ -1114,6 +1115,56 @@ const App: React.FC = () => {
                   if (sorted.length > 0) {
                     handleSaveChapter(sorted[0].id, content);
                     setActiveChapterId(sorted[0].id);
+
+                    // 检查是否有待写入的 AI 摘要 + 事实抽取结果
+                    const pendingSummary = localStorage.getItem('hi-story-pending-summary');
+                    if (pendingSummary) {
+                      try {
+                        const pending = JSON.parse(pendingSummary);
+                        if (pending.summary) {
+                          // 延迟确保章节先保存完
+                          setTimeout(() => {
+                            window.electronAPI.invoke('db:chapter:update', {
+                              id: sorted[0].id,
+                              summary: pending.summary,
+                            });
+                          }, 500);
+                        }
+                        // 保存抽取的叙事事实 + 同步钩子到 narrative_hooks（P1）
+                        if (pending.facts && pending.facts.length > 0) {
+                          setTimeout(() => {
+                            window.electronAPI.invoke('db:storyFacts:batchUpsert', {
+                              projectId: activeProject?.id,
+                              chapterId: sorted[0].id,
+                              facts: pending.facts,
+                            });
+
+                            // 从 facts 中分离出 hook 类型，同步到 narrative_hooks
+                            const hookFacts = pending.facts.filter((f: any) => f.factType === 'hook');
+                            for (const hook of hookFacts) {
+                              window.electronAPI.invoke('db:narrativeHooks:create', {
+                                projectId: activeProject?.id,
+                                chapterId: sorted[0].id,
+                                hookType: 'foreshadowing',
+                                description: `${hook.subject}${hook.predicate}${hook.object}：${hook.description}`,
+                                intensity: 3,
+                              });
+                            }
+                          }, 800);
+                        }
+                        // 保存角色信息边界
+                        if (pending.knowledge && pending.knowledge.length > 0) {
+                          setTimeout(() => {
+                            window.electronAPI.invoke('db:storyFacts:batchUpsertKnowledge', {
+                              projectId: activeProject?.id,
+                              chapterId: sorted[0].id,
+                              knowledge: pending.knowledge,
+                            });
+                          }, 1000);
+                        }
+                      } catch { /* ignore */ }
+                      localStorage.removeItem('hi-story-pending-summary');
+                    }
                   }
                 }
               }, 300);
@@ -1130,6 +1181,7 @@ const App: React.FC = () => {
             worldEntries={worldEntries}
             outlineNodes={outlineNodes}
             projectName={activeProject?.name || ''}
+            projectId={activeProject?.id || ''}
             typeTags={activeProject?.typeTags || []}
             onNavigateToParagraph={(searchText) => {
               // 通过 localStorage 通知 WritingArea 跳转到段落

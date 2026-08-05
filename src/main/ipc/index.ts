@@ -9,6 +9,8 @@ import { registerCryptoIpc } from './crypto.ipc';
 import { registerReferenceIpc } from './reference.ipc';
 import { registerDatabaseIpc } from './database.ipc';
 import { registerForeshadowingIpc } from './foreshadowing.ipc';
+import { registerStoryFactsIpc } from './story-facts.ipc';
+import { registerNarrativeHooksIpc } from './narrative-hooks.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -25,4 +27,6 @@ export function registerAllIpc(): void {
   registerReferenceIpc();
   registerDatabaseIpc();
   registerForeshadowingIpc();
+  registerStoryFactsIpc();
+  registerNarrativeHooksIpc();
 }

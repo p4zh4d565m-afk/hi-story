@@ -4,6 +4,8 @@ import { aiService } from '../services/ai.service';
 import {
   REVIEW_SYSTEM_PROMPT,
   buildReviewUserPrompt,
+  REVISE_SYSTEM_PROMPT,
+  buildReviseUserPrompt,
   htmlToPlainText,
   extractSummary,
   REVIEW_DIMENSIONS,
@@ -12,6 +14,7 @@ import {
 import AIReviewResultComponent from './AIReviewResult';
 import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, AntiAICheckResult } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
+import { ContextBuilder } from '../../main/ai/context-builder';
 
 // ============================================================
 // AI 审稿浮动面板
@@ -36,6 +39,8 @@ interface AIReviewPanelProps {
   outlineNodes: OutlineNode[];
   /** 项目名称 */
   projectName: string;
+  /** 项目 ID（用于加载创作罗盘和风格指纹） */
+  projectId: string;
   /** 项目类型标签 */
   typeTags: string[];
   /** 跳转到编辑器段落 */
@@ -77,6 +82,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   worldEntries,
   outlineNodes,
   projectName,
+  projectId,
   typeTags,
   onNavigateToParagraph,
 }) => {
@@ -89,8 +95,13 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [configError, setConfigError] = useState<string | null>(null);
   const [initDone, setInitDone] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'review' | 'quickcheck'>('review');
+  const [activeTab, setActiveTab] = useState<'review' | 'quickcheck' | 'revise'>('review');
   const [quickCheckResult, setQuickCheckResult] = useState<AntiAICheckResult | null>(null);
+
+  // ===== 修订状态 =====
+  const [revising, setRevising] = useState(false);
+  const [revisedContent, setRevisedContent] = useState('');
+  const [revisionAccepted, setRevisionAccepted] = useState(false);
 
   // ===== 初始化 AI =====
   useEffect(() => {
@@ -166,6 +177,65 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         return;
       }
 
+      // 加载叙事事实层数据（P0 闭环）
+      let storyFactsSummary = '';
+      let knowledgeSummary = '';
+      let hooksSummary = '';
+      if (projectId) {
+        try {
+          // 并行加载事实、知识边界、钩子
+          const [factsRes, knowledgeRes, hooksRes] = await Promise.all([
+            (window as any).electronAPI.invoke('db:storyFacts:getGroupedFacts', projectId),
+            (window as any).electronAPI.invoke('db:storyFacts:findAllKnowledgeByProject', projectId),
+            (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
+          ]);
+
+          if (factsRes?.success && factsRes.data) {
+            const grouped = factsRes.data;
+            const factLines: string[] = [];
+            for (const [type, label] of [
+              ['locations', '📍 角色位置'],
+              ['possessions', '🎒 物品持有'],
+              ['relationships', '🤝 角色关系'],
+              ['events', '⚡ 重要事件'],
+              ['emotionalStates', '💭 情感状态'],
+              ['hooks', '🪝 伏笔钩子'],
+            ] as const) {
+              const items = grouped[type as keyof typeof grouped];
+              if (items && items.length > 0) {
+                factLines.push(`### ${label}`);
+                items.slice(0, 6).forEach((f: any) => factLines.push(`- ${f.description}`));
+                if (items.length > 6) factLines.push(`  *(还有 ${items.length - 6} 条，已省略)*`);
+                factLines.push('');
+              }
+            }
+            if (factLines.length > 0) {
+              storyFactsSummary = factLines.join('\n');
+            }
+          }
+
+          if (knowledgeRes?.success && knowledgeRes.data?.length > 0) {
+            const byChar: Record<string, string[]> = {};
+            for (const k of knowledgeRes.data) {
+              const name = k.characterName || '未知';
+              if (!byChar[name]) byChar[name] = [];
+              byChar[name].push(`- 知道「${k.factDescription}」（来源：${k.source}）`);
+            }
+            const lines: string[] = [];
+            for (const [name, items] of Object.entries(byChar)) {
+              lines.push(`### ${name}`);
+              lines.push(...items.slice(0, 4));
+              lines.push('');
+            }
+            if (lines.length > 0) knowledgeSummary = lines.join('\n');
+          }
+
+          if (hooksRes?.success && hooksRes.data) {
+            hooksSummary = hooksRes.data as string;
+          }
+        } catch { /* 忽略加载失败 */ }
+      }
+
       const reviewContext = {
         projectName,
         typeTags,
@@ -184,12 +254,25 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
           title: n.title,
           summary: n.summary || '',
         })),
+        storyFactsSummary,
+        knowledgeSummary,
+        hooksSummary,
       };
 
       const userPrompt = buildReviewUserPrompt(chapter.title, plainContent, reviewContext);
 
+      // 拼接 system prompt：基础审稿 prompt + 创作罗盘 + 风格指纹
+      const compassCtx = ContextBuilder.getCompassContext(projectId);
+      const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
+      const extraBlocks: string[] = [];
+      if (compassCtx) extraBlocks.push(compassCtx);
+      if (styleFpCtx) extraBlocks.push(styleFpCtx);
+
+      const systemPrompt = REVIEW_SYSTEM_PROMPT
+        + (extraBlocks.length > 0 ? '\n\n---\n\n' + extraBlocks.join('\n\n---\n\n') : '');
+
       const messages: ChatMessage[] = [
-        { role: 'system', content: REVIEW_SYSTEM_PROMPT },
+        { role: 'system', content: systemPrompt },
         { role: 'user', content: userPrompt },
       ];
 
@@ -228,7 +311,98 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setReviewing(false);
     }
-  }, [selectedChapterId, aiReady, chapters, projectName, typeTags, characters, worldEntries, outlineNodes]);
+  }, [selectedChapterId, aiReady, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes]);
+
+  // ===== AI 自动修复 =====
+  const handleAutoRevise = useCallback(async () => {
+    if (!result) return;
+    const chapter = chapters.find(ch => ch.id === selectedChapterId);
+    if (!chapter) return;
+
+    setRevising(true);
+    setError(null);
+    setRevisedContent('');
+    setActiveTab('revise');
+
+    try {
+      // 构建角色/世界观/罗盘/风格上下文
+      const compassCtx = ContextBuilder.getCompassContext(projectId);
+      const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
+
+      let characterCtx = '';
+      if (characters.length > 0) {
+        characterCtx = characters.map(c =>
+          `- ${c.name}${c.aliases ? `（${c.aliases}）` : ''}：${[c.personality, c.background].filter(Boolean).join('；')}`
+        ).join('\n');
+      }
+
+      let worldCtx = '';
+      if (worldEntries.length > 0) {
+        worldCtx = worldEntries.map(w => `- ${w.name}：${w.description.slice(0, 300)}`).join('\n');
+      }
+
+      const issuesForPrompt = result.issues.map(i => ({
+        severity: i.severity,
+        description: i.description,
+        location: i.location,
+        suggestion: i.suggestion,
+        dimensionName: result.dimensions.find(d => d.id === i.dimensionId)?.name,
+      }));
+
+      const userPrompt = buildReviseUserPrompt(
+        chapter.title,
+        chapter.content || '',
+        issuesForPrompt,
+        characterCtx,
+        worldCtx,
+        compassCtx || undefined,
+        styleFpCtx || undefined,
+      );
+
+      const messages: ChatMessage[] = [
+        { role: 'system', content: REVISE_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ];
+
+      const generator = aiService.chatStream(messages, { temperature: 0.4, maxTokens: 8192 });
+      let fullText = '';
+      for await (const token of generator) {
+        fullText = token;
+        setRevisedContent(fullText);
+      }
+    } catch (e) {
+      setError(`AI 修复失败：${(e as Error).message}`);
+    } finally {
+      setRevising(false);
+    }
+  }, [selectedChapterId, result, chapters, projectId, characters, worldEntries]);
+
+  // ===== 接受修订 =====
+  const handleAcceptRevision = useCallback(async () => {
+    if (!selectedChapterId || !revisedContent) return;
+    try {
+      const res = await (window as any).electronAPI.invoke('db:chapter:update', {
+        id: selectedChapterId,
+        content: revisedContent,
+      });
+      if (res?.success) {
+        setRevisionAccepted(true);
+        // 刷新章节列表
+        const refreshRes = await (window as any).electronAPI.invoke('db:chapter:findByProject', 'current');
+        setResult(null);
+        setRevisedContent('');
+        setActiveTab('review');
+      }
+    } catch (e) {
+      setError(`保存修订失败：${(e as Error).message}`);
+    }
+  }, [selectedChapterId, revisedContent]);
+
+  // ===== 放弃修订 =====
+  const handleDiscardRevision = useCallback(() => {
+    setRevisedContent('');
+    setActiveTab('review');
+  }, []);
 
   // ===== 跳转到问题段落 =====
   const handleJumpToIssue = useCallback((issue: ReviewIssue) => {
@@ -369,6 +543,11 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             >
               ⚡ 快速检测 (反AI痕迹)
             </button>
+            {activeTab === 'revise' && (
+              <span className="px-3 py-1.5 text-[11px] border-b-2 border-accent text-accent">
+                🪄 自动修复
+              </span>
+            )}
           </div>
 
           {/* 选中章节信息 */}
@@ -408,6 +587,51 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
               result={result}
               onJumpToIssue={handleJumpToIssue}
             />
+          )}
+
+          {/* ── 修订视图：加载中 ── */}
+          {revising && (
+            <div className="flex flex-col items-center justify-center py-8 space-y-3">
+              <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+              <span className="text-xs text-gray-500">AI 正在根据审稿意见修复章节内容...</span>
+              {revisedContent && (
+                <span className="text-xs text-gray-600">
+                  已生成 {revisedContent.replace(/<[^>]+>/g, '').length.toLocaleString()} 字
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* ── 修订视图：对比预览 ── */}
+          {activeTab === 'revise' && revisedContent && !revising && (
+            <div className="space-y-3">
+              {/* 审稿问题摘要 */}
+              <div className="p-3 bg-gray-900/50 border border-gray-800 rounded">
+                <h4 className="text-[11px] font-semibold text-yellow-400 mb-1">
+                  已修复的问题 ({result?.issues.length ?? 0} 项)
+                </h4>
+                <div className="text-[10px] text-gray-500 space-y-0.5 max-h-[120px] overflow-y-auto">
+                  {result?.issues.map((i, idx) => (
+                    <div key={idx} className="flex items-start gap-1">
+                      <span className="flex-shrink-0">{i.severity === 'critical' ? '🔴' : i.severity === 'warning' ? '🟡' : '🔵'}</span>
+                      <span>{i.description.slice(0, 100)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* 修订后内容预览 */}
+              <div>
+                <h4 className="text-[11px] font-semibold text-green-400 mb-1">✨ 修订后正文</h4>
+                <div className="p-3 bg-gray-900/50 border border-gray-800 rounded text-[12px] text-gray-300 leading-relaxed max-h-[300px] overflow-y-auto whitespace-pre-wrap">
+                  {revisedContent.replace(/<[^>]+>/g, '\n').replace(/&nbsp;/g, ' ')}
+                </div>
+                <p className="text-[9px] text-gray-600 mt-1">
+                  修订后字数：{revisedContent.replace(/<[^>]+>/g, '').length.toLocaleString()} 字
+                  {revisionAccepted ? ' ✅ 已保存到章节' : ''}
+                </p>
+              </div>
+            </div>
           )}
 
           {/* 反AI痕迹检测结果 */}
@@ -500,6 +724,15 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             >
               {copied ? '✓ 已复制' : '📋 复制报告'}
             </button>
+            {result.issues.length > 0 && (
+              <button
+                onClick={handleAutoRevise}
+                disabled={!aiReady}
+                className="px-3 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                🪄 自动修复 ({result.issues.length}项)
+              </button>
+            )}
             <div className="flex-1" />
             <button
               onClick={onClose}
@@ -507,6 +740,26 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             >
               关闭
             </button>
+          </div>
+        )}
+
+        {/* ── 修订底部操作栏 ── */}
+        {activeTab === 'revise' && revisedContent && !revising && (
+          <div className="flex items-center gap-2 px-4 py-3 border-t border-gray-800 shrink-0 bg-gray-950">
+            <button
+              onClick={handleAcceptRevision}
+              className="px-3 py-1.5 bg-green-600 text-white text-xs rounded hover:bg-green-500 transition-colors"
+            >
+              ✅ 接受修订
+            </button>
+            <button
+              onClick={handleDiscardRevision}
+              className="px-3 py-1.5 bg-gray-700 text-gray-200 text-xs rounded hover:bg-gray-600 transition-colors"
+            >
+              ❌ 放弃
+            </button>
+            <div className="flex-1" />
+            <span className="text-[10px] text-gray-500">接受将覆盖章节原文</span>
           </div>
         )}
       </div>

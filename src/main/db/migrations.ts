@@ -246,6 +246,102 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_foreshadowings_status ON foreshadowings(status);
     `,
   },
+
+  // 008: 章节 AI 摘要（支撑写章时注入前文事件上下文）
+  {
+    version: 8,
+    sql: `
+      ALTER TABLE chapters ADD COLUMN summary TEXT NOT NULL DEFAULT '';
+    `,
+  },
+
+  // 009: 叙事事实层 — 解决长篇 AI "忘事/乱编"问题
+  // 参考 inkos 的 truth files + Webnovel-Writer 的契约系统
+  {
+    version: 9,
+    sql: `
+      -- 每章的原子事实（角色在哪、拿了什么、关系变了没、知道了什么）
+      CREATE TABLE IF NOT EXISTS story_facts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        chapter_id TEXT,
+        fact_type TEXT NOT NULL CHECK(fact_type IN ('location','possession','relationship','knowledge','event','emotional_state','hook')),
+        subject TEXT NOT NULL DEFAULT '',
+        predicate TEXT NOT NULL DEFAULT '',
+        object TEXT NOT NULL DEFAULT '',
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','superseded','resolved')),
+        superseded_by TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_story_facts_project ON story_facts(project_id);
+      CREATE INDEX IF NOT EXISTS idx_story_facts_chapter ON story_facts(chapter_id);
+      CREATE INDEX IF NOT EXISTS idx_story_facts_type ON story_facts(fact_type);
+      CREATE INDEX IF NOT EXISTS idx_story_facts_subject ON story_facts(subject);
+
+      -- 角色信息边界：角色A知道什么、从哪知道的（支撑审稿维度#15 信息越界）
+      CREATE TABLE IF NOT EXISTS character_knowledge (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        character_id TEXT,
+        character_name TEXT NOT NULL DEFAULT '',
+        fact_description TEXT NOT NULL DEFAULT '',
+        source TEXT NOT NULL DEFAULT '',
+        learned_at_chapter_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE SET NULL,
+        FOREIGN KEY (learned_at_chapter_id) REFERENCES chapters(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_char_knowledge_project ON character_knowledge(project_id);
+      CREATE INDEX IF NOT EXISTS idx_char_knowledge_character ON character_knowledge(character_id);
+    `,
+  },
+
+  // 010: 叙事钩子 + 叙事债务追踪（P1 — 网文追读力系统）
+  {
+    version: 10,
+    sql: `
+      -- 叙事钩子：结尾悬念、伏笔 hook、待回收的承诺
+      CREATE TABLE IF NOT EXISTS narrative_hooks (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        chapter_id TEXT,
+        hook_type TEXT NOT NULL CHECK(hook_type IN ('cliffhanger','foreshadowing','promise','mystery','emotional_hook')),
+        description TEXT NOT NULL DEFAULT '',
+        intensity INTEGER NOT NULL DEFAULT 3 CHECK(intensity BETWEEN 1 AND 5),
+        status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','partially_resolved','resolved','abandoned')),
+        resolved_in_chapter_id TEXT,
+        due_chapter_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_narrative_hooks_project ON narrative_hooks(project_id);
+      CREATE INDEX IF NOT EXISTS idx_narrative_hooks_status ON narrative_hooks(status);
+
+      -- 叙事债务：作者对读者的承诺（"下章揭晓真相"类型的待兑现承诺）
+      CREATE TABLE IF NOT EXISTS narrative_debts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        chapter_id TEXT,
+        description TEXT NOT NULL DEFAULT '',
+        debt_type TEXT NOT NULL CHECK(debt_type IN ('reveal','payoff','character_return','mystery_answer','power_up')),
+        promised_by_chapter INTEGER,
+        status TEXT NOT NULL DEFAULT 'unpaid' CHECK(status IN ('unpaid','paid','overdue','waived')),
+        paid_in_chapter_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE SET NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_narrative_debts_project ON narrative_debts(project_id);
+      CREATE INDEX IF NOT EXISTS idx_narrative_debts_status ON narrative_debts(status);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

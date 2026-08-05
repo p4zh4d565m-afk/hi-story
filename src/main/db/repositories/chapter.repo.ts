@@ -15,6 +15,7 @@ export interface UpdateChapterInput {
   content?: string;
   status?: 'draft' | 'final';
   wordCount?: number;
+  summary?: string;
 }
 
 export interface ReorderChaptersInput {
@@ -117,12 +118,13 @@ export class ChapterRepo {
     const content = input.content ?? chapter.content;
     const status = input.status ?? chapter.status;
     const wordCount = input.wordCount !== undefined ? input.wordCount : chapter.wordCount;
+    const summary = input.summary !== undefined ? input.summary : (chapter as any).summary ?? '';
 
     this.db.prepare(`
       UPDATE chapters
-      SET title = ?, content = ?, status = ?, word_count = ?, updated_at = ?
+      SET title = ?, content = ?, status = ?, word_count = ?, summary = ?, updated_at = ?
       WHERE id = ?
-    `).run(title, content, status, wordCount, now, input.id);
+    `).run(title, content, status, wordCount, summary, now, input.id);
 
     return this.findById(input.id);
   }
@@ -190,6 +192,7 @@ export class ChapterRepo {
       status: row.status as 'draft' | 'final',
       wordCount: row.word_count as number,
       sortOrder: row.sort_order as number,
+      summary: (row.summary ?? '') as string,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };

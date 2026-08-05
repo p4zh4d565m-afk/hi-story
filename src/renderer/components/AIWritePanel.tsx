@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
 import { aiService } from '../services/ai.service';
-import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt } from '../services/ai-prompts';
+import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { OutlineNode, Character, WorldEntry, Chapter } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
+import { ContextBuilder } from '../../main/ai/context-builder';
 
 // ============================================================
 // AI 写章浮动面板
@@ -28,6 +29,8 @@ interface AIWritePanelProps {
   chapters: Chapter[];
   /** 项目名称 */
   projectName: string;
+  /** 项目 ID（用于加载创作罗盘和风格指纹） */
+  projectId: string;
   /** 项目类型标签 */
   typeTags: string[];
   /** 项目风格 */
@@ -94,6 +97,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   worldEntries,
   chapters,
   projectName,
+  projectId,
   typeTags,
   style,
   onSaveAsChapter,
@@ -106,6 +110,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const [includeCharacters, setIncludeCharacters] = useState(true);
   const [includeWorld, setIncludeWorld] = useState(true);
   const [extraRequirement, setExtraRequirement] = useState('');
+  const [writeModel, setWriteModel] = useState<string>('');       // 写章用的模型（空=用全局默认）
+  const [summaryModel, setSummaryModel] = useState<string>('');   // 摘要/事实抽取用的模型（空=用全局默认）
 
   // ===== AI 配置 =====
   const [aiReady, setAiReady] = useState(false);
@@ -119,6 +125,18 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  // ===== 批量生成 + 断点续写（P2）=====
+  const [batchMode, setBatchMode] = useState(false);
+  const [selectedOutlineIds, setSelectedOutlineIds] = useState<Set<string>>(new Set());
+  const [batchProgress, setBatchProgress] = useState<{
+    total: number;
+    completed: number;
+    current?: string;       // 当前正在写的章节标题
+    results: Array<{ title: string; content: string; saved: boolean }>;
+  }>({ total: 0, completed: 0, results: [] });
+  const BATCH_PROGRESS_KEY = 'hi-story-batch-progress';
+  const [batchPaused, setBatchPaused] = useState(false);
 
   // ===== 初始化 AI 配置 =====
   useEffect(() => {
@@ -156,21 +174,53 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (activeOutlineNodeId) setSelectedOutlineId(activeOutlineNodeId);
   }, [activeOutlineNodeId]);
 
+  // ===== 断点续写：页面打开时恢复进度 =====
+  useEffect(() => {
+    if (!open || !projectId) return;
+    try {
+      const saved = localStorage.getItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
+      if (saved) {
+        const progress = JSON.parse(saved);
+        if (progress.total > 0 && progress.completed < progress.total) {
+          setBatchProgress(progress);
+          setBatchMode(true);
+          setBatchPaused(true); // 恢复后默认暂停，让用户手动继续
+        }
+      }
+    } catch { /* ignore */ }
+  }, [open, projectId]);
+
+  // ===== 持久化批量进度 =====
+  useEffect(() => {
+    if (!projectId || batchProgress.total === 0) return;
+    localStorage.setItem(`${BATCH_PROGRESS_KEY}-${projectId}`, JSON.stringify(batchProgress));
+    // 全部完成后清除
+    if (batchProgress.completed >= batchProgress.total) {
+      localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
+    }
+  }, [batchProgress, projectId]);
+
   // ===== 构建 Write 上下文 =====
   const getContext = useCallback(() => {
     const selectedOutline = outlineNodes.find(n => n.id === selectedOutlineId);
     if (!selectedOutline) return null;
 
-    // 前 2 章摘要
+    // 取最近章节的 AI 摘要（优先使用 summary 字段，回退到正文前 200 字）
     const recentChapters = chapters
       .filter(ch => ch.status === 'draft' || ch.status === 'final')
-      .slice(-3)
-      .map(ch => ({
-        title: ch.title,
-        summary: ch.content
-          ? (ch.content.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').slice(0, 200) + '...')
-          : '(空)',
-      }));
+      .slice(-10)
+      .map(ch => {
+        if (ch.summary && ch.summary.length > 10) {
+          return { title: ch.title, summary: ch.summary };
+        }
+        // 回退：取正文前 200 字
+        return {
+          title: ch.title,
+          summary: ch.content
+            ? (ch.content.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').slice(0, 200) + '...')
+            : '(空)',
+        };
+      });
 
     return {
       projectName,
@@ -196,7 +246,118 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }, [selectedOutlineId, outlineNodes, characters, worldEntries, chapters,
       projectName, typeTags, style, includeContext, includeCharacters, includeWorld]);
 
-  // ===== 生成章节 =====
+  // ===== 批量生成（P2 断点续写）=====
+  const handleBatchGenerate = useCallback(async () => {
+    if (selectedOutlineIds.size === 0) return;
+    const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
+    setBatchProgress({ total: ordered.length, completed: 0, current: ordered[0]?.title, results: [] });
+    setBatchPaused(false);
+    await runBatch(ordered, 0);
+  }, [selectedOutlineIds, outlineNodes, aiReady, styleGuide, targetWords, extraRequirement, projectId, characters, chapters, includeContext, includeCharacters, includeWorld]);
+
+  const handleBatchResume = useCallback(() => {
+    setBatchPaused(false);
+    const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
+    runBatch(ordered, batchProgress.completed);
+  }, [selectedOutlineIds, outlineNodes, batchProgress, aiReady, styleGuide, targetWords, extraRequirement, projectId, characters, chapters, includeContext, includeCharacters, includeWorld]);
+
+  const handleBatchReset = useCallback(() => {
+    setBatchProgress({ total: 0, completed: 0, results: [] });
+    if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
+  }, [projectId]);
+
+  const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number) => {
+    for (let i = startIndex; i < nodes.length; i++) {
+      setBatchProgress(p => ({ ...p, completed: i, current: nodes[i].title }));
+
+      try {
+        // 构建该章节的上下文
+        const node = nodes[i];
+        const recentChapters = chapters
+          .filter(ch => ch.status === 'draft' || ch.status === 'final')
+          .slice(-10)
+          .map(ch => ({ title: ch.title, summary: ch.summary || '(空)' }));
+
+        const ctx = {
+          projectName,
+          typeTags,
+          style,
+          outlineTitle: node.title,
+          outlineSummary: node.summary || '',
+          characters: includeCharacters ? characters.map(c => ({
+            name: c.name, aliases: c.aliases, personality: c.personality,
+            background: c.background, arc: c.arc,
+          })) : [],
+          worldEntries: includeWorld ? worldEntries.map(w => ({
+            category: w.category, name: w.name, description: w.description,
+          })) : [],
+          recentChapters: includeContext ? recentChapters : [],
+          outlineNodes: outlineNodes.map(n => ({ title: n.title, summary: n.summary || '' })),
+        };
+
+        // 加载钩子上下文
+        const compassCtx = ContextBuilder.getCompassContext(projectId);
+        const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
+        let hooksContext: string | null = null;
+        try {
+          const hooksRes = await (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId);
+          if (hooksRes?.success && hooksRes.data) hooksContext = hooksRes.data as string;
+        } catch { /* ignore */ }
+
+        const extraBlocks: string[] = [];
+        if (styleGuide && styleGuide !== '保持与项目风格一致') extraBlocks.push(`## 用户指定的写作风格\n${styleGuide}`);
+        if (compassCtx) extraBlocks.push(compassCtx);
+        if (styleFpCtx) extraBlocks.push(styleFpCtx);
+        if (hooksContext) extraBlocks.push(hooksContext);
+
+        const systemPrompt = WRITE_SYSTEM_PROMPT
+          + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
+        const userPrompt = buildWriteUserPrompt({ targetWords, extraRequirement }, ctx);
+
+        const messages: ChatMessage[] = [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt },
+        ];
+
+        // 流式生成到面板
+        setGeneratedContent('');
+        const generator = aiService.chatStream(messages, {
+          temperature: 0.7, maxTokens: targetWords * 3,
+          ...(writeModel ? { model: writeModel } : {}),
+        });
+        let fullText = '';
+        for await (const token of generator) {
+          fullText = token;
+          setGeneratedContent(fullText);
+        }
+
+        // 自动保存
+        onSaveAsChapter(node.title || 'AI 生成章节', fullText);
+
+        setBatchProgress(p => ({
+          ...p,
+          completed: i + 1,
+          results: [...p.results, { title: node.title, content: fullText, saved: true }],
+        }));
+
+        // 短延迟避免 IPC 拥塞
+        await new Promise(r => setTimeout(r, 500));
+      } catch (e) {
+        console.error(`批量生成失败 [${nodes[i].title}]:`, e);
+        setBatchProgress(p => ({
+          ...p,
+          completed: i + 1,
+          results: [...p.results, { title: nodes[i].title, content: '', saved: false }],
+        }));
+      }
+    }
+
+    setBatchProgress(p => ({ ...p, current: undefined }));
+    // 清除进度
+    if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
+  }, [projectId, projectName, typeTags, style, chapters, characters, worldEntries, outlineNodes, includeCharacters, includeWorld, includeContext, styleGuide, extraRequirement, targetWords, writeModel, onSaveAsChapter]);
+
+  // ===== 生成章节（单章）=====
   const handleGenerate = useCallback(async () => {
     const context = getContext();
     if (!context) {
@@ -214,8 +375,31 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     setSaved(false);
 
     try {
+      // 拼接 system prompt：基础写章 prompt + 风格指南 + 创作罗盘 + 风格指纹 + 待回收钩子
+      const compassCtx = ContextBuilder.getCompassContext(projectId);
+      const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
+
+      // 加载待回收钩子和未偿债务
+      let hooksContext: string | null = null;
+      if (projectId) {
+        try {
+          const hooksRes = await (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId);
+          if (hooksRes?.success && hooksRes.data) {
+            hooksContext = hooksRes.data as string;
+          }
+        } catch { /* 忽略钩子加载失败 */ }
+      }
+
+      const extraBlocks: string[] = [];
+      if (styleGuide && styleGuide !== '保持与项目风格一致') {
+        extraBlocks.push(`## 用户指定的写作风格\n${styleGuide}`);
+      }
+      if (compassCtx) extraBlocks.push(compassCtx);
+      if (styleFpCtx) extraBlocks.push(styleFpCtx);
+      if (hooksContext) extraBlocks.push(hooksContext);
+
       const systemPrompt = WRITE_SYSTEM_PROMPT
-        + (styleGuide && styleGuide !== '保持与项目风格一致' ? `\n\n## 用户指定的写作风格\n${styleGuide}` : '');
+        + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
 
       const userPrompt = buildWriteUserPrompt(
         { targetWords, extraRequirement },
@@ -228,7 +412,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       ];
 
       // 流式生成
-      const generator = aiService.chatStream(messages, { temperature: 0.7, maxTokens: targetWords * 3 });
+      const generator = aiService.chatStream(messages, {
+        temperature: 0.7,
+        maxTokens: targetWords * 3,
+        ...(writeModel ? { model: writeModel } : {}),
+      });
       let fullText = '';
       for await (const token of generator) {
         fullText = token;
@@ -239,7 +427,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     } finally {
       setGenerating(false);
     }
-  }, [getContext, aiReady, styleGuide, targetWords, extraRequirement]);
+  }, [getContext, aiReady, styleGuide, targetWords, extraRequirement, projectId]);
 
   // ===== 停止生成 =====
   const handleStop = useCallback(() => {
@@ -249,7 +437,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }, []);
 
   // ===== 保存为新章节 =====
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     if (!generatedContent) return;
     // 从生成内容取第一句作为标题，或使用大纲标题
     const plainText = generatedContent.replace(/<[^>]+>/g, '');
@@ -257,7 +445,55 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const title = firstLine.length > 40 ? firstLine.slice(0, 40) + '...' : firstLine;
     onSaveAsChapter(title || 'AI 生成章节', generatedContent);
     setSaved(true);
-  }, [generatedContent, onSaveAsChapter]);
+
+    // 异步生成章节摘要 + 抽取叙事事实（后台执行，不阻塞 UI）
+    if (aiReady) {
+      generateAndSaveSummary(title || 'AI 生成章节', generatedContent);
+    }
+  }, [generatedContent, onSaveAsChapter, aiReady, characters, projectName]);
+
+  // ===== 后台生成章节摘要 + 抽取叙事事实（合并为一次 AI 调用）=====
+  const generateAndSaveSummary = useCallback(async (chapterTitle: string, content: string) => {
+    try {
+      const userPrompt = buildSummaryUserPrompt(
+        chapterTitle,
+        content,
+        characters.map(c => c.name),
+      );
+
+      const messages: ChatMessage[] = [
+        { role: 'system', content: FACT_EXTRACTION_SYSTEM_PROMPT },
+        { role: 'user', content: userPrompt },
+      ];
+
+      // 事实抽取需要更大输出空间（每条事实约 80-100 tokens）
+      const response = await aiService.chat(messages, {
+        temperature: 0.3,
+        maxTokens: 2048,
+        ...(summaryModel ? { model: summaryModel } : {}),
+      });
+
+      // 解析 AI 返回的 JSON
+      let jsonStr = response.trim();
+      if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
+      if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
+      if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
+      jsonStr = jsonStr.trim();
+
+      const parsed = JSON.parse(jsonStr);
+      const summaryText = (parsed.summary || `${parsed.events || ''} | ${parsed.characters || ''}`).slice(0, 300);
+
+      // 将摘要 + 事实 + 信息边界一起通过 localStorage 传给 App.tsx 处理
+      localStorage.setItem('hi-story-pending-summary', JSON.stringify({
+        content: content.slice(0, 500),
+        summary: summaryText,
+        facts: parsed.facts || [],
+        knowledge: parsed.knowledge || [],
+      }));
+    } catch (e) {
+      console.warn('章节摘要/事实抽取失败（不影响正文保存）：', e);
+    }
+  }, [aiReady, characters]);
 
   // ===== 复制到剪贴板 =====
   const handleCopy = useCallback(async () => {
@@ -395,25 +631,108 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                 <input type="checkbox" checked={includeWorld} onChange={e => setIncludeWorld(e.target.checked)} className="accent-accent" />
                 世界观
               </label>
+              <label className="flex items-center gap-1.5 text-[11px] text-gray-400 cursor-pointer" title="选中多个大纲节点，依次生成">
+                <input type="checkbox" checked={batchMode} onChange={e => { setBatchMode(e.target.checked); if (!e.target.checked) setSelectedOutlineIds(new Set()); }} className="accent-yellow" />
+                批量模式
+              </label>
             </div>
 
+            {/* 批量模式：大纲多选列表 */}
+            {batchMode && (
+              <div className="max-h-[150px] overflow-y-auto bg-gray-900 border border-gray-700 rounded p-2 space-y-1">
+                {outlineNodes.length === 0 ? (
+                  <span className="text-[10px] text-gray-500">暂无大纲节点</span>
+                ) : (
+                  outlineNodes.map(n => (
+                    <label key={n.id} className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer hover:text-white">
+                      <input
+                        type="checkbox"
+                        checked={selectedOutlineIds.has(n.id)}
+                        onChange={e => {
+                          const next = new Set(selectedOutlineIds);
+                          e.target.checked ? next.add(n.id) : next.delete(n.id);
+                          setSelectedOutlineIds(next);
+                        }}
+                        className="accent-yellow"
+                      />
+                      <span className="truncate">{n.title}{n.summary ? ` — ${n.summary.slice(0, 30)}...` : ''}</span>
+                    </label>
+                  ))
+                )}
+                {selectedOutlineIds.size > 0 && (
+                  <div className="text-[10px] text-yellow-400 pt-1 border-t border-gray-800">
+                    已选 {selectedOutlineIds.size} 章，按大纲顺序生成
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 批量进度 */}
+            {batchMode && batchProgress.total > 0 && (
+              <div className="bg-gray-900 border border-gray-700 rounded p-2 space-y-1">
+                <div className="flex items-center justify-between text-[10px]">
+                  <span className="text-gray-400">
+                    进度：{batchProgress.completed}/{batchProgress.total}
+                    {batchProgress.current && <span className="text-yellow-400 ml-2">▶ {batchProgress.current}</span>}
+                  </span>
+                  <span className="text-gray-500">{batchProgress.completed > 0 ? Math.round(batchProgress.completed / batchProgress.total * 100) : 0}%</span>
+                </div>
+                <div className="w-full h-1.5 bg-gray-800 rounded overflow-hidden">
+                  <div
+                    className="h-full bg-yellow-500 rounded transition-all"
+                    style={{ width: `${batchProgress.total > 0 ? (batchProgress.completed / batchProgress.total) * 100 : 0}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             {/* 生成按钮 */}
-            <div>
-              {!generating ? (
-                <button
-                  onClick={handleGenerate}
-                  disabled={!aiReady || !selectedOutlineId}
-                  className="px-4 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                  🖋 开始生成
-                </button>
+            <div className="flex gap-2">
+              {batchMode ? (
+                <>
+                  {(batchProgress.completed === 0 || batchProgress.completed >= batchProgress.total) ? (
+                    <button
+                      onClick={handleBatchGenerate}
+                      disabled={!aiReady || selectedOutlineIds.size === 0}
+                      className="px-4 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                    >
+                      🖋 批量生成（{selectedOutlineIds.size} 章）
+                    </button>
+                  ) : batchProgress.completed < batchProgress.total ? (
+                    <>
+                      <button
+                        onClick={handleBatchResume}
+                        disabled={!aiReady}
+                        className="px-4 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      >
+                        ▶ 继续生成
+                      </button>
+                      <button
+                        onClick={handleBatchReset}
+                        className="px-4 py-1.5 bg-gray-700 text-gray-300 text-xs rounded hover:bg-gray-600 transition-colors"
+                      >
+                        🔄 重置
+                      </button>
+                    </>
+                  ) : null}
+                </>
               ) : (
-                <button
-                  onClick={handleStop}
-                  className="px-4 py-1.5 bg-red-600 text-white text-xs rounded hover:bg-red-500 transition-colors"
-                >
-                  ⏹ 停止生成
-                </button>
+                !generating ? (
+                  <button
+                    onClick={handleGenerate}
+                    disabled={!aiReady || !selectedOutlineId}
+                    className="px-4 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                  >
+                    🖋 开始生成
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleStop}
+                    className="px-4 py-1.5 bg-red-600 text-white text-xs rounded hover:bg-red-500 transition-colors"
+                  >
+                    ⏹ 停止生成
+                  </button>
+                )
               )}
             </div>
           </div>

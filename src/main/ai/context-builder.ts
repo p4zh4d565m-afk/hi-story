@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../ai/provider';
-import type { Project, Chapter, Character, WorldEntry, OutlineNode } from '../../renderer/types';
+import type { Project, Chapter, Character, WorldEntry, OutlineNode, StoryFact, CharacterKnowledge } from '../../renderer/types';
 
 export interface ContextSources {
   project?: Project;
@@ -8,6 +8,9 @@ export interface ContextSources {
   worldEntries?: WorldEntry[];
   outlineNodes?: OutlineNode[];
   recentMessages?: ChatMessage[];
+  /** P0: 叙事事实层（从 story_facts 表加载） */
+  storyFacts?: StoryFact[];
+  characterKnowledge?: CharacterKnowledge[];
 }
 
 // ============================================================
@@ -202,16 +205,28 @@ export class ContextBuilder {
       if (styleFp) blocks.push({ text: styleFp, priority: 7 });
     }
 
-    // 9. 最近对话摘要 [priority=6]
+    // 9. 叙事事实层（角色当前状态、已知信息）[priority=8]
+    if (sources.storyFacts && sources.storyFacts.length > 0) {
+      const text = getStoryFactsContext(sources.storyFacts);
+      if (text) blocks.push({ text, priority: 8 });
+    }
+
+    // 10. 角色信息边界 [priority=8]
+    if (sources.characterKnowledge && sources.characterKnowledge.length > 0) {
+      const text = getCharacterKnowledgeContext(sources.characterKnowledge);
+      if (text) blocks.push({ text, priority: 8 });
+    }
+
+    // 11. 最近对话摘要 [priority=6]
     if (sources.recentMessages && sources.recentMessages.length > 0) {
       const text = getConversationSummary(sources.recentMessages);
       blocks.push({ text, priority: 6 });
     }
 
-    // 10. 文学知识库 [priority=4 — 静态数据，可被压缩]
+    // 12. 文学知识库 [priority=4 — 静态数据，可被压缩]
     blocks.push({ text: getLiteratureKnowledge(), priority: 4 });
 
-    // 11. 行为约束 [priority=10 — 必须保留]
+    // 13. 行为约束 [priority=10 — 必须保留]
     blocks.push({ text: getBehaviorRules(), priority: 10 });
 
     // Token 预算检查 & 降级
@@ -233,7 +248,7 @@ export class ContextBuilder {
 
   // ── 创作罗盘（来自 OpenWrite 移植，不改动） ──
 
-  private static getCompassContext(projectId: string): string | null {
+  public static getCompassContext(projectId: string): string | null {
     try {
       const raw = (globalThis as any).localStorage?.getItem(`hi-story-compass-${projectId}`);
       if (!raw) return null;
@@ -251,7 +266,7 @@ export class ContextBuilder {
 
   // ── 风格指纹（来自 OpenWrite 移植，不改动） ──
 
-  private static getStyleFingerprintContext(projectId: string): string | null {
+  public static getStyleFingerprintContext(projectId: string): string | null {
     try {
       const raw = (globalThis as any).localStorage?.getItem(`hi-story-style-fingerprint-${projectId}`);
       if (!raw) return null;
@@ -478,4 +493,77 @@ function getBehaviorRules(): string {
 - 如果作者要求你帮助写具体段落，你可以提供示例，但始终提醒作者这是可修改的建议。
 - 避免过度"鸡汤式"的鼓励，专注于实质性的创作帮助。
 - 对于中国历史、神话、文学相关内容，优先使用准确的考据。`;
+}
+
+// ============================================================
+// 叙事事实层上下文构建（P0）
+// ============================================================
+
+const FACT_TYPE_LABELS: Record<string, string> = {
+  location: '📍 位置',
+  possession: '🎒 持有',
+  relationship: '🤝 关系',
+  knowledge: '🧠 认知',
+  event: '⚡ 事件',
+  emotional_state: '💭 情感',
+  hook: '🪝 伏笔',
+};
+
+function getStoryFactsContext(facts: StoryFact[]): string {
+  if (facts.length === 0) return '';
+
+  const lines: string[] = ['## 📊 当前世界状态（叙事事实层）'];
+  lines.push('以下是截至本章为止的**活跃事实**，写章/审稿时请确保与这些事实一致。\n');
+
+  // 按类型分组
+  const byType: Record<string, StoryFact[]> = {};
+  for (const f of facts) {
+    if (!byType[f.factType]) byType[f.factType] = [];
+    byType[f.factType].push(f);
+  }
+
+  // 每类型最多展示 8 条，优先最新
+  for (const [type, items] of Object.entries(byType)) {
+    const label = FACT_TYPE_LABELS[type] || type;
+    lines.push(`### ${label}`);
+    const shown = items.slice(0, 8);
+    for (const item of shown) {
+      lines.push(`- ${item.description}`);
+    }
+    if (items.length > 8) {
+      lines.push(`  *(还有 ${items.length - 8} 条，已省略)*`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
+}
+
+function getCharacterKnowledgeContext(knowledge: CharacterKnowledge[]): string {
+  if (knowledge.length === 0) return '';
+
+  // 按角色分组
+  const byChar: Record<string, CharacterKnowledge[]> = {};
+  for (const k of knowledge) {
+    const name = k.characterName || '未知角色';
+    if (!byChar[name]) byChar[name] = [];
+    byChar[name].push(k);
+  }
+
+  const lines: string[] = ['## 🧠 角色信息边界（谁知道什么）'];
+  lines.push('用于判断信息越界：如果角色知道某信息，而当前场景中角色不应知道，则为越界。\n');
+
+  for (const [name, items] of Object.entries(byChar)) {
+    lines.push(`### ${name}`);
+    const shown = items.slice(0, 5);
+    for (const item of shown) {
+      lines.push(`- 知道「${item.factDescription}」—— 来源：${item.source}`);
+    }
+    if (items.length > 5) {
+      lines.push(`  *(还有 ${items.length - 5} 条，已省略)*`);
+    }
+    lines.push('');
+  }
+
+  return lines.join('\n');
 }

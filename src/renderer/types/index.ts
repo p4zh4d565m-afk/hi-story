@@ -103,6 +103,7 @@ export interface Chapter {
   status: 'draft' | 'final';
   wordCount: number;
   sortOrder: number;
+  summary: string;           // AI 生成的章节摘要（100-200字）
   createdAt: string;
   updatedAt: string;
 }
@@ -219,4 +220,70 @@ export interface Foreshadowing {
   note: string;
   created_at: string;
   updated_at: string;
+}
+
+// ===== 叙事事实层（P0 — 解决长篇一致性） =====
+export interface StoryFact {
+  id: string;
+  projectId: string;
+  chapterId: string | null;
+  factType: 'location' | 'possession' | 'relationship' | 'knowledge' | 'event' | 'emotional_state' | 'hook';
+  subject: string;       // 谁/什么
+  predicate: string;     // 做了什么/发生了什么
+  object: string;        // 对象/结果
+  description: string;   // 完整描述
+  status: 'active' | 'superseded' | 'resolved';
+  supersededBy: string | null;
+  createdAt: string;
+}
+
+export interface CharacterKnowledge {
+  id: string;
+  projectId: string;
+  characterId: string | null;
+  characterName: string;
+  factDescription: string;
+  source: string;              // 从哪知道的（章节标题或事件）
+  learnedAtChapterId: string | null;
+  createdAt: string;
+}
+
+// ===== 叙事钩子（P1 — 网文追读力） =====
+export interface NarrativeHook {
+  id: string;
+  projectId: string;
+  chapterId: string | null;
+  hookType: 'cliffhanger' | 'foreshadowing' | 'promise' | 'mystery' | 'emotional_hook';
+  description: string;
+  intensity: number;          // 1-5 强度
+  status: 'open' | 'partially_resolved' | 'resolved' | 'abandoned';
+  resolvedInChapterId: string | null;
+  dueChapterId: string | null;  // 建议在哪章回收
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface NarrativeDebt {
+  id: string;
+  projectId: string;
+  chapterId: string | null;
+  description: string;
+  debtType: 'reveal' | 'payoff' | 'character_return' | 'mystery_answer' | 'power_up';
+  promisedByChapter: number | null;
+  status: 'unpaid' | 'paid' | 'overdue' | 'waived';
+  paidInChapterId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// ===== 风格指纹（P3 — 从 localStorage 迁移到主类型） =====
+export interface StyleFingerprint {
+  sentenceStyle: string;
+  rhetoricStyle: string;
+  dialogueStyle: string;
+  moodTone: string;
+  vocabTraits: string;
+  chapterStructure: string;
+  rawAnalysis: string;
+  updatedAt: string;
 }
