@@ -28,6 +28,7 @@ interface PanelState {
   namegenOpen: boolean;
   aiWriteOpen: boolean;
   aiReviewOpen: boolean;
+  aiPolishOpen: boolean;
   foreshadowingOpen: boolean;
   aiLevel: 'off' | 'assist';  // AI participation level
 }
@@ -47,6 +48,7 @@ interface DockLayoutProps {
   namegenPanel: React.ReactNode;
   aiWritePanel: React.ReactNode;
   aiReviewPanel: React.ReactNode;
+  aiPolishPanel: React.ReactNode;
   foreshadowingPanel: React.ReactNode;
   panelState: PanelState;
   onToggleSidebar: () => void;
@@ -60,6 +62,7 @@ interface DockLayoutProps {
   onToggleNamegen: () => void;
   onToggleAiWrite: () => void;
   onToggleAiReview: () => void;
+  onToggleAiPolish: () => void;
   onToggleForeshadowing: () => void;
   onSetAiLevel: (level: 'off' | 'assist') => void;
   fontSizes: FontSizes;
@@ -85,10 +88,10 @@ const FontSizeSelect: React.FC<{
 const DockLayout: React.FC<DockLayoutProps> = ({
   sidebar, writingArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
   materialPanel, outlinePanel, referencePanel, namegenPanel,
-  aiWritePanel, aiReviewPanel, foreshadowingPanel,
+  aiWritePanel, aiReviewPanel, aiPolishPanel, foreshadowingPanel,
   panelState, onToggleSidebar, onToggleAiChat, onMinimizeAiChat, onToggleInspiration, onToggleMindmap,
   onToggleMaterial, onToggleOutline, onToggleReference, onToggleNamegen,
-  onToggleAiWrite, onToggleAiReview, onToggleForeshadowing,
+  onToggleAiWrite, onToggleAiReview, onToggleAiPolish, onToggleForeshadowing,
   onSetAiLevel,
   fontSizes, onSetFontSize,
 }) => {
@@ -378,6 +381,13 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             🔍 审稿
           </button>
 
+          {/* AI Polish toggle — 去 AI 味润色 */}
+          <button onClick={onToggleAiPolish}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiPolishOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            title="去 AI 味润色">
+            ✨ 润色
+          </button>
+
           {/* Foreshadowing toggle — 伏笔追踪 */}
           <button onClick={onToggleForeshadowing}
             className={`px-2 py-1 rounded text-xs transition-colors ${panelState.foreshadowingOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
@@ -558,6 +568,11 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       {/* ===== FLOATING AI REVIEW PANEL ===== */}
       <div style={{ display: panelState.aiReviewOpen ? 'block' : 'none' }}>
         {aiReviewPanel}
+      </div>
+
+      {/* ===== FLOATING AI POLISH PANEL ===== */}
+      <div style={{ display: panelState.aiPolishOpen ? 'block' : 'none' }}>
+        {aiPolishPanel}
       </div>
 
       {/* ===== FLOATING FORESHADOWING PANEL ===== */}

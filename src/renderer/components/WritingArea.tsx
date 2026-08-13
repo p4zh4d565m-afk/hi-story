@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
-import RichEditor from './editor/RichEditor';
+import RichEditor, { type RichEditorHandle, type TextRange } from './editor/RichEditor';
 import WritingGoal from './WritingGoal';
 import ContextMenu from './ContextMenu';
 import type { MenuItem } from './ContextMenu';
@@ -19,12 +19,14 @@ interface WritingAreaProps {
   saving: boolean;
   onSearchInInspiration?: (text: string) => void;
   onSearchInReference?: (text: string) => void;
-  onAIPolish?: (text: string) => void;
+  onAIPolish?: (text: string, range?: TextRange) => void;
   onAIContinue?: () => void;
   /** 编辑器字号预设 */
   editorFontSize?: 0 | 1 | 2 | 3;
   /** 编辑器字号变更回调 */
   onSetEditorFontSize?: (preset: 0 | 1 | 2 | 3) => void;
+  /** 编辑器句柄（用于润色写回时程序化替换内容） */
+  editorRef?: React.RefObject<RichEditorHandle | null>;
 }
 
 const WritingArea: React.FC<WritingAreaProps> = ({
@@ -45,6 +47,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   onAIContinue,
   editorFontSize = 1,
   onSetEditorFontSize,
+  editorRef,
 }) => {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeChapterRef = useRef(activeChapter);
@@ -462,6 +465,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
         {activeChapter ? (
           <RichEditor
             key={activeChapter.id}
+            ref={editorRef}
             content={activeChapter.content}
             onUpdate={handleUpdate}
             placeholder={`继续写「${activeChapter.title}」...`}

@@ -11,7 +11,9 @@ import ReferencePanel from './components/ReferencePanel';
 import NameGenerator from './components/NameGenerator';
 import AIWritePanel from './components/AIWritePanel';
 import AIReviewPanel from './components/AIReviewPanel';
+import AIPolishPanel from './components/AIPolishPanel';
 import ForeshadowingPanel from './components/ForeshadowingPanel';
+import type { RichEditorHandle, TextRange } from './components/editor/RichEditor';
 import DatabaseBrowser from './components/DatabaseBrowser';
 import CreateProjectDialog from './components/CreateProjectDialog';
 import ImportDialog from './components/ImportDialog';
@@ -75,6 +77,11 @@ const App: React.FC = () => {
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // ===== AI 润色相关状态 =====
+  const editorRef = useRef<RichEditorHandle | null>(null);
+  // 选中文本润色的原文与选区（由右键菜单 onAIPolish 传入）
+  const [polishSelection, setPolishSelection] = useState<{ text: string; range: TextRange | null } | null>(null);
+
   const [outlineNodes, setOutlineNodes] = useState<OutlineNode[]>([]);
   const [activeOutlineNodeId, setActiveOutlineNodeId] = useState<string | null>(null);
   const [outlineLoading, setOutlineLoading] = useState(false);
@@ -119,6 +126,7 @@ const App: React.FC = () => {
     namegenOpen: false,      // 起名助手
     aiWriteOpen: false,      // AI 写章
     aiReviewOpen: false,     // AI 审稿
+    aiPolishOpen: false,     // 去 AI 味润色
     foreshadowingOpen: false, // 伏笔追踪
     aiLevel: 'off' as 'off' | 'assist',  // 默认纯写模式，AI 模块不出现
   });
@@ -374,6 +382,18 @@ const App: React.FC = () => {
       }
       setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content, wordCount } : ch));
     } finally { setSaving(false); }
+  }, []);
+
+  // ===== 整章润色写回 =====
+  const handleApplyPolishChapter = useCallback(async (chapterId: string, content: string) => {
+    await handleSaveChapter(chapterId, content);
+    // 刷新编辑器显示（同章节 key 不变，TipTap 不会自动同步，需主动 setContent）
+    editorRef.current?.setContent(content);
+  }, [handleSaveChapter]);
+
+  // ===== 选中文本润色写回 =====
+  const handleApplyPolishSelection = useCallback((range: TextRange, html: string) => {
+    editorRef.current?.replaceSelection(range, html);
   }, []);
 
   const handleCreateOutlineNode = useCallback(async (parentId: string | null, title: string) => {
@@ -935,6 +955,7 @@ const App: React.FC = () => {
         onToggleNamegen={() => setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen }))}
         onToggleAiWrite={() => setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen }))}
         onToggleAiReview={() => setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen }))}
+        onToggleAiPolish={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: !p.aiPolishOpen })); }}
         onToggleForeshadowing={() => setPanelState(p => ({ ...p, foreshadowingOpen: !p.foreshadowingOpen }))}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
@@ -993,6 +1014,7 @@ const App: React.FC = () => {
             saving={saving}
             editorFontSize={fontSizes.editor}
             onSetEditorFontSize={(p: FontSizePreset) => setFontSize('editor', p)}
+            editorRef={editorRef}
             onSearchInInspiration={(text) => {
               setPanelState(p => ({ ...p, inspirationOpen: true }));
               // The inspiration panel will receive the search query via a ref or global state
@@ -1004,11 +1026,10 @@ const App: React.FC = () => {
               setPanelState(p => ({ ...p, referenceOpen: true }));
               localStorage.setItem('hi-story-pending-reference-search', text);
             }}
-            onAIPolish={(text) => {
-              // Ensure AI chat is open and not minimized
-              setPanelState(p => ({ ...p, aiChatOpen: true, aiChatMinimized: false, aiLevel: 'assist' }));
-              // Store the polish request for the AI panel to pick up
-              localStorage.setItem('hi-story-pending-ai-polish', text);
+            onAIPolish={(text, range) => {
+              // 打开润色面板，传入选中文本与选区范围
+              setPolishSelection({ text, range: range ?? null });
+              setPanelState(p => ({ ...p, aiPolishOpen: true }));
             }}
             onAIContinue={() => {
               // Ensure AI chat is open
@@ -1189,6 +1210,23 @@ const App: React.FC = () => {
               // 触发 WritingArea 响应
               window.dispatchEvent(new CustomEvent('hi-story:jump-paragraph', { detail: searchText }));
             }}
+          />
+        }
+        aiPolishPanel={
+          <AIPolishPanel
+            open={panelState.aiPolishOpen}
+            onClose={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: false })); }}
+            chapters={chapters}
+            activeChapterId={activeChapterId}
+            characters={characters}
+            worldEntries={worldEntries}
+            projectName={activeProject?.name || ''}
+            projectId={activeProject?.id || ''}
+            typeTags={activeProject?.typeTags || []}
+            initialTargetText={polishSelection?.text ?? null}
+            initialRange={polishSelection?.range ?? null}
+            onApplyChapter={handleApplyPolishChapter}
+            onApplySelection={handleApplyPolishSelection}
           />
         }
         foreshadowingPanel={

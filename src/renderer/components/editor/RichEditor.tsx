@@ -1,14 +1,30 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Placeholder from '@tiptap/extension-placeholder';
 import Underline from '@tiptap/extension-underline';
+
+/** 文本选区范围（ProseMirror 文档坐标） */
+export interface TextRange {
+  from: number;
+  to: number;
+}
+
+/** RichEditor 对外暴露的命令句柄 */
+export interface RichEditorHandle {
+  /** 整章替换内容（触发 onUpdate 走自动保存） */
+  setContent: (html: string) => void;
+  /** 替换指定选区文本 */
+  replaceSelection: (range: TextRange, html: string) => void;
+}
 
 interface ContextMenuState {
   open: boolean;
   x: number;
   y: number;
   selectedText: string;
+  /** 选中文本在文档中的坐标范围，用于润色后回填 */
+  range?: TextRange;
 }
 
 interface RichEditorProps {
@@ -20,8 +36,8 @@ interface RichEditorProps {
   onSearchInInspiration?: (text: string) => void;
   /** Called when user wants to search selected text in reference panel via AI ranking */
   onSearchInReference?: (text: string) => void;
-  /** Called when user wants AI to polish selected text */
-  onAIPolish?: (text: string) => void;
+  /** Called when user wants AI to polish selected text（附选区范围，用于回填） */
+  onAIPolish?: (text: string, range?: TextRange) => void;
   /** Called when user wants AI to continue writing from context */
   onAIContinue?: () => void;
   /** 编辑器字号预设: 0=小 1=中 2=大 3=特大 */
@@ -34,7 +50,7 @@ interface RichEditorProps {
 const FONT_SIZE_CLASSES = ['prose-font-s', 'prose-font-m', 'prose-font-l', 'prose-font-xl'] as const;
 const FONT_SIZE_LABELS = ['小 14px', '中 16px', '大 18px', '特大 20px'];
 
-const RichEditor: React.FC<RichEditorProps> = ({
+const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(({
   content = '',
   onUpdate,
   placeholder = '开始写作...',
@@ -45,7 +61,7 @@ const RichEditor: React.FC<RichEditorProps> = ({
   onAIContinue,
   fontSizePreset = 1,
   onSetFontSize,
-}) => {
+}, ref) => {
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({ open: false, x: 0, y: 0, selectedText: '' });
   const editor = useEditor({
     extensions: [
@@ -76,6 +92,16 @@ const RichEditor: React.FC<RichEditorProps> = ({
     el.classList.remove(...FONT_SIZE_CLASSES);
     el.classList.add(fontSizeClass);
   }, [editor, fontSizeClass]);
+
+  // 对外暴露整章替换 / 选区替换命令（供润色写回使用）
+  useImperativeHandle(ref, () => ({
+    setContent: (html: string) => {
+      editor?.commands.setContent(html, { emitUpdate: true });
+    },
+    replaceSelection: (range: TextRange, html: string) => {
+      editor?.chain().focus().setTextSelection({ from: range.from, to: range.to }).deleteSelection().insertContent(html).run();
+    },
+  }), [editor]);
 
   // ===== Smart formatting =====
   const handleSmartFormat = useCallback(() => {
@@ -128,16 +154,20 @@ const RichEditor: React.FC<RichEditorProps> = ({
   const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
     const selection = window.getSelection();
     const text = selection?.toString().trim() || '';
-    if (text) {
+    if (text && editor) {
       e.preventDefault();
+      // 捕获 ProseMirror 选区坐标，用于润色后精准回填
+      const { from, to } = editor.state.selection;
+      const range = to > from ? { from, to } : undefined;
       setContextMenu({
         open: true,
         x: e.clientX,
         y: e.clientY,
         selectedText: text,
+        range,
       });
     }
-  }, []);
+  }, [editor]);
 
   if (!editor) {
     return null;
@@ -193,7 +223,7 @@ const RichEditor: React.FC<RichEditorProps> = ({
           <button
             onClick={() => {
               handleCloseContextMenu();
-              onAIPolish?.(contextMenu.selectedText);
+              onAIPolish?.(contextMenu.selectedText, contextMenu.range);
             }}
             className="w-full px-3 py-2 text-left text-xs text-gray-300 hover:bg-gray-700 flex items-center gap-2 transition-colors"
           >
@@ -213,7 +243,7 @@ const RichEditor: React.FC<RichEditorProps> = ({
 
       <div className="h-full flex flex-col" onKeyDown={handleKeyDown}>
       {/* Toolbar */}
-      <div className="flex items-center gap-0.5 px-4 py-2 border-b border-gray-700 bg-gray-800 flex-wrap">
+      <div className="flex items-center gap-0.5 px-4 py-2 border-b border-editor-700 bg-editor-800 flex-wrap">
         <ToolbarButton
           onClick={() => editor.chain().focus().toggleBold().run()}
           active={editor.isActive('bold')}
@@ -287,7 +317,7 @@ const RichEditor: React.FC<RichEditorProps> = ({
         <Divider />
         <button
           onClick={handleSmartFormat}
-          className="px-2 py-1 rounded text-[10px] text-gray-400 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-1"
+          className="px-2 py-1 rounded text-[10px] text-gray-400 hover:bg-editor-700 hover:text-white transition-colors flex items-center gap-1"
           title="智能排版 — 自动按段落整理内容"
         >
           📐 排版
@@ -297,7 +327,7 @@ const RichEditor: React.FC<RichEditorProps> = ({
         <select
           value={fontSizePreset}
           onChange={(e) => onSetFontSize?.(Number(e.target.value) as 0|1|2|3)}
-          className="bg-gray-700 border border-gray-600 rounded text-[10px] text-gray-400 px-1.5 py-1 focus:outline-none focus:border-accent cursor-pointer"
+          className="bg-editor-700 border border-editor-600 rounded text-[10px] text-gray-400 px-1.5 py-1 focus:outline-none focus:border-accent cursor-pointer"
           title="编辑器字号"
         >
           {FONT_SIZE_LABELS.map((label, i) => (
@@ -307,13 +337,13 @@ const RichEditor: React.FC<RichEditorProps> = ({
       </div>
 
       {/* Editor content */}
-      <div className="flex-1 overflow-y-auto bg-gray-900" onContextMenu={handleEditorContextMenu}>
+      <div className="flex-1 overflow-y-auto bg-editor-900" onContextMenu={handleEditorContextMenu}>
         <EditorContent editor={editor} />
       </div>
     </div>
     </>
   );
-};
+});
 
 // --- Toolbar sub-components ---
 
@@ -330,7 +360,7 @@ const ToolbarButton: React.FC<{
     title={title}
     className={`
       w-8 h-8 rounded text-sm flex items-center justify-center transition-colors
-      ${active ? 'bg-accent text-white' : 'text-gray-400 hover:bg-gray-700 hover:text-white'}
+      ${active ? 'bg-accent text-white' : 'text-gray-400 hover:bg-editor-700 hover:text-white'}
       ${italic ? 'italic' : ''}
       ${underline ? 'underline' : ''}
     `}
@@ -340,7 +370,7 @@ const ToolbarButton: React.FC<{
 );
 
 const Divider: React.FC = () => (
-  <div className="w-px h-5 bg-gray-700 mx-1" />
+  <div className="w-px h-5 bg-editor-700 mx-1" />
 );
 
 export default RichEditor;

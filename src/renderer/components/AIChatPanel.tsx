@@ -264,7 +264,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [savedConfigs, setSavedConfigs] = useState<SavedConfig[]>([]);
   const [activeConfigId, setActiveConfigId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
-  const [configsLoaded, setConfigsLoaded] = useState(false);
 
   // New config form
   const [editingProviderId, setEditingProviderId] = useState('');
@@ -329,7 +328,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       if (!activeConfigId && configs.length > 0) {
         setActiveConfigId(configs[0].id);
       }
-      setConfigsLoaded(true);
     });
   }, []);
 
@@ -355,15 +353,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setError(null);
     setStreamingText('');
   }, [activeThreadId]);
-
-  // Handle polish request
-  useEffect(() => {
-    const text = localStorage.getItem('hi-story-pending-ai-polish');
-    if (text && configsLoaded && !isStreaming) {
-      localStorage.removeItem('hi-story-pending-ai-polish');
-      setInput(`请帮我润色以下文字，使其更优美流畅，保持原意不变：\n\n${text}`);
-    }
-  }, [configsLoaded, isStreaming]);
 
   // Check for pending continue request
   useEffect(() => {

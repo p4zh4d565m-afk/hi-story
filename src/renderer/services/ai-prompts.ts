@@ -62,6 +62,10 @@ export interface WriteChapterContext {
   worldEntries: Array<{ category: string; name: string; description: string }>;
   recentChapters: Array<{ title: string; summary: string }>;
   outlineNodes: Array<{ title: string; summary: string }>;
+  /** 叙事事实层 — 当前世界状态（AI 必须遵守的约束，防止前后矛盾） */
+  storyFactsSummary?: string;
+  /** 角色信息边界 — 谁知道了什么（防止信息越界） */
+  knowledgeSummary?: string;
 }
 
 export function buildWriteUserPrompt(
@@ -135,6 +139,21 @@ export function buildWriteUserPrompt(
     for (const ch of context.recentChapters) {
       parts.push(`- 【${ch.title}】${ch.summary.slice(0, 300)}`);
     }
+  }
+
+  // 叙事事实层 — 当前世界状态（从已写章节自动抽取的原子事实）
+  // 这是 AI 写作时最重要的一致性约束：角色的性别/能力/位置/持有物等事实
+  if (context.storyFactsSummary) {
+    parts.push(`\n## 📊 当前世界状态（截止本章前 — 必须遵守的约束）`);
+    parts.push(`以下是已写章节中建立的**客观事实**。请确保本章描述与这些事实一致，不要出现矛盾。`);
+    parts.push(context.storyFactsSummary);
+  }
+
+  // 角色信息边界
+  if (context.knowledgeSummary) {
+    parts.push(`\n## 🧠 角色信息边界（截止本章前 — 谁知道了什么）`);
+    parts.push(`如果你的叙述中某角色展示了不该知道的信息，则为信息越界。`);
+    parts.push(context.knowledgeSummary);
   }
 
   // 输出指令
@@ -1089,4 +1108,109 @@ export function runAntiAICheck(text: string): AntiAICheckResult {
   );
 
   return { totalScore, checks: checkResults };
+}
+
+// ============================================================
+// AI 去 AI 味润色 Prompt（保留原意 + 主动打磨文笔 + 去 AI 痕）
+// ============================================================
+
+export const POLISH_SYSTEM_PROMPT = `你是一位文笔精湛的中文小说编辑，擅长把平淡、生硬、啰嗦的文字打磨得流畅、生动、有感染力。
+
+## 核心任务
+对给定的小说文字做**真正的文笔润色**——让每一句话都更精准、更生动、更有画面感，同时去除 AI 写作痕迹。**这是改写提升，不是删减。**
+
+## 三条铁律（必须遵守）
+1. **忠实原意**：不增删任何情节、事件、信息；不改变角色性格、行为动机、对话的含义；不引入原文没有的新设定或新细节。
+2. **大胆润色**：不要只删字。要主动改写——把平淡的句子写生动、把笼统的写具体、把啰嗦的写凝练、把生硬的写流畅。每一句话都值得你重新斟酌用词、调整语序、打磨节奏。
+3. **保持文风**：润色后的文字必须与原文整体的风格、叙事视角、用词习惯一致，让人感觉是同一个人写的，而不是换了一篇文章。
+
+## 润色要做什么（提升方向）
+
+- **化抽象为具体**：把「他感到愤怒」这类笼统表达，改成有动作、有神态、有细节的画面（如「他攥紧了拳头，指节发白」）。让读者「看到」而不是「被告知」。
+- **精准用词**：找到最贴切的动词、形容词，替换平庸的词。避免「很」「非常」「有些」这类弱化词。
+- **改善语感节奏**：长短句错落，避免一长串结构相同的句子。段落内部有起有伏。
+- **强化画面感与代入感**：调动感官（视觉、听觉、触觉、气味），让场景更鲜活。
+- **让对话更鲜活**：对话符合角色性格，有语气、有停顿、有潜台词，避免千人一面的书面腔。
+- **消除赘余与重复**：删掉重复的词、多余的修饰、绕圈子的表达，让句子更干净有力。
+- **破 AI 腔**：打破模板句式、机械排比、总结腔，让文字像人写的，有锋芒、有温度。
+
+## 去 AI 痕迹润色原则（人类写作标准）
+
+1. **删除填充短语** — 去掉"值得注意的是""在这个时间点""由于……的事实"等冗余表达
+2. **打破公式结构** — 避免"不仅……而且……""从 X 到 Y""是……的体现""标志着""见证了"等模板句式
+3. **变化节奏** — 混合长短句。两件事比三件事好。段落结尾要多变
+4. **信任读者** — 直接陈述事实。不软化、不辩解、不解释隐喻、不说"展现了""反映了""象征着"
+5. **删除金句** — 如果一句话听起来像"可引用的名言"，重写它
+6. **用「是」「有」** — 把"充当""标志着""作为……的体现"改回简单的"是""有"
+7. **有锋芒、有温度** — 不只是中立报道。对事件做出反应，允许一些混乱和不确定
+
+## 禁用词汇（润色后正文不得出现）
+「标志着」「见证了」「充当」「作为……的体现/证明/提醒」「至关重要的」「关键性的」「不可磨灭的」「不断演变的格局」「充满活力的」「坐落于」「开创性的」「令人叹为观止的」「迷人的」「此外」「与……保持一致」「深入探讨」「赋能」「加持」「不仅……而且……」「这不仅仅是……而是……」「在这个时间点」「值得注意的是」「由于……的事实」
+
+## 输出要求
+直接输出润色后的完整正文。使用 HTML 段落标签 <p>...</p> 包裹每个自然段。
+对话使用中文引号「」或双引号""。
+输出必须是完整正文，不含任何解释、说明或前后缀。`;
+
+export interface PolishContext {
+  projectName: string;
+  typeTags: string[];
+  characters: Array<{ name: string; aliases: string; personality: string; background: string }>;
+  worldEntries: Array<{ name: string; description: string }>;
+  compassContext?: string;
+  styleFpContext?: string;
+}
+
+/**
+ * 构建润色 user prompt
+ */
+export function buildPolishUserPrompt(
+  targetText: string,
+  context: PolishContext,
+): string {
+  const parts: string[] = [];
+
+  parts.push(`请对以下小说文字做文笔润色：让表达更流畅、生动、有画面感，同时去除 AI 痕迹。注意——这是改写提升，不是简单删减。\n`);
+
+  // 项目信息
+  parts.push(`## 项目信息`);
+  parts.push(`书名：${context.projectName}`);
+  if (context.typeTags.length > 0) parts.push(`类型：${context.typeTags.join(' / ')}`);
+
+  // 角色设定（用于保持对话口吻一致）
+  if (context.characters.length > 0) {
+    parts.push(`\n## 角色设定（用于保持角色口吻与用词一致）`);
+    for (const ch of context.characters) {
+      const info: string[] = [];
+      if (ch.personality) info.push(`性格：${ch.personality}`);
+      if (ch.background) info.push(`背景：${ch.background.slice(0, 200)}`);
+      parts.push(`- ${ch.name}${ch.aliases ? `（${ch.aliases}）` : ''}${info.length > 0 ? `：${info.join('；')}` : ''}`);
+    }
+  }
+
+  // 世界观
+  if (context.worldEntries.length > 0) {
+    parts.push(`\n## 世界观设定（用于保持名词与设定一致）`);
+    for (const w of context.worldEntries) {
+      parts.push(`- ${w.name}：${w.description.slice(0, 300)}`);
+    }
+  }
+
+  // 创作方向 + 风格指纹
+  if (context.compassContext) {
+    parts.push(`\n## 创作方向指导\n${context.compassContext}`);
+  }
+  if (context.styleFpContext) {
+    parts.push(`\n## 目标写作风格\n${context.styleFpContext}`);
+  }
+
+  // 待润色原文
+  const plainText = htmlToPlainText(targetText);
+  parts.push(`\n## 待润色原文`);
+  parts.push(plainText);
+
+  parts.push(`\n## 再次提醒`);
+  parts.push(`这是文笔润色，请大胆改写提升——让句子更精准、生动、有画面感，不要只做删减。但不得增删情节、事件、信息，不得改变角色行为与对话含义。直接输出润色后的完整正文（HTML <p> 包裹）。`);
+
+  return parts.join('\n');
 }

@@ -106,6 +106,7 @@ resources/
 
 - **全书字数统计** — 小说名后显示 `{totalWords.toLocaleString()} 字`，统计所有章节 CJK 字符
 - **章节保存防丢失** — 三层修复见上方 Critical Implementation Details
+- **去 AI 味润色** — 工具栏「✨ 润色」整章润色 + 右键「✨ AI 润色」选中文本润色。保守润色（保留原意、只改不通顺/生硬/有 AI 味处），结果并排预览对比、确认后才写回。复用 `aiService.chatStream` + `POLISH_SYSTEM_PROMPT`，无需改 main 进程
 - **Stop Hook** — 每次会话结束自动执行 `npx vite build` + 提示音
 
 ## Git 远程仓库
