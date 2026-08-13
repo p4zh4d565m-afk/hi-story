@@ -227,11 +227,22 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ nodes, onChange, placehol
     }
   };
 
-  // 自动调整 textarea 高度
+  // 每次渲染后自动调整 textarea 高度（React ref 回调在 DOM 提交后运行）
+  // 这样可以保证在 React 更新 value 之后再测量高度，避免 rows={1} 的限制
   const autoResize = useCallback((el: HTMLTextAreaElement | null) => {
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = el.scrollHeight + 'px';
+  }, []);
+
+  // 仅对当前正在编辑的 textarea 实时调整高度，并保持光标在视野内
+  const resizeActive = useCallback((el: HTMLTextAreaElement) => {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+    // 确保光标所在底部不因高度增长而滚出视野
+    requestAnimationFrame(() => {
+      el.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+    });
   }, []);
 
   // 恢复焦点
@@ -293,7 +304,7 @@ const OutlineEditor: React.FC<OutlineEditorProps> = ({ nodes, onChange, placehol
               rows={1}
               placeholder={depth === 0 && items.indexOf(node) === 0 && node.text === '' ? (placeholder || '开始描写角色...') : ''}
               onChange={(e) => {
-                autoResize(e.currentTarget);
+                resizeActive(e.currentTarget);
                 const list = deepClone(nodes);
                 const n = findNode(list, node.id);
                 if (n) n.text = e.target.value;

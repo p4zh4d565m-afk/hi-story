@@ -7,6 +7,106 @@ import { encrypt, decrypt } from '../services/crypto';
 import { ContextBuilder } from '../../main/ai/context-builder';
 
 // ============================================================
+// 叙事事实层格式化工具 — 复用 context-builder 的分类标签
+// ============================================================
+
+const FACT_TYPE_LABELS: Record<string, string> = {
+  location: '📍 位置',
+  possession: '🎒 持有',
+  relationship: '🤝 关系',
+  knowledge: '🧠 认知',
+  event: '⚡ 事件',
+  emotional_state: '💭 情感',
+  hook: '🪝 伏笔',
+};
+
+interface StoryFact {
+  id: string;
+  factType: string;
+  subject: string;
+  predicate: string;
+  object: string;
+  description: string;
+  status: string;
+  chapterId?: string | null;
+  createdAt: string;
+}
+
+interface CharacterKnowledge {
+  id: string;
+  characterName: string;
+  factDescription: string;
+  source: string;
+}
+
+/** 将叙事事实列表格式化为 AI 可读的上下文文本 */
+function formatFactsContext(facts: StoryFact[]): string | null {
+  if (!facts || facts.length === 0) return null;
+
+  const byType: Record<string, StoryFact[]> = {};
+  for (const f of facts) {
+    if (!byType[f.factType]) byType[f.factType] = [];
+    byType[f.factType].push(f);
+  }
+
+  const lines: string[] = [];
+  for (const [type, items] of Object.entries(byType)) {
+    const label = FACT_TYPE_LABELS[type] || type;
+    lines.push(`### ${label}`);
+    const shown = items.slice(0, 8);
+    for (const item of shown) {
+      lines.push(`- ${item.description}`);
+    }
+    if (items.length > 8) {
+      lines.push(`  *(还有 ${items.length - 8} 条，已省略)*`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/** 将角色知识列表格式化为 AI 可读的上下文文本 */
+function formatKnowledgeContext(knowledge: CharacterKnowledge[]): string | null {
+  if (!knowledge || knowledge.length === 0) return null;
+
+  const byChar: Record<string, CharacterKnowledge[]> = {};
+  for (const k of knowledge) {
+    const name = k.characterName || '未知角色';
+    if (!byChar[name]) byChar[name] = [];
+    byChar[name].push(k);
+  }
+
+  const lines: string[] = [];
+  for (const [name, items] of Object.entries(byChar)) {
+    lines.push(`### ${name}`);
+    const shown = items.slice(0, 5);
+    for (const item of shown) {
+      lines.push(`- 知道「${item.factDescription}」—— 来源：${item.source}`);
+    }
+    if (items.length > 5) {
+      lines.push(`  *(还有 ${items.length - 5} 条，已省略)*`);
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+/** 加载项目的叙事事实层上下文（故事事实 + 角色知识） */
+async function loadFactsContext(projectId: string): Promise<{ factsStr: string | null; knowledgeStr: string | null }> {
+  try {
+    const [factsRes, knowledgeRes] = await Promise.all([
+      (window as any).electronAPI.invoke('db:storyFacts:findRecentActive', projectId, 80),
+      (window as any).electronAPI.invoke('db:storyFacts:findAllKnowledgeByProject', projectId),
+    ]);
+    const factsStr = factsRes?.success ? formatFactsContext(factsRes.data) : null;
+    const knowledgeStr = knowledgeRes?.success ? formatKnowledgeContext(knowledgeRes.data) : null;
+    return { factsStr, knowledgeStr };
+  } catch {
+    return { factsStr: null, knowledgeStr: null };
+  }
+}
+
+// ============================================================
 // AI 写章浮动面板
 // - 上半部分：配置区（大纲选择、字数、风格）
 // - 下半部分：流式生成预览 + 操作按钮
@@ -138,6 +238,89 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const BATCH_PROGRESS_KEY = 'hi-story-batch-progress';
   const [batchPaused, setBatchPaused] = useState(false);
 
+  // ===== 面板尺寸拖拽缩放 =====
+  const [panelSize, setPanelSize] = useState({ width: 680, height: 500 });
+  const resizing = useRef(false);
+  const resizeStartRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0 });
+
+  // ===== 面板拖拽移动 =====
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const dragging = useRef(false);
+  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizing.current = true;
+    resizeStartRef.current = { startX: e.clientX, startY: e.clientY, startW: panelSize.width, startH: panelSize.height };
+    document.body.style.cursor = 'nwse-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      if (!resizing.current) return;
+      const dx = ev.clientX - resizeStartRef.current.startX;
+      const dy = ev.clientY - resizeStartRef.current.startY;
+      setPanelSize({
+        width: Math.max(480, Math.min(1400, resizeStartRef.current.startW + dx)),
+        height: Math.max(300, Math.min(900, resizeStartRef.current.startH + dy)),
+      });
+    };
+    const onUp = () => {
+      resizing.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [panelSize]);
+
+  // ===== 拖拽移动：标题栏按下开始拖动 =====
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    // 不拖拽按钮（关闭按钮等）
+    if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    dragging.current = true;
+    const rect = panelRef.current!.getBoundingClientRect();
+    dragStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      panelX: rect.left,
+      panelY: rect.top,
+    };
+    document.body.style.cursor = 'move';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const dx = ev.clientX - dragStartRef.current.mouseX;
+      const dy = ev.clientY - dragStartRef.current.mouseY;
+      setPanelPos({
+        x: Math.max(-200, Math.min(window.innerWidth - 200, dragStartRef.current.panelX + dx)),
+        y: Math.max(0, Math.min(window.innerHeight - 40, dragStartRef.current.panelY + dy)),
+      });
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  // 面板打开时计算初始居中位置（仅在首次打开且未被拖动过时）
+  useEffect(() => {
+    if (open && !panelPos) {
+      setPanelPos({
+        x: Math.max(0, (window.innerWidth - panelSize.width) / 2),
+        y: Math.max(0, (window.innerHeight - panelSize.height) / 2),
+      });
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ===== 初始化 AI 配置 =====
   useEffect(() => {
     async function init() {
@@ -267,6 +450,22 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }, [projectId]);
 
   const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number) => {
+    // 批量模式：一次性加载创作罗盘/风格指纹/钩子/叙事事实层（这些在整个批量中不变）
+    const compassCtx = ContextBuilder.getCompassContext(projectId);
+    const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
+    let hooksContext: string | null = null;
+    let factsStr: string | null = null;
+    let knowledgeStr: string | null = null;
+    try {
+      const [hooksRes, factsCtx] = await Promise.all([
+        (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
+        loadFactsContext(projectId),
+      ]);
+      if (hooksRes?.success && hooksRes.data) hooksContext = hooksRes.data as string;
+      factsStr = factsCtx.factsStr;
+      knowledgeStr = factsCtx.knowledgeStr;
+    } catch { /* ignore */ }
+
     for (let i = startIndex; i < nodes.length; i++) {
       setBatchProgress(p => ({ ...p, completed: i, current: nodes[i].title }));
 
@@ -293,16 +492,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           })) : [],
           recentChapters: includeContext ? recentChapters : [],
           outlineNodes: outlineNodes.map(n => ({ title: n.title, summary: n.summary || '' })),
+          storyFactsSummary: factsStr ?? undefined,
+          knowledgeSummary: knowledgeStr ?? undefined,
         };
-
-        // 加载钩子上下文
-        const compassCtx = ContextBuilder.getCompassContext(projectId);
-        const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
-        let hooksContext: string | null = null;
-        try {
-          const hooksRes = await (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId);
-          if (hooksRes?.success && hooksRes.data) hooksContext = hooksRes.data as string;
-        } catch { /* ignore */ }
 
         const extraBlocks: string[] = [];
         if (styleGuide && styleGuide !== '保持与项目风格一致') extraBlocks.push(`## 用户指定的写作风格\n${styleGuide}`);
@@ -379,15 +571,22 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       const compassCtx = ContextBuilder.getCompassContext(projectId);
       const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
 
-      // 加载待回收钩子和未偿债务
+      // 并行加载钩子 + 叙事事实层（P0 修复：写章必须包含此前建立的事实，防止 AI 乱编）
       let hooksContext: string | null = null;
+      let factsStr: string | null = null;
+      let knowledgeStr: string | null = null;
       if (projectId) {
         try {
-          const hooksRes = await (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId);
+          const [hooksRes, factsCtx] = await Promise.all([
+            (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
+            loadFactsContext(projectId),
+          ]);
           if (hooksRes?.success && hooksRes.data) {
             hooksContext = hooksRes.data as string;
           }
-        } catch { /* 忽略钩子加载失败 */ }
+          factsStr = factsCtx.factsStr;
+          knowledgeStr = factsCtx.knowledgeStr;
+        } catch { /* 忽略加载失败 */ }
       }
 
       const extraBlocks: string[] = [];
@@ -401,9 +600,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       const systemPrompt = WRITE_SYSTEM_PROMPT
         + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
 
+      // 注入叙事事实层到 user prompt
+      const contextWithFacts = factsStr || knowledgeStr
+        ? { ...context, storyFactsSummary: factsStr ?? undefined, knowledgeSummary: knowledgeStr ?? undefined }
+        : context;
+
       const userPrompt = buildWriteUserPrompt(
         { targetWords, extraRequirement },
-        context,
+        contextWithFacts,
       );
 
       const messages: ChatMessage[] = [
@@ -525,17 +729,28 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     <div className="fixed inset-0 z-40 pointer-events-none">
       <div className="absolute inset-0 pointer-events-none" onClick={onClose} />
       <div
+        ref={panelRef}
         className="absolute pointer-events-auto bg-gray-950 border border-gray-700 rounded-lg shadow-2xl flex flex-col overflow-hidden"
-        style={{
+        style={panelPos ? {
+          top: `${panelPos.y}px`,
+          left: `${panelPos.x}px`,
+          width: `${panelSize.width}px`,
+          maxHeight: '90vh',
+          height: `${panelSize.height}px`,
+        } : {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: '680px',
-          maxHeight: '85vh',
+          width: `${panelSize.width}px`,
+          maxHeight: '90vh',
+          height: `${panelSize.height}px`,
         }}
       >
-        {/* ── 标题栏 ── */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0">
+        {/* ── 标题栏（可拖拽移动）── */}
+        <div
+          className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0 cursor-move select-none"
+          onMouseDown={handleDragStart}
+        >
           <span className="text-sm font-semibold text-gray-200">🤖 AI 写章</span>
           <div className="flex items-center gap-2">
             {!initDone ? (
@@ -809,6 +1024,20 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
             </button>
           </div>
         )}
+
+        {/* 拖拽缩放手柄（右下角） */}
+        <div
+          onMouseDown={handleResizeStart}
+          className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize group select-none"
+          title="拖动调整面板大小"
+        >
+          <svg
+            width="14" height="14" viewBox="0 0 14 14"
+            className="absolute bottom-1 right-1 text-gray-700 group-hover:text-gray-400 transition-colors"
+          >
+            <path d="M2 12 L12 2 M6 12 L12 6 M10 12 L12 10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
+          </svg>
+        </div>
       </div>
     </div>
   );
