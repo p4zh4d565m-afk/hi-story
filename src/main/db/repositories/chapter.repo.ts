@@ -300,6 +300,7 @@ export class ChapterHistoryRepo {
           status: row.status as 'draft' | 'final',
           wordCount: row.word_count as number,
           sortOrder: row.sort_order as number,
+          summary: (row.summary as string) || '',
           createdAt: row.created_at as string,
           updatedAt: row.updated_at as string,
         },

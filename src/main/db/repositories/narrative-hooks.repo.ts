@@ -162,7 +162,7 @@ export class NarrativeHooksRepo {
     const rows = this.db.prepare(`
       SELECT * FROM narrative_debts WHERE project_id = ? AND status = 'unpaid' ORDER BY created_at ASC
     `).all(projectId) as Record<string, unknown>[];
-    return { success: true, data: rows.map(r => this.rowToDebt(row)) };
+    return { success: true, data: rows.map(r => this.rowToDebt(r)) };
   }
 
   /** 更新债务 */
