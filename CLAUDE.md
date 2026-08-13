@@ -111,5 +111,5 @@ resources/
 
 ## Git 远程仓库
 
-- 仓库: `git@github.com:Arielchar/hi-story.git`
+- 仓库: `git@github.com:p4zh4d565m-afk/hi-story.git`
 - SSH config (`~/.ssh/config`): GitHub 走 `ssh.github.com:443`（解决国内 22 端口被封）
