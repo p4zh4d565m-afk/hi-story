@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { aiService } from '../services/ai.service';
 import { decryptConfigs } from '../services/crypto';
+import { generateCharacterNames, generateFactionNames, generateLocationNames, generateItemNames, generateTechniqueNames, generateCreatureNames } from '../services/name-generator';
 
 // ═══════════════════════════════════════════════════
 // 类型定义
@@ -223,6 +224,37 @@ function getBuiltinNames(
   surname: string,
   era: Era,
 ): string[] {
+  // 中式人物走「组合式生成」，固定姓氏时永远能组合出名字
+  if (category === 'character' && style === 'chinese') {
+    const g = gender === 'male' ? '男' as const : '女' as const;
+    const results = generateCharacterNames({
+      gender: g,
+      origin: 'cultivator', // 默认古风修仙定位
+      tone: g === '男' ? '古雅' : '温润',
+      count: 15,
+      fixedSurname: surname.trim() || undefined,
+    });
+    return results.map(r => r.name);
+  }
+
+  // 中式其他类别走组合式生成
+  if (style === 'chinese') {
+    switch (category) {
+      case 'faction':
+        return generateFactionNames({ style: '正道', count: 15 });
+      case 'location':
+        return generateLocationNames({ category: era === 'ancient' ? '山岳' : '城市', count: 15 });
+      case 'equipment':
+        return generateItemNames({ type: '法宝', count: 15 });
+      case 'technique':
+        return generateTechniqueNames({ count: 15 });
+      case 'monster':
+        return generateCreatureNames({ count: 15 });
+      default:
+        break;
+    }
+  }
+
   const key = getBuiltinKey(category, style, gender, era);
   const pool = BUILTIN_NAMES[key] || [];
   const hasSurname = surname.trim().length > 0;
