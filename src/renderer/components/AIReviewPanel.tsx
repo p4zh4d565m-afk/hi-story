@@ -10,7 +10,9 @@ import {
   extractSummary,
   REVIEW_DIMENSIONS,
   runAntiAICheck,
+  runStyleStats,
 } from '../services/ai-prompts';
+import type { StyleStatsResult } from '../services/ai-prompts';
 import AIReviewResultComponent from './AIReviewResult';
 import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, AntiAICheckResult } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
@@ -95,8 +97,10 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [configError, setConfigError] = useState<string | null>(null);
   const [initDone, setInitDone] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [activeTab, setActiveTab] = useState<'review' | 'quickcheck' | 'revise'>('review');
+  const [activeTab, setActiveTab] = useState<'review' | 'quickcheck' | 'revise' | 'stylestats'>('review');
   const [quickCheckResult, setQuickCheckResult] = useState<AntiAICheckResult | null>(null);
+  const [styleStatsResult, setStyleStatsResult] = useState<StyleStatsResult | null>(null);
+  const [styleStatsLoading, setStyleStatsLoading] = useState(false);
 
   // ===== 修订状态 =====
   const [revising, setRevising] = useState(false);
@@ -533,11 +537,38 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     setQuickCheckResult(checkResult);
   }, [selectedChapterId, chapters]);
 
+  // ===== 全书级句式 tic 统计 =====
+  const handleStyleStats = useCallback(() => {
+    setActiveTab('stylestats');
+    setStyleStatsLoading(true);
+    // 用 setTimeout 让 loading 态先渲染（统计本身是同步的）
+    setTimeout(() => {
+      try {
+        // 收集所有章节纯文本（按 sortOrder 排序）
+        const sorted = [...chapters].sort((a, b) => a.sortOrder - b.sortOrder);
+        const contents = sorted.map(c => htmlToPlainText(c.content || ''));
+        // 角色名作为停用词，避免人名混进口头禅清单
+        const stopwords = characters.map(c => c.name).filter(Boolean);
+        const stats = runStyleStats(contents, { stopwords, titles: sorted.map(c => c.title) });
+        setStyleStatsResult(stats);
+      } finally {
+        setStyleStatsLoading(false);
+      }
+    }, 0);
+  }, [chapters, characters]);
+
   /** 反AI检测结果颜色 */
   function quickScoreColor(score: number): string {
     if (score >= 80) return 'text-green-400';
     if (score >= 60) return 'text-yellow-400';
     return 'text-red-400';
+  }
+
+  /** 章均频率是否异常（用于句式模式染色） */
+  function patternTone(perChapter: number): string {
+    if (perChapter >= 3) return 'text-red-400';
+    if (perChapter >= 1.5) return 'text-yellow-400';
+    return 'text-gray-400';
   }
 
   if (!open) return null;
@@ -636,6 +667,15 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
               }`}
             >
               ⚡ 快速检测 (反AI痕迹)
+            </button>
+            <button
+              onClick={handleStyleStats}
+              className={`px-3 py-1.5 text-[11px] border-b-2 transition-colors ${
+                activeTab === 'stylestats' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-white'
+              }`}
+              title="全书级句式统计，纯本地计算零 AI 消耗，发现单章看不出的固化模式"
+            >
+              📊 全书文风统计
             </button>
             {activeTab === 'revise' && (
               <span className="px-3 py-1.5 text-[11px] border-b-2 border-accent text-accent">
@@ -796,6 +836,118 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
                     className="mt-3 px-4 py-1.5 bg-gray-700 text-gray-200 text-xs rounded hover:bg-gray-600 disabled:opacity-40 transition-colors"
                   >
                     ⚡ 开始检测
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ── 全书级句式 tic 统计 ── */}
+          {activeTab === 'stylestats' && (
+            <div>
+              {styleStatsLoading ? (
+                <div className="flex flex-col items-center justify-center py-10 space-y-3">
+                  <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+                  <span className="text-xs text-gray-500">统计中...</span>
+                </div>
+              ) : styleStatsResult ? (
+                <div className="space-y-3 text-sm">
+                  {/* 概览 */}
+                  <div className="p-3 bg-gray-900/50 border border-gray-800 rounded-lg">
+                    <p className="text-[11px] text-gray-300 mb-1">
+                      已统计 <span className="text-accent font-semibold">{styleStatsResult.chapters}</span> 章全文
+                    </p>
+                    <p className="text-[9px] text-gray-600">
+                      全书级统计能发现单章看不出的固化模式——单章每处都"正常"，章均几十次就是 AI 味
+                    </p>
+                  </div>
+
+                  {/* 句式模式计数 */}
+                  {styleStatsResult.patterns.length > 0 && (
+                    <div>
+                      <h4 className="text-[11px] font-semibold text-gray-400 mb-1.5">📈 固定句式模式（章均频率）</h4>
+                      <div className="space-y-1.5">
+                        {styleStatsResult.patterns.map((p, i) => (
+                          <div key={i} className="flex items-center justify-between p-2 bg-gray-900/50 border border-gray-800 rounded text-[11px]">
+                            <span className="text-gray-300">{p.name}</span>
+                            <span className={`font-semibold ${patternTone(p.perChapter)}`}>
+                              共 {p.total} 次 · 章均 {p.perChapter}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-[9px] text-gray-600 mt-1">章均 ≥ 3 为明显异常，≥ 1.5 需留意</p>
+                    </div>
+                  )}
+
+                  {/* 高频短语（口头禅镜像） */}
+                  {styleStatsResult.topPhrases.length > 0 && (
+                    <div>
+                      <h4 className="text-[11px] font-semibold text-gray-400 mb-1.5">🗣️ 近期高频短语（口头禅镜像）</h4>
+                      <div className="flex flex-wrap gap-1.5">
+                        {styleStatsResult.topPhrases.map((p, i) => (
+                          <span key={i} className="px-2 py-1 bg-yellow-900/20 border border-yellow-800/30 rounded text-[11px] text-yellow-300">
+                            「{p.text}」×{p.count}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 跨章重复句 */}
+                  {styleStatsResult.repeatedSentences.length > 0 && (
+                    <div>
+                      <h4 className="text-[11px] font-semibold text-red-400 mb-1.5">🔁 跨章重复句（≥3 章复现）</h4>
+                      <div className="space-y-1.5">
+                        {styleStatsResult.repeatedSentences.map((s, i) => (
+                          <div key={i} className="p-2 bg-red-900/10 border border-red-800/30 rounded text-[11px] text-gray-300">
+                            <span className="text-red-400 font-semibold">{s.chapters}章 × {s.count}次</span>
+                            <span className="ml-2">{s.text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 章末形态 / 开篇 / 标题 */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="p-2.5 bg-gray-900/50 border border-gray-800 rounded">
+                      <p className="text-[10px] text-gray-500 mb-0.5">章末短句收尾占比</p>
+                      <p className={`text-sm font-bold ${styleStatsResult.endingShortRatio > 0.8 ? 'text-red-400' : styleStatsResult.endingShortRatio > 0.6 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                        {(styleStatsResult.endingShortRatio * 100).toFixed(0)}%
+                      </p>
+                      <p className="text-[9px] text-gray-600">接近 100% = 章末形态同构</p>
+                    </div>
+                    <div className="p-2.5 bg-gray-900/50 border border-gray-800 rounded">
+                      <p className="text-[10px] text-gray-500 mb-0.5">开篇时间词率</p>
+                      <p className={`text-sm font-bold ${styleStatsResult.openingTimeRate > 0.5 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                        {(styleStatsResult.openingTimeRate * 100).toFixed(0)}%
+                      </p>
+                      <p className="text-[9px] text-gray-600">每章都从"清晨/夜"开头是 AI 味</p>
+                    </div>
+                  </div>
+
+                  {styleStatsResult.titleFormatMixed && (
+                    <div className="p-2.5 bg-gray-900/50 border border-yellow-800/30 rounded">
+                      <p className="text-[10px] text-yellow-400 mb-0.5">⚠️ 标题格式混用</p>
+                      <p className="text-[11px] text-gray-300">
+                        带「第N章」{styleStatsResult.titleFormatMixed.withPrefix} 章 · 不带 {styleStatsResult.titleFormatMixed.withoutPrefix} 章
+                      </p>
+                      <p className="text-[9px] text-gray-600">格式不统一会暴露生成痕迹</p>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="text-center py-10">
+                  <p className="text-xs text-gray-600 mb-2">点击「📊 全书文风统计」按钮查看</p>
+                  <p className="text-[10px] text-gray-700">纯本地正则计算，零 AI 消耗，秒级完成</p>
+                  <p className="text-[10px] text-gray-700 mt-1">需至少 5 章内容才有统计意义</p>
+                  <button
+                    onClick={handleStyleStats}
+                    disabled={chapters.length < 5}
+                    className="mt-3 px-4 py-1.5 bg-gray-700 text-gray-200 text-xs rounded hover:bg-gray-600 disabled:opacity-40 transition-colors"
+                  >
+                    📊 开始统计（当前 {chapters.length} 章）
                   </button>
                 </div>
               )}

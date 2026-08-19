@@ -108,6 +108,8 @@ resources/
 - **章节保存防丢失** — 三层修复见上方 Critical Implementation Details
 - **去 AI 味润色** — 工具栏「✨ 润色」整章润色 + 右键「✨ AI 润色」选中文本润色。保守润色（保留原意、只改不通顺/生硬/有 AI 味处），结果并排预览对比、确认后才写回。复用 `aiService.chatStream` + `POLISH_SYSTEM_PROMPT`，无需改 main 进程
 - **内容安全红线** — `WRITE_SYSTEM_PROMPT` 内置「内容安全红线」段：禁止性行为/性器官/性暗示隐喻描写，亲密戏用含蓄留白+蒙太奇转场，确保生成内容通过番茄等网文平台审核
+- **全书文风统计** — 审稿面板「📊 全书文风统计」Tab：纯本地正则零 LLM 统计全书句式 tic（章均频率/口头禅/跨章重复句/章末形态同构/开篇时间词率），发现单章看不出的固化 AI 味。参考 voocel/ainovel-cli 的 stylestat 设计，核心在 `runStyleStats`
+- **组合式起名** — 起名助手离线兜底从「整词硬编码」升级为「姓×名用字组合式生成」（移植自 TulanCN/vibe-noveling 的 novel-name skill）。固定姓氏永远能出名字、离线大量不重复、防尬名（过滤霸天/弑神等）、含稀有度。核心在 `name-data.ts` + `name-generator.ts`，覆盖人物/势力/地点/装备/功法/怪兽 6 类
 - **Stop Hook** — 每次会话结束自动执行 `npx vite build` + 提示音
 
 ## Git 远程仓库

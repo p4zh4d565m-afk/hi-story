@@ -21,6 +21,24 @@ export const WRITE_SYSTEM_PROMPT = `你是一位专业的小说作家，擅长�
 - 环境描写烘托气氛
 - 人物心理通过动作和表情展现
 
+## 章节开头规范（前 20% 决定读者去留）
+
+读者在前 20% 内容里决定是否继续读，开头必须立刻抓住人：
+
+- **开头即冲突/动作/悬念**：不要从天气描写、起床洗漱、回顾上章、背景介绍这类慢热内容开场
+- **开头致命错误（绝对避免）**：天气描写开场、日常流水账、回顾上一章、缓慢铺垫背景、平淡寒暄对话
+- **优先用这些强力开场**：从动作高潮切入（In Media Res）、呈现反常情境（死人坐在桌前写报告）、一句震撼对话、倒计时/危机
+- **情感冲击前置**：让读者在开头就产生好奇、震惊或担忧，迫切想知道接下来发生什么
+
+## 对话写作技法
+
+- **每句对话有目的**：推动情节 / 揭示人物 / 制造冲突 / 传达信息 / 制造悬念，删掉无意义的寒暄闲聊
+- **对话要简洁**：真实的人说话不写论文，删多余的词（「我想告诉你的是，我认为我们应该离开」→「我们得马上走」）
+- **真实对话不完整**：允许打断、迟疑、话题转移、话说一半、暗示而非明说
+- **善用潜台词**：真正含义藏在表面之下——生气的人说「我没事」，喜欢的人说「你今天看起来不错」，用话题转移、反问、沉默代替直说
+- **用动作替代对话标签**：少用「他愤怒地说」「她高兴地回答」，改用动作呈现情绪（「你骗了我。」他的声音在颤抖 / 她眼睛亮了）
+- **对话与动作结合**：动作与台词一致增强表现力，矛盾则揭示真实（「我支持你。」他目光看向别处）
+
 ## 写作禁忌
 - 不要使用"在这个世界里"、"值得一提的是"等元叙事
 - 不要写"如上所述"、"总而言之"等总结性套话
@@ -51,6 +69,17 @@ export const WRITE_SYSTEM_PROMPT = `你是一位专业的小说作家，擅长�
 - 句子长短错落，两件事比三件事好
 - 直接陈述事实，不要绕着圈子宣告
 
+### 质感层规则（避免词表抓不到的 AI 味）
+
+词表只能抓表面，以下这些「质感」问题会让读者感觉出 AI 味，必须规避：
+
+- **情绪别贴标签**：不直接写「他很紧张/愤怒/悲伤」，改用身体反应和选择呈现（「指节发白」「喉头发紧」），让读者自己体会
+- **不用明喻套句**：「如同……一般」「宛如……似的」「仿佛……一样」这类固定句式反复出现是 AI 味，换成精准动词或直接白描
+- **不堆四字成语**：一段里别挤进多个成语充当描写（「惊心动魄、险象环生、千钧一发」），用一个具体动作或画面替代
+- **对话要区分角色**：去掉说话人标记后也能分辨谁在说——每个角色有稳定的句长、口头禅、语气，避免人人书面腔
+- **别解释动机**：不写「他这么说是因为……」这类叙述者替读者总结的句子，让动机藏在选择和言外之意里
+- **别强行升华**：章末不拔高到人生感悟或主题金句，停在具体的画面、选择或情绪余波上
+
 ## 内容安全红线（必须遵守，确保通过平台审核）
 
 以下规则是硬性要求，违反任何一条都可能导致章节被判定「低俗色情」而封禁。请严格自律：
@@ -60,9 +89,11 @@ export const WRITE_SYSTEM_PROMPT = `你是一位专业的小说作家，擅长�
 - 不使用任何性暗示的隐喻或代号（如「注入」「抽送」「玫瑰素」这类以物喻性的写法同样越界）
 - 不写未成年人的任何暧昧或性相关描写
 - 不出现露骨挑逗、色情词汇、性行为动词
+- **不写暧昧亲昵的擦边动作**：不写「舔舐」「吮吸」「舔吻」「舌吻」等舌头接触身体的描写；不写「舌尖」「舌头」的暧昧动作细节（如「舔舐脖颈」「猩红舌尖卷走血迹」「吮吸手指」这类都越界）；不写用嘴/舌头接触液体（血、汗、酒等）的暧昧描写
+- **不写敏感部位的亲昵特写**：脖颈、耳垂、锁骨、腰窝等敏感部位的舔吻、啃咬、摩挲特写都属于擦边，一律不写
 
 ### 亲密戏的正确写法（含蓄留白）
-- 亲密戏点到为止：写到拥抱、亲吻、牵手即可，接吻之后的更进一步**一律用留白处理**
+- 亲密戏点到为止：写到拥抱、亲吻、牵手即可。**亲吻只写唇与唇的轻触，不写舌头、舔舐、吮吸**，接吻之后的更进一步**一律用留白处理**
 - 用「灯熄了」「门关上了」「夜色渐深」「一夜过去」等蒙太奇转场替代过程描写
 - 情感张力和心理活动 > 身体描写，把笔墨放在角色的情绪、心跳、眼神上
 - 需要表现暧昧时，写氛围和克制，而不是写动作细节
@@ -238,7 +269,20 @@ ${REVIEW_DIMENSIONS.map(d => `${d.id}. ${d.name}：${d.desc}`).join('\n')}
 - location 字段填入原文片段，方便定位
 - 每个维度都要评分，不要跳过
 - 问题要具体，给出可操作的改进建议
-- 如果某个维度没有任何问题，score 给 90 以上，passed 为 true`;
+- 如果某个维度没有任何问题，score 给 90 以上，passed 为 true
+
+## AI 味质感层检查（用于「段落AI痕」维度，必须引用原文举证）
+
+词表只能抓表面，以下质感问题需要你通读原文后凭审美判断，发现时必须引用原文片段作为 location：
+
+- **情绪贴标签**：直接写「他很紧张/愤怒/悲伤」，而不是用身体反应呈现
+- **明喻套句**：「如同……一般」「宛如……似的」「仿佛……一样」反复出现
+- **四字成语堆砌**：一段挤进多个成语充当描写
+- **对话同质化**：去掉说话人标记后分不清谁在说
+- **解释动机**：叙述者写「他这么说是因为……」替读者总结
+- **强行升华**：章末拔高到人生感悟或主题金句
+
+以上问题归入「段落AI痕」或「文风一致」维度，问题必须具体、可定位、给出改法，不接受「文笔还需提升」这类空泛结论。`;
 
 export interface ReviewContext {
   projectName: string;
@@ -1163,8 +1207,37 @@ export const POLISH_SYSTEM_PROMPT = `你是一位文笔精湛的中文小说编�
 6. **用「是」「有」** — 把"充当""标志着""作为……的体现"改回简单的"是""有"
 7. **有锋芒、有温度** — 不只是中立报道。对事件做出反应，允许一些混乱和不确定
 
+### 质感层规则（润色时也要规避）
+
+词表只能抓表面，润色后如果还残留以下质感问题，读者照样能感觉出 AI 味：
+
+- **情绪贴标签**：原文若写了「他很愤怒」，改成「他攥紧拳头，指节发白」这种身体反应，别保留抽象的情绪标签
+- **明喻套句**：「如同……一般」「宛如……似的」「仿佛……一样」出现多次，就换成精准动词或白描
+- **四字成语堆砌**：一段里挤多个成语充当描写，改成具体动作或画面
+- **对话同质化**：润色时保持每个角色的语气差异，别把所有人的话都改成规整书面腔
+- **解释动机**：删掉「他这么说是因为……」这类叙述者替读者总结的句子
+- **强行升华**：章末如果拔高成人生感悟或金句，改回停在具体画面、选择或情绪余波上
+
 ## 禁用词汇（润色后正文不得出现）
 「标志着」「见证了」「充当」「作为……的体现/证明/提醒」「至关重要的」「关键性的」「不可磨灭的」「不断演变的格局」「充满活力的」「坐落于」「开创性的」「令人叹为观止的」「迷人的」「此外」「与……保持一致」「深入探讨」「赋能」「加持」「不仅……而且……」「这不仅仅是……而是……」「在这个时间点」「值得注意的是」「由于……的事实」
+
+## 内容安全红线（必须遵守，确保通过平台审核）
+
+润色后正文必须符合网文平台审核标准，以下规则是硬性要求：
+
+### 绝对禁止（润色后一个字都不能出现）
+- 不保留或新增任何性行为过程、性器官、体液、性反应的描写
+- 不保留或新增性暗示隐喻/代号（「注入」「抽送」「玫瑰素」等以物喻性写法）
+- 不保留或新增暧昧亲昵的擦边动作：不写「舔舐」「吮吸」「舔吻」「舌吻」等舌头接触身体的描写；不写「舌尖」「舌头」的暧昧动作细节（如「舔舐脖颈」「猩红舌尖卷走血迹」「吮吸手指」都越界）；不写用嘴/舌头接触液体（血、汗、酒等）的暧昧描写
+- 不保留或新增敏感部位（脖颈、耳垂、锁骨、腰窝等）的舔吻、啃咬、摩挲特写
+
+### 原文含擦边内容时怎么办（关键）
+- 如果原文里已经写了「舔舐」「吮吸」「舌尖」这类擦边动作，**润色时必须把它改写掉**——改成含蓄留白的表达，不能原样保留，更不能润色得更露骨
+- 擦边动作改写为：拥抱、牵手、亲吻（仅唇轻触）、情感与心理描写、环境烘托
+- 亲吻只写唇与唇的轻触，不写舌头、舔舐、吮吸
+
+### 自查标准
+润色完成后自问：交给最严格的网文平台审核会不会被判低俗？只要有疑虑，就改写得更含蓄、更留白。宁可删掉一个暧昧动作，也不留下越界风险。
 
 ## 输出要求
 直接输出润色后的完整正文。使用 HTML 段落标签 <p>...</p> 包裹每个自然段。
@@ -1232,4 +1305,265 @@ export function buildPolishUserPrompt(
   parts.push(`这是文笔润色，请大胆改写提升——让句子更精准、生动、有画面感，不要只做删减。但不得增删情节、事件、信息，不得改变角色行为与对话含义。直接输出润色后的完整正文（HTML <p> 包裹）。`);
 
   return parts.join('\n');
+}
+
+// ============================================================
+// 全书级句式 tic 统计（纯正则，零 LLM 消耗）
+// 参考 voocel/ainovel-cli 的 stylestat 设计
+// 解决单章反 AI 检测的盲区：单章看每处都"正常"的句式，全书章均几十次就是病
+// ============================================================
+
+export interface PatternStat {
+  /** 句式模式名 */
+  name: string;
+  /** 全书总次数 */
+  total: number;
+  /** 章均次数 */
+  perChapter: number;
+}
+
+export interface PhraseStat {
+  /** 高频短语 */
+  text: string;
+  /** 出现次数 */
+  count: number;
+}
+
+export interface SentenceStat {
+  /** 跨章重复句 */
+  text: string;
+  /** 出现的章数 */
+  chapters: number;
+  /** 总次数 */
+  count: number;
+}
+
+export interface StyleStatsResult {
+  /** 统计的章数 */
+  chapters: number;
+  /** 固定句式模式计数 */
+  patterns: PatternStat[];
+  /** 最近 N 章高频短语（口头禅镜像） */
+  topPhrases: PhraseStat[];
+  /** 跨章逐字重复句 */
+  repeatedSentences: SentenceStat[];
+  /** 章末短句收尾占比 */
+  endingShortRatio: number;
+  /** 开篇时间词率 */
+  openingTimeRate: number;
+  /** 标题「第N章」前缀混用情况 */
+  titleFormatMixed: { withPrefix: number; withoutPrefix: number } | null;
+}
+
+/** 通用 AI 文风句式模式（正则近似，用于全书纵向基线对比） */
+const PATTERN_DEFS: Array<{ name: string; re: RegExp }> = [
+  { name: '矫正句「不是…(而)是…」', re: /不是[^。！？\n]{1,24}?[，、]?(?:而)?是/g },
+  { name: '计时量词「X息/X瞬」', re: /[一两二三四五六七八九十几数半][息瞬]/g },
+  { name: '明喻「像一/仿佛/如同/宛如」', re: /像一|仿佛|如同|宛如/g },
+  { name: '沉默节拍「沉默了/没有说话/没有回头」', re: /沉默了|没有说话|没有回头/g },
+  { name: '神态模板「眼中闪过/嘴角勾起/咬了咬唇」', re: /眼[中底]闪过|目光一凝|瞳孔一缩|眼眶微红|嘴角[微轻一]?[勾扬翘]|咬了咬唇|不可置信/g },
+  { name: '躯体反应「心头一紧/身子一颤/倒吸凉气」', re: /心头一[紧沉颤]|身子一[颤震僵]|倒吸(?:了)?一口凉气/g },
+  { name: '思维标记「心想/意识到/感到/觉得」', re: /心想|意识到|感到|觉得/g },
+  { name: '抽象套话「一种说不出的/的意义在于」', re: /一种说不出的|说不清[的道]|的意义在于|真正的[^。！？\n]{1,10}是/g },
+];
+
+const MIN_CHAPTERS = 5;      // 少于此章数不统计，样本太小频率无意义
+const PHRASE_WINDOW = 20;    // 高频短语只看最近 20 章
+const SHORT_ENDING_RUNES = 30; // 章末行 ≤ 30 字计为「短结尾」
+
+/** 首尾虚词/代词，n-gram 以这些字开头/结尾的不是文风短语 */
+const GRAM_EDGE_STOP = '的了着是在和与就也都还又把被他她它我你这那';
+
+function round1(n: number): number {
+  return Math.round(n * 10) / 10;
+}
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+function isHan(r: string): boolean {
+  return r >= '一' && r <= '鿿';
+}
+
+/** 剥离引号：同一句台词带/不带引号不应算两条 */
+function trimWrappedQuotes(s: string): string {
+  return s.replace(/^[""''「」『』]+/, '').replace(/[""''「」『』]+$/, '').trim();
+}
+
+function chapterSentenceCounts(text: string): Map<string, number> {
+  const map = new Map<string, number>();
+  const sentences = text.split(/[。！？\n]+/);
+  for (const raw of sentences) {
+    const sent = trimWrappedQuotes(raw.trim());
+    if (sent.length < 12) continue;
+    map.set(sent, (map.get(sent) || 0) + 1);
+  }
+  return map;
+}
+
+function validGram(gram: string): boolean {
+  for (const r of gram) {
+    if (!isHan(r)) return false;
+  }
+  if (GRAM_EDGE_STOP.includes(gram[0]) || GRAM_EDGE_STOP.includes(gram[gram.length - 1])) return false;
+  return true;
+}
+
+/** 专有名词（人名）拆成 2 字片段，用于过滤掉人名混进口头禅清单 */
+function stopwordBigrams(stopwords: string[]): string[] {
+  const grams: string[] = [];
+  for (const w of stopwords) {
+    const runes = [...w.trim()];
+    if (runes.length < 2) continue;
+    for (let i = 0; i + 2 <= runes.length; i++) {
+      grams.push(runes.slice(i, i + 2).join(''));
+    }
+  }
+  return grams;
+}
+
+/** 在窗口内挖掘 3-6 字高频短语 */
+function minePhrases(chapters: string[], stopwords: string[]): PhraseStat[] {
+  const text = chapters.join('\n');
+  const runes = [...text];
+  const threshold = Math.max(8, Math.floor(chapters.length / 2));
+  const stopGrams = stopwordBigrams(stopwords);
+
+  const counts = new Map<string, number>();
+  for (let size = 3; size <= 6; size++) {
+    for (let i = 0; i + size <= runes.length; i++) {
+      const gram = runes.slice(i, i + size).join('');
+      if (!validGram(gram)) continue;
+      counts.set(gram, (counts.get(gram) || 0) + 1);
+    }
+  }
+
+  const hitStopword = (gram: string) => stopGrams.some(g => gram.includes(g));
+
+  const cands: Array<{ text: string; count: number }> = [];
+  for (const [g, c] of counts) {
+    if (c < threshold || hitStopword(g)) continue;
+    cands.push({ text: g, count: c });
+  }
+  cands.sort((a, b) => (b.count - a.count) || (b.text.length - a.text.length) || a.text.localeCompare(b.text));
+
+  const out: PhraseStat[] = [];
+  for (const c of cands) {
+    if (out.length >= 8) break;
+    const dup = out.some(p => p.text.includes(c.text) || c.text.includes(p.text));
+    if (!dup) out.push({ text: c.text, count: c.count });
+  }
+  return out;
+}
+
+/** 跨 ≥3 章逐字重复的 ≥12 字句子 */
+function repeatedSentences(chapters: string[]): SentenceStat[] {
+  const seen = new Map<string, { count: number; chapters: Set<number> }>();
+  chapters.forEach((text, ci) => {
+    for (const [sent, count] of chapterSentenceCounts(text)) {
+      let rec = seen.get(sent);
+      if (!rec) { rec = { count: 0, chapters: new Set() }; seen.set(sent, rec); }
+      rec.count += count;
+      rec.chapters.add(ci);
+    }
+  });
+
+  const out: SentenceStat[] = [];
+  for (const [sent, rec] of seen) {
+    if (rec.chapters.size < 3) continue;
+    const text = sent.length > 40 ? sent.slice(0, 40) + '…' : sent;
+    out.push({ text, chapters: rec.chapters.size, count: rec.count });
+  }
+  out.sort((a, b) => b.count - a.count || a.text.localeCompare(b.text));
+  return out.slice(0, 5);
+}
+
+function lastNonEmptyLine(text: string): string {
+  const lines = text.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (line) return line;
+  }
+  return '';
+}
+
+function firstParagraph(text: string): string {
+  for (const line of text.split('\n')) {
+    const l = line.trim();
+    if (!l || l.startsWith('#')) continue;
+    return l;
+  }
+  return '';
+}
+
+/**
+ * 计算全书级句式 tic 统计。所有结果都是事实计数，不含裁定。
+ * 章数 < 5 时返回 null（样本太小无意义）。
+ */
+export function runStyleStats(
+  chapters: string[],
+  opts?: { stopwords?: string[]; titles?: string[] },
+): StyleStatsResult | null {
+  const n = chapters.length;
+  if (n < MIN_CHAPTERS) return null;
+
+  const all = chapters.join('\n');
+
+  // 1. 固定句式模式
+  const patterns: PatternStat[] = [];
+  for (const def of PATTERN_DEFS) {
+    const total = (all.match(def.re) || []).length;
+    if (total === 0) continue;
+    patterns.push({ name: def.name, total, perChapter: round1(total / n) });
+  }
+  patterns.sort((a, b) => b.perChapter - a.perChapter);
+
+  // 2. 高频短语
+  const window = n <= PHRASE_WINDOW ? chapters : chapters.slice(n - PHRASE_WINDOW);
+  const topPhrases = minePhrases(window, opts?.stopwords ?? []);
+
+  // 3. 跨章重复句
+  const repeatedSentencesList = repeatedSentences(chapters);
+
+  // 4. 章末短句收尾占比
+  let shortCount = 0;
+  let measured = 0;
+  for (const text of chapters) {
+    const line = lastNonEmptyLine(text);
+    if (!line) continue;
+    measured++;
+    if ([...line].length <= SHORT_ENDING_RUNES) shortCount++;
+  }
+  const endingShortRatio = measured > 0 ? round2(shortCount / measured) : 0;
+
+  // 5. 开篇时间词率
+  const openingTimeRe = /夜|清晨|黎明|天亮|醒来|晨光|一整夜/;
+  let openingHit = 0;
+  for (const text of chapters) {
+    if (openingTimeRe.test(firstParagraph(text))) openingHit++;
+  }
+  const openingTimeRate = round2(openingHit / n);
+
+  // 6. 标题「第N章」前缀混用
+  const titles = opts?.titles ?? [];
+  let titleFormatMixed: { withPrefix: number; withoutPrefix: number } | null = null;
+  if (titles.length > 0) {
+    const prefixRe = /^#{0,2}\s*第[零〇一二三四五六七八九十百千万\d]+章/;
+    let withPrefix = 0, withoutPrefix = 0;
+    for (const t of titles) {
+      if (!t.trim()) continue;
+      if (prefixRe.test(t)) withPrefix++; else withoutPrefix++;
+    }
+    if (withPrefix > 0 && withoutPrefix > 0) titleFormatMixed = { withPrefix, withoutPrefix };
+  }
+
+  return {
+    chapters: n,
+    patterns,
+    topPhrases,
+    repeatedSentences: repeatedSentencesList,
+    endingShortRatio,
+    openingTimeRate,
+    titleFormatMixed,
+  };
 }
