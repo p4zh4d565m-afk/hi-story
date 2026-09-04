@@ -21,3 +21,10 @@ for (const [src, dest] of copies) {
   fs.copyFileSync(srcPath, destPath);
   console.log(`copied: ${src} -> ${dest}`);
 }
+
+const skillSource = path.join(__dirname, '..', 'resources', 'writing-skills');
+const skillDest = path.join(__dirname, '..', 'dist', 'main', 'resources', 'writing-skills');
+if (fs.existsSync(skillSource)) {
+  fs.cpSync(skillSource, skillDest, { recursive: true });
+  console.log('copied: resources/writing-skills -> dist/main/resources/writing-skills');
+}

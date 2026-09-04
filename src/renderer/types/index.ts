@@ -287,3 +287,15 @@ export interface StyleFingerprint {
   rawAnalysis: string;
   updatedAt: string;
 }
+
+// ===== 写作 Skill 引擎 =====
+export interface WritingSkillSummary {
+  id: string;
+  name: string;
+  description: string;
+  tags: string;
+}
+
+export interface WritingSkill extends WritingSkillSummary {
+  content: string;
+}

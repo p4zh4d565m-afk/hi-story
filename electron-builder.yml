@@ -20,3 +20,4 @@ extraResources:
     to: resources/
     filter:
       - "*.db"
+      - "writing-skills/**/*"

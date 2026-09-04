@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "source": "cc-write_skill 库/skills",
+  "skillCount": 11,
+  "skills": [
+    {
+      "id": "character-craft",
+      "name": "character-craft",
+      "description": "用户在塑造人物、解决人设扁平/崩坏/工具人、设计主角欲望与动机、洗白/黑化、成长弧、配角阵容、群像关系、心魔外化、共情与背景故事怎么给时使用。\n不适用于：主线结构（走 story-structure-craft）；对白措辞/专属声音（走 dialogue-craft）；反派强度/悬念设计（走 conflict-craft）。\n关键 trigger：人设、人物扁平、崩人设、洗白、黑化、OOC、欲望、动机、成长弧、工具人、群像、配角、卡司、两难、反差、采访、背景故事、心魔、黑化、救赎、共情、主角平淡。",
+      "tags": "[character, desire, motivation, psychology, cast]",
+      "file": "character-craft.md"
+    },
+    {
+      "id": "conflict-craft",
+      "name": "conflict-craft",
+      "description": "用户在觉得冲突不够、反派太弱/太脸谱化/降智、主角太无敌、故事没张力、想给主角更大压力、设计秘密与悬念、检查风险与情感强度时使用。\n不适用于：单场戏的结构（走 scene-craft）；全书主线骨架（走 story-structure-craft）；人物欲望/真相（走 character-craft）。\n关键 trigger：冲突、张力、反派、对手、战败狗、主角太强、压力、风险、爽感不足、没感觉、代入感、内外冲突、阻力、秘密、悬念、降智、反派工具人。",
+      "tags": "[conflict, antagonist, stakes, tension]",
+      "file": "conflict-craft.md"
+    },
+    {
+      "id": "description-craft",
+      "name": "description-craft",
+      "description": "用户在写环境描写、觉得画面感差、纠结呈现还是叙述、人物出场像五官清单、描写太多或太少、背景和剧情脱节时使用。\n不适用于：世界观设定结构（走 setting-craft）；单场景怎么安排（走 scene-craft）；对白措辞（走 dialogue-craft）。\n关键 trigger：描写、画面感、呈现、叙述、show don't tell、五官、感官、天气、环境、人物出场、外貌、细节、删描写、背景、氛围。",
+      "tags": "[description, sensory, showing, setting, revision]",
+      "file": "description-craft.md"
+    },
+    {
+      "id": "dialogue-craft",
+      "name": "dialogue-craft",
+      "description": "用户在写或修改对白、觉得台词假/尬/直白/重复/同声、想要话里有话或角色专属语感、需要把设定讲解改写成行动时使用。\n不适用于：主线结构（走 story-structure-craft）；人物真相/欲望/群像（走 character-craft）；问路/点餐等纯信息对白（信息即目的）。\n关键 trigger：对白、台词、对话、潜文本、潜台词、话里有话、太直白、角色同声、对白假、尬、重复、谈判、嘴硬心软、show don't tell、写在鼻子上、删台词。",
+      "tags": "[dialogue, subtext, voice, revision]",
+      "file": "dialogue-craft.md"
+    },
+    {
+      "id": "outline-workflow-craft",
+      "name": "outline-workflow-craft",
+      "description": "用户在写大纲、列不出结构、先写还是先大纲、故事越写越乱、想重排剧情、改稿不知从哪开始、犹豫这段该展示还是讲述时使用。\n不适用于：主线骨架本身（走 story-structure-craft）；单场景怎么写（走 scene-craft）；选题定位（走 premise-craft）。\n关键 trigger：大纲、雪花、提纲、示意图、逆向、扩展版、精简版、场景清单、先写还是先大纲、写作流程、改稿、二稿、分诊、展示还是讲述、创作与编辑分离。",
+      "tags": "[outline, workflow, revision, drafting]",
+      "file": "outline-workflow-craft.md"
+    },
+    {
+      "id": "pov-craft",
+      "name": "pov-craft",
+      "description": "用户在选视角、纠结第一人称还是第三人称、同一场戏谁来讲、觉得视角切换乱、代入感不强、不确定主客观模式时使用。\n不适用于：人物塑造（走 character-craft）；单场景结构（走 scene-craft）；大纲流程（走 outline-workflow-craft）。\n关键 trigger：视角、POV、第一人称、第三人称、视点、换视角、谁来讲、代入感、叙述者、视角切换、主客观、视角三问。",
+      "tags": "[pov, narration, empathy]",
+      "file": "pov-craft.md"
+    },
+    {
+      "id": "premise-craft",
+      "name": "premise-craft",
+      "description": "用户在选题、开书方向、一句话概括、故事卖点、目标读者定位、判断创意是否值得写、设计反转时使用。\n不适用于：主线骨架与激励事件位置（走 story-structure-craft）；人物动机与欲望（走 character-craft）；具体大纲流程（走 outline-workflow-craft）。\n关键 trigger：开书、选题、金点子、脑洞、一句话概括、简介、卖点、目标读者、反转、创意评估、梗概、封底文案。",
+      "tags": "[premise, positioning, reader, hook]",
+      "file": "premise-craft.md"
+    },
+    {
+      "id": "scene-craft",
+      "name": "scene-craft",
+      "description": "用户在写或改单场戏、觉得某章没进展/水、打斗章没张力、日常发糖章要不要删、受挫后怎么写、场景目标不具体、信息怎么交代、章节六要素体检时使用。\n不适用于：全书主线骨架（走 story-structure-craft）；冲突强度/反派设计（走 conflict-craft）；大纲与改稿流程（走 outline-workflow-craft）。\n关键 trigger：场景、这场戏、没进展、水、发糖章、过场、打斗、冲突循环、挫折、困境、决定、场景目标、价值翻转、解说、设定交代、删不删这场、六要素、水章。",
+      "tags": "[scene, pacing, stakes, revision]",
+      "file": "scene-craft.md"
+    },
+    {
+      "id": "setting-craft",
+      "name": "setting-craft",
+      "description": "用户在搭世界观、写环境描写、设定太多读着出戏、背景不有机、都市文要不要世界观时使用。\n不适用于：信息怎么在场景里交代（走 scene-craft SC7）；主线结构（走 story-structure-craft）。\n关键 trigger：世界观、设定、背景、环境、世界建构、场景描写、出戏、设定太多、世界观不活。",
+      "tags": "[setting, worldbuilding, description]",
+      "file": "setting-craft.md"
+    },
+    {
+      "id": "story-structure-craft",
+      "name": "story-structure-craft",
+      "description": "用户在规划或检查长篇/网文的主线、开篇、激励事件、中段纠葛、章末钩子、首尾呼应、道德前提翻转时使用。\n不适用于：大纲怎么列/流程怎么走（走 outline-workflow-craft）；单场景怎么写（走 scene-craft）；人物欲望与动机（走 character-craft）。\n关键 trigger：主线、结构、大纲骨架、激励事件、开篇、中期崩、不归点、章末钩子、首尾呼应、中点翻转、三幕、五部分、追更流失。",
+      "tags": "[story, structure, outline, pacing, hook]",
+      "file": "story-structure-craft.md"
+    },
+    {
+      "id": "theme-craft",
+      "name": "theme-craft",
+      "description": "用户在怕写成说教、想表达道理、主题不知该先定还是后补、主题空洞喊口号、想用象征深化主题、权谋派系不想写成辩论时使用。\n不适用于：主线骨架（走 story-structure-craft）；对白里的潜文本（走 dialogue-craft）；人物价值观与欲望（走 character-craft）。\n关键 trigger：主题、说教、道理、价值观、象征、潜文本、想表达什么、立意、中心思想、升华、口号、空洞、前提、立场、权谋。",
+      "tags": "[theme, symbolism, meaning]",
+      "file": "theme-craft.md"
+    }
+  ]
+}
