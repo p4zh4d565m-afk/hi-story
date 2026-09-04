@@ -322,8 +322,24 @@ export interface PlanningIdea {
   status: 'draft' | 'generated' | 'confirmed';
   masterOutline: MasterOutline | null;
   outlineStatus: 'empty' | 'generated' | 'locked';
+  volumeOutlines: VolumeOutline[];
+  volumeStatus: 'empty' | 'generated' | 'locked';
   createdAt: string;
   updatedAt: string;
+}
+
+export interface VolumeOutline {
+  title: string;
+  chapterRange: string;
+  volumeGoal: string;
+  openingState: string;
+  mainProgression: string;
+  characterProgression: string;
+  keyEvents: string[];
+  climax: string;
+  endingState: string;
+  promisesOpened: string[];
+  promisesPaid: string[];
 }
 
 export interface OutlinePhase {

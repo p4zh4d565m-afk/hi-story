@@ -370,6 +370,15 @@ const MIGRATIONS = [
         CHECK(outline_status IN ('empty','generated','locked'));
     `,
   },
+  // 013: 策划工作台 — 结构化分卷纲与锁定状态
+  {
+    version: 13,
+    sql: `
+      ALTER TABLE planning_ideas ADD COLUMN volume_outlines TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE planning_ideas ADD COLUMN volume_status TEXT NOT NULL DEFAULT 'empty'
+        CHECK(volume_status IN ('empty','generated','locked'));
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

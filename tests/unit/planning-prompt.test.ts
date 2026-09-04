@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMasterOutline, parseStoryOptions } from '../../src/renderer/services/ai-prompts/planning';
+import { parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../../src/renderer/services/ai-prompts/planning';
 
 const option = {
   title: '测试书名',
@@ -42,5 +42,23 @@ describe('parseMasterOutline', () => {
   it('拒绝阶段或故事承诺不足的总纲', () => {
     expect(() => parseMasterOutline(JSON.stringify({ ...outline, phases: [phase] }))).toThrow();
     expect(() => parseMasterOutline(JSON.stringify({ ...outline, storyPromises: [] }))).toThrow();
+  });
+});
+
+describe('parseVolumeOutlines', () => {
+  const volume = {
+    title: '第一卷', chapterRange: '1-30章', volumeGoal: '完成阶段目标', openingState: '主角尚未入局',
+    mainProgression: '主线推进一层', characterProgression: '主角建立第一段关系',
+    keyEvents: ['事件一', '事件二', '事件三', '事件四'], climax: '付出代价后胜出', endingState: '进入新局面',
+    promisesOpened: ['新的秘密'], promisesPaid: [],
+  };
+
+  it('接受至少两卷且字段完整的分卷纲', () => {
+    expect(parseVolumeOutlines(JSON.stringify({ volumes: [volume, { ...volume, title: '第二卷' }] }))).toHaveLength(2);
+  });
+
+  it('拒绝卷数或关键事件不足的分卷纲', () => {
+    expect(() => parseVolumeOutlines(JSON.stringify({ volumes: [volume] }))).toThrow();
+    expect(() => parseVolumeOutlines(JSON.stringify({ volumes: [volume, { ...volume, keyEvents: [] }] }))).toThrow();
   });
 });

@@ -1,4 +1,4 @@
-import type { MasterOutline, Project, StoryOption, WritingSkill } from '../../types';
+import type { MasterOutline, Project, StoryOption, VolumeOutline, WritingSkill } from '../../types';
 
 export function buildStoryOptionsPrompt(
   project: Project,
@@ -114,4 +114,61 @@ export function parseMasterOutline(raw: string): MasterOutline {
     throw new Error('总纲的副线或故事承诺不完整');
   }
   return data;
+}
+
+export function buildVolumeOutlinesPrompt(
+  project: Project,
+  option: StoryOption,
+  outline: MasterOutline,
+  requirements: string,
+  skills: WritingSkill[],
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const methods = skills.map(skill => `\n## ${skill.id}\n${skill.content}`).join('\n');
+  return [
+    {
+      role: 'system',
+      content: `你是长篇小说分卷策划编辑。根据已经锁定的全书总纲生成分卷纲，为下一步拆章节表提供稳定边界。
+每卷必须有独立目标、阶段性高潮和状态变化，同时推进全书主线。不能把全书阶段机械改名，也不能提前代写章节正文。
+仅输出合法 JSON，不要 Markdown 或解释。格式：
+{"volumes":[{"title":"卷名","chapterRange":"建议章节范围","volumeGoal":"本卷必须解决的阶段目标","openingState":"开卷时人物和局面","mainProgression":"主线如何推进","characterProgression":"人物或关系如何变化","keyEvents":["事件1","事件2","事件3","事件4"],"climax":"本卷高潮及不可逆代价","endingState":"卷末形成的新局面","promisesOpened":["本卷新建承诺"],"promisesPaid":["本卷兑现的旧承诺"]}]}
+卷数依据总纲决定，通常 3—8 卷；每卷至少 4 个关键事件，承诺数组可以为空但字段必须存在。章节范围应连续且不重叠。`,
+    },
+    {
+      role: 'user',
+      content: `# 项目与已确认方向
+${project.name} / ${project.typeTags.join('、') || '类型未定'}
+${JSON.stringify(option, null, 2)}
+
+# 已锁定全书总纲
+${JSON.stringify(outline, null, 2)}
+
+# 作者要求
+${requirements || '无'}
+
+# 本次采用的方法
+${methods}
+
+请拆出能直接用于生成章节清单的分卷纲。`,
+    },
+  ];
+}
+
+export function parseVolumeOutlines(raw: string): VolumeOutline[] {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('AI 没有返回可识别的分卷纲数据');
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { volumes?: VolumeOutline[] };
+  if (!Array.isArray(parsed.volumes) || parsed.volumes.length < 2 || parsed.volumes.length > 10) {
+    throw new Error('分卷纲应包含 2—10 卷');
+  }
+  for (const volume of parsed.volumes) {
+    if (!volume.title || !volume.chapterRange || !volume.volumeGoal || !volume.openingState ||
+      !volume.mainProgression || !volume.characterProgression || !volume.climax || !volume.endingState ||
+      !Array.isArray(volume.keyEvents) || volume.keyEvents.length < 4 ||
+      !Array.isArray(volume.promisesOpened) || !Array.isArray(volume.promisesPaid)) {
+      throw new Error('AI 返回的分卷字段或关键事件不完整');
+    }
+  }
+  return parsed.volumes;
 }
