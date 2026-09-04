@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import type { PlanningIdea, Project, StoryOption, WritingSkill, WritingSkillSummary } from '../types';
+import type { MasterOutline, PlanningIdea, Project, StoryOption, WritingSkill, WritingSkillSummary } from '../types';
 import { decrypt } from '../services/crypto';
 import { aiService } from '../services/ai.service';
-import { buildStoryOptionsPrompt, parseStoryOptions } from '../services/ai-prompts/planning';
+import { buildMasterOutlinePrompt, buildStoryOptionsPrompt, parseMasterOutline, parseStoryOptions } from '../services/ai-prompts/planning';
 
 interface PlanningWorkspaceProps {
   project: Project | null;
@@ -52,9 +52,13 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [status, setStatus] = useState<PlanningIdea['status']>('draft');
+  const [masterOutline, setMasterOutline] = useState<MasterOutline | null>(null);
+  const [outlineStatus, setOutlineStatus] = useState<PlanningIdea['outlineStatus']>('empty');
+  const [outlineLoading, setOutlineLoading] = useState(false);
 
   useEffect(() => {
-    setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft'); setError('');
+    setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft');
+    setMasterOutline(null); setOutlineStatus('empty'); setError('');
     if (!project) return;
     window.electronAPI.invoke('db:planning:findByProject', project.id).then((res: any) => {
       if (res?.success && res.data) {
@@ -64,6 +68,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
         setOptions(data.generatedOptions);
         setSelectedOption(data.selectedOption);
         setStatus(data.status);
+        setMasterOutline(data.masterOutline);
+        setOutlineStatus(data.outlineStatus);
       }
     });
   }, [project?.id]);
@@ -77,16 +83,24 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
     return () => clearTimeout(timer);
   }, [idea]);
 
-  const save = async (nextStatus = status, nextSelected = selectedOption, nextOptions = options) => {
+  const save = async (
+    nextStatus = status,
+    nextSelected = selectedOption,
+    nextOptions = options,
+    nextOutline = masterOutline,
+    nextOutlineStatus = outlineStatus,
+  ) => {
     if (!project) return false;
     setSaving(true);
     try {
       const res = await window.electronAPI.invoke('db:planning:save', {
         projectId: project.id, idea, requirements, generatedOptions: nextOptions,
         selectedOption: nextSelected, status: nextStatus,
+        masterOutline: nextOutline, outlineStatus: nextOutlineStatus,
       }) as any;
       if (!res?.success) throw new Error(res?.error || '保存策划内容失败');
       setStatus(nextStatus);
+      setOutlineStatus(nextOutlineStatus);
       return true;
     } catch (err) {
       setError((err as Error).message);
@@ -118,7 +132,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
       const generated = parseStoryOptions(raw);
       setOptions(generated);
       setSelectedOption(null);
-      await save('generated', null, generated);
+      setMasterOutline(null); setOutlineStatus('empty');
+      await save('generated', null, generated, null, 'empty');
     } catch (err) {
       setError((err as Error).message);
     } finally { setLoading(false); }
@@ -126,8 +141,55 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
 
   const confirm = async (index: number) => {
     setSelectedOption(index);
+    setMasterOutline(null); setOutlineStatus('empty');
     setError('');
-    await save('confirmed', index, options);
+    await save('confirmed', index, options, null, 'empty');
+  };
+
+  const generateMasterOutline = async () => {
+    if (!project || selectedOption === null || !options[selectedOption]) return;
+    setOutlineLoading(true); setError('');
+    try {
+      const aiConfig = await configureFirstAi();
+      const routed = await window.electronAPI.invoke(
+        'skills:route',
+        '生成长篇小说全书总纲、主线结构、人物成长和整体情绪节奏',
+        4,
+      ) as any;
+      if (!routed?.success || !routed.data?.length) throw new Error('没有匹配到总纲写作方法');
+      const fullSkills: WritingSkill[] = [];
+      for (const summary of routed.data as WritingSkillSummary[]) {
+        const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
+        if (detail?.success) fullSkills.push(detail.data);
+      }
+      setMatchedSkills(routed.data);
+      const raw = await aiService.chat(
+        buildMasterOutlinePrompt(project, options[selectedOption], requirements, fullSkills),
+        { model: aiConfig.model, maxTokens: 8192, temperature: 0.65 },
+      );
+      const outline = parseMasterOutline(raw);
+      setMasterOutline(outline);
+      await save('confirmed', selectedOption, options, outline, 'generated');
+    } catch (err) { setError((err as Error).message); }
+    finally { setOutlineLoading(false); }
+  };
+
+  const updateOutlineField = (field: keyof MasterOutline, value: string | string[]) => {
+    if (!masterOutline) return;
+    setMasterOutline({ ...masterOutline, [field]: value });
+    if (outlineStatus === 'locked') setOutlineStatus('generated');
+  };
+
+  const updatePhase = (index: number, field: string, value: string | string[]) => {
+    if (!masterOutline) return;
+    const phases = masterOutline.phases.map((phase, i) => i === index ? { ...phase, [field]: value } : phase);
+    setMasterOutline({ ...masterOutline, phases });
+    if (outlineStatus === 'locked') setOutlineStatus('generated');
+  };
+
+  const saveOutline = async (lock = false) => {
+    if (!masterOutline) return;
+    await save('confirmed', selectedOption, options, masterOutline, lock ? 'locked' : 'generated');
   };
 
   if (!project) return <div className="h-full flex items-center justify-center text-gray-500">请先选择或创建一本小说</div>;
@@ -182,6 +244,39 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
                     </button>
                   </article>;
                 })}
+              </div>
+            )}
+
+            {status === 'confirmed' && selectedOption !== null && (
+              <div className="bg-editor-800 border border-editor-700 rounded-lg p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div><p className="text-xs text-accent">策划工作台 · 第二步</p><h2 className="text-lg text-gray-100 mt-1">全书总纲</h2></div>
+                  <div className="flex gap-2">
+                    <button onClick={generateMasterOutline} disabled={outlineLoading}
+                      className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600 disabled:opacity-40">
+                      {outlineLoading ? '正在生成全书总纲…' : masterOutline ? '重新生成' : '生成全书总纲'}
+                    </button>
+                    {masterOutline && <button onClick={() => saveOutline(false)} disabled={saving} className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600">保存修改</button>}
+                    {masterOutline && <button onClick={() => saveOutline(true)} disabled={saving} className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">锁定总纲</button>}
+                  </div>
+                </div>
+                {!masterOutline && <p className="text-sm text-gray-500">将根据已确认的“{options[selectedOption].title}”生成 4—6 个全书阶段。</p>}
+                {masterOutline && <div className="space-y-4">
+                  {([
+                    ['premise', '故事核心前提'], ['centralConflict', '贯穿全书的冲突'], ['protagonistArc', '主角变化'],
+                    ['ending', '结局方向'], ['structureModel', '结构选择与理由'],
+                  ] as const).map(([field, label]) => <label key={field} className="block"><span className="block text-xs text-gray-500 mb-1">{label}</span><textarea rows={2} value={masterOutline[field]} onChange={e => updateOutlineField(field, e.target.value)} className="w-full resize-y rounded bg-editor-900 border border-editor-700 p-2 text-sm text-gray-200 focus:outline-none focus:border-accent" /></label>)}
+
+                  <div className="space-y-3"><p className="text-sm text-gray-300">全书阶段</p>{masterOutline.phases.map((phase, index) => <div key={index} className="rounded border border-editor-700 bg-editor-900 p-3">
+                    <div className="grid grid-cols-[1fr_180px] gap-2"><input value={phase.title} onChange={e => updatePhase(index, 'title', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-sm text-gray-100" /><input value={phase.chapterRange} onChange={e => updatePhase(index, 'chapterRange', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-xs text-gray-300" /></div>
+                    <textarea rows={2} value={phase.purpose} onChange={e => updatePhase(index, 'purpose', e.target.value)} className="w-full mt-2 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" />
+                    <label className="block text-[11px] text-gray-500 mt-2">关键事件（每行一项）</label><textarea rows={4} value={phase.keyEvents.join('\n')} onChange={e => updatePhase(index, 'keyEvents', e.target.value.split('\n').filter(Boolean))} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" />
+                    <div className="grid grid-cols-2 gap-2 mt-2"><textarea rows={2} value={phase.turningPoint} onChange={e => updatePhase(index, 'turningPoint', e.target.value)} className="bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /><textarea rows={2} value={phase.emotionTrend} onChange={e => updatePhase(index, 'emotionTrend', e.target.value)} className="bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></div>
+                  </div>)}</div>
+
+                  {(['subplots', 'storyPromises'] as const).map(field => <label key={field} className="block"><span className="block text-xs text-gray-500 mb-1">{field === 'subplots' ? '副线及交汇方式（每行一项）' : '必须兑现的故事承诺（每行一项）'}</span><textarea rows={4} value={masterOutline[field].join('\n')} onChange={e => updateOutlineField(field, e.target.value.split('\n').filter(Boolean))} className="w-full bg-editor-900 border border-editor-700 rounded p-2 text-sm text-gray-300" /></label>)}
+                  <p className={`text-xs ${outlineStatus === 'locked' ? 'text-green-400' : 'text-yellow-500'}`}>{outlineStatus === 'locked' ? '✓ 总纲已锁定，可以继续拆分卷纲' : '总纲尚未锁定，你可以直接修改所有字段'}</p>
+                </div>}
               </div>
             )}
           </section>

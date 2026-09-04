@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { IpcResult, PlanningIdea, StoryOption } from '../../../renderer/types';
+import type { IpcResult, MasterOutline, PlanningIdea, StoryOption } from '../../../renderer/types';
 
 export interface SavePlanningIdeaInput {
   projectId: string;
@@ -9,6 +9,8 @@ export interface SavePlanningIdeaInput {
   generatedOptions?: StoryOption[];
   selectedOption?: number | null;
   status?: PlanningIdea['status'];
+  masterOutline?: MasterOutline | null;
+  outlineStatus?: PlanningIdea['outlineStatus'];
 }
 
 export class PlanningRepo {
@@ -30,7 +32,8 @@ export class PlanningRepo {
     if (existing) {
       this.db.prepare(`
         UPDATE planning_ideas
-        SET idea = ?, requirements = ?, generated_options = ?, selected_option = ?, status = ?, updated_at = ?
+        SET idea = ?, requirements = ?, generated_options = ?, selected_option = ?, status = ?,
+            master_outline = ?, outline_status = ?, updated_at = ?
         WHERE id = ?
       `).run(
         input.idea,
@@ -38,6 +41,8 @@ export class PlanningRepo {
         JSON.stringify(input.generatedOptions ?? []),
         input.selectedOption ?? null,
         input.status ?? 'draft',
+        input.masterOutline ? JSON.stringify(input.masterOutline) : '',
+        input.outlineStatus ?? 'empty',
         now,
         existing.id,
       );
@@ -47,8 +52,8 @@ export class PlanningRepo {
     const id = uuidv4();
     this.db.prepare(`
       INSERT INTO planning_ideas
-        (id, project_id, idea, requirements, generated_options, selected_option, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, project_id, idea, requirements, generated_options, selected_option, status, master_outline, outline_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.projectId,
@@ -57,6 +62,8 @@ export class PlanningRepo {
       JSON.stringify(input.generatedOptions ?? []),
       input.selectedOption ?? null,
       input.status ?? 'draft',
+      input.masterOutline ? JSON.stringify(input.masterOutline) : '',
+      input.outlineStatus ?? 'empty',
       now,
       now,
     );
@@ -71,7 +78,9 @@ export class PlanningRepo {
 
   private rowToPlanningIdea(row: Record<string, unknown>): PlanningIdea {
     let generatedOptions: StoryOption[] = [];
+    let masterOutline: MasterOutline | null = null;
     try { generatedOptions = JSON.parse(String(row.generated_options || '[]')); } catch {}
+    try { masterOutline = row.master_outline ? JSON.parse(String(row.master_outline)) : null; } catch {}
     return {
       id: String(row.id),
       projectId: String(row.project_id),
@@ -80,6 +89,8 @@ export class PlanningRepo {
       generatedOptions,
       selectedOption: row.selected_option === null ? null : Number(row.selected_option),
       status: row.status as PlanningIdea['status'],
+      masterOutline,
+      outlineStatus: (row.outline_status || 'empty') as PlanningIdea['outlineStatus'],
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

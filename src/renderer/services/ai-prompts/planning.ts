@@ -1,4 +1,4 @@
-import type { Project, StoryOption, WritingSkill } from '../../types';
+import type { MasterOutline, Project, StoryOption, WritingSkill } from '../../types';
 
 export function buildStoryOptionsPrompt(
   project: Project,
@@ -57,4 +57,61 @@ export function parseStoryOptions(raw: string): StoryOption[] {
     }
   }
   return parsed.options;
+}
+
+export function buildMasterOutlinePrompt(
+  project: Project,
+  option: StoryOption,
+  requirements: string,
+  skills: WritingSkill[],
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const methods = skills.map(skill => `\n## ${skill.id}\n${skill.content}`).join('\n');
+  return [
+    {
+      role: 'system',
+      content: `你是长篇小说总纲策划编辑。把作者已确认的故事方向发展成可继续拆分卷纲的全书骨架。
+不要代写正文，不要擅自改变已确认的核心承诺。事件必须有因果递进，每一阶段都改变局面。结构模型应根据题材选择，不机械套三幕。
+仅输出合法 JSON，不要 Markdown 代码块或解释。格式：
+{"premise":"故事核心前提","ending":"明确但保留细节空间的结局","protagonistArc":"主角开头到结尾的变化","centralConflict":"贯穿全书的对抗","structureModel":"采用的结构及理由","phases":[{"title":"阶段名","purpose":"阶段功能","chapterRange":"建议章节范围","keyEvents":["关键事件1","关键事件2","关键事件3"],"turningPoint":"阶段末不可逆转折","emotionTrend":"读者情绪走势"}],"subplots":["副线及其与主线交汇方式"],"storyPromises":["必须在后文兑现的承诺"]}
+phases 必须包含 4—6 个阶段；每阶段至少 3 个关键事件；subplots 和 storyPromises 各至少 2 项。`,
+    },
+    {
+      role: 'user',
+      content: `# 项目
+项目名：${project.name}
+类型：${project.typeTags.join('、') || '尚未确定'}
+
+# 已确认故事方向
+${JSON.stringify(option, null, 2)}
+
+# 作者补充要求
+${requirements || '无'}
+
+# 本次采用的方法
+${methods}
+
+请生成能够继续拆成分卷纲的结构化全书总纲。`,
+    },
+  ];
+}
+
+export function parseMasterOutline(raw: string): MasterOutline {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('AI 没有返回可识别的总纲数据');
+  const data = JSON.parse(cleaned.slice(start, end + 1)) as MasterOutline;
+  const topFields: Array<keyof Pick<MasterOutline, 'premise' | 'ending' | 'protagonistArc' | 'centralConflict' | 'structureModel'>> =
+    ['premise', 'ending', 'protagonistArc', 'centralConflict', 'structureModel'];
+  if (topFields.some(key => typeof data[key] !== 'string' || !data[key].trim())) throw new Error('AI 返回的总纲核心字段不完整');
+  if (!Array.isArray(data.phases) || data.phases.length < 4 || data.phases.length > 6) throw new Error('总纲必须包含 4—6 个阶段');
+  for (const phase of data.phases) {
+    if (!phase.title || !phase.purpose || !phase.chapterRange || !phase.turningPoint || !phase.emotionTrend || !Array.isArray(phase.keyEvents) || phase.keyEvents.length < 3) {
+      throw new Error('AI 返回的阶段字段或关键事件不完整');
+    }
+  }
+  if (!Array.isArray(data.subplots) || data.subplots.length < 2 || !Array.isArray(data.storyPromises) || data.storyPromises.length < 2) {
+    throw new Error('总纲的副线或故事承诺不完整');
+  }
+  return data;
 }

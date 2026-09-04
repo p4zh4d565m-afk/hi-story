@@ -320,6 +320,28 @@ export interface PlanningIdea {
   generatedOptions: StoryOption[];
   selectedOption: number | null;
   status: 'draft' | 'generated' | 'confirmed';
+  masterOutline: MasterOutline | null;
+  outlineStatus: 'empty' | 'generated' | 'locked';
   createdAt: string;
   updatedAt: string;
+}
+
+export interface OutlinePhase {
+  title: string;
+  purpose: string;
+  chapterRange: string;
+  keyEvents: string[];
+  turningPoint: string;
+  emotionTrend: string;
+}
+
+export interface MasterOutline {
+  premise: string;
+  ending: string;
+  protagonistArc: string;
+  centralConflict: string;
+  structureModel: string;
+  phases: OutlinePhase[];
+  subplots: string[];
+  storyPromises: string[];
 }

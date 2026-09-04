@@ -361,6 +361,15 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_planning_ideas_project ON planning_ideas(project_id);
     `,
   },
+  // 012: 策划工作台 — 结构化全书总纲与锁定状态
+  {
+    version: 12,
+    sql: `
+      ALTER TABLE planning_ideas ADD COLUMN master_outline TEXT NOT NULL DEFAULT '';
+      ALTER TABLE planning_ideas ADD COLUMN outline_status TEXT NOT NULL DEFAULT 'empty'
+        CHECK(outline_status IN ('empty','generated','locked'));
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
