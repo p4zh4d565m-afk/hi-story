@@ -340,16 +340,44 @@ const App: React.FC = () => {
   }, [activeProject]);
 
   const handleRenameChapter = useCallback(async (id: string, title: string) => {
-    await window.electronAPI.invoke('db:chapter:update', { id, title });
+    const ch = chapters.find(c => c.id === id);
+    if (!ch) return;
+    if (ch.title === title) return; // 标题无变化，跳过
+    const oldTitle = ch.title;
+
+    const res = await window.electronAPI.invoke('db:chapter:update', { id, title }) as any;
+    if (!res || !res.success) {
+      // 章节可能已被删除（id 在 DB 中不存在），静默失败会导致「改不动」——必须提示并中断
+      alert('重命名失败：' + (res?.error || '章节可能已被删除'));
+      return;
+    }
     setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, title } : ch));
-  }, []);
+
+    // 推入撤销栈（与删除/角色/世界观条目一致，让改名可回退）
+    pushUndo({
+      id: 'undo_' + Date.now(),
+      label: `重命名章节「${oldTitle}」→「${title}」`,
+      undo: async () => {
+        const r = await window.electronAPI.invoke('db:chapter:update', { id, title: oldTitle }) as any;
+        if (r?.success) setChapters(prev => prev.map(c => c.id === id ? { ...c, title: oldTitle } : c));
+      },
+      redo: async () => {
+        const r = await window.electronAPI.invoke('db:chapter:update', { id, title }) as any;
+        if (r?.success) setChapters(prev => prev.map(c => c.id === id ? { ...c, title } : c));
+      },
+    });
+  }, [chapters, pushUndo]);
 
   const handleDeleteChapter = useCallback(async (id: string) => {
     const ch = chapters.find(c => c.id === id);
     if (!ch) return;
 
     // 执行删除
-    await window.electronAPI.invoke('db:chapter:remove', id);
+    const res = await window.electronAPI.invoke('db:chapter:remove', id) as any;
+    if (!res || !res.success) {
+      alert('删除失败：' + (res?.error || '未知错误'));
+      return;
+    }
     setChapters(prev => prev.filter(ch => ch.id !== id));
     if (activeChapterId === id) { const r = chapters.filter(ch => ch.id !== id); setActiveChapterId(r[0]?.id ?? null); }
 
@@ -425,7 +453,11 @@ const App: React.FC = () => {
   }, [activeOutlineNodeId, outlineNodes, pushUndo]);
 
   const handleUpdateOutlineNode = useCallback(async (id: string, title: string, summary: string) => {
-    await window.electronAPI.invoke('db:outline:update', { id, title, summary });
+    const res = await window.electronAPI.invoke('db:outline:update', { id, title, summary }) as any;
+    if (!res || !res.success) {
+      console.error('大纲节点更新失败:', res?.error || '未知错误');
+      return; // 保存失败不回写本地状态，避免「界面改了但没落库」
+    }
     setOutlineNodes(prev => prev.map(n => n.id === id ? { ...n, title, summary } : n));
   }, []);
 

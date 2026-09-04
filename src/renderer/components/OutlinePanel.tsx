@@ -130,6 +130,7 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameText, setRenameText] = useState('');
+  const renameInputRef = useRef<HTMLInputElement>(null);
   const [outlineNodes, setOutlineNodes] = useState<EditorNode[]>([]);
   const nodesDirty = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(activeNodeId);
@@ -281,6 +282,14 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
     setRenameText(node.title);
   };
 
+  // 进入改名时强制聚焦并全选，确保「出现即能输入」
+  useEffect(() => {
+    if (renamingId && renameInputRef.current) {
+      renameInputRef.current.focus();
+      renameInputRef.current.select();
+    }
+  }, [renamingId]);
+
   const handleSaveRename = (id: string) => {
     if (renameText.trim()) {
       const node = nodes.find(n => n.id === id);
@@ -329,7 +338,10 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
           `}
           style={{ paddingLeft: `${6 + depth * 14}px` }}
           onClick={() => handleSelect(node.id)}
-          onDoubleClick={() => handleStartRename(node)}
+          onDoubleClick={() => {
+            // 仅在非编辑态触发改名，避免双击冒泡重置已输入的内容
+            if (renamingId !== node.id) handleStartRename(node);
+          }}
         >
           {/* 展开/折叠 */}
           <button
@@ -342,6 +354,7 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
           {/* 标题/重命名 */}
           {isRenaming ? (
             <input
+              ref={renameInputRef}
               type="text"
               value={renameText}
               onChange={e => setRenameText(e.target.value)}
@@ -354,6 +367,7 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
                          focus:outline-none focus:border-accent"
               autoFocus
               onClick={e => e.stopPropagation()}
+              onDoubleClick={e => e.stopPropagation()}
             />
           ) : (
             <span className="flex-1 truncate text-xs">{node.title}</span>

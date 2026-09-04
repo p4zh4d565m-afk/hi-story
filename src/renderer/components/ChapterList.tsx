@@ -129,6 +129,10 @@ const ChapterList: React.FC<ChapterListProps> = ({
                 }
               `}
               onClick={() => onSelect(chapter.id)}
+              onDoubleClick={() => {
+                // 双击章节名直接进入改名（避免正在编辑时双击覆盖输入内容）
+                if (renamingId !== chapter.id) handleRenameStart(chapter.id);
+              }}
               onContextMenu={(e) => handleContextMenu(e, chapter.id)}
             >
               {renamingId === chapter.id ? (
@@ -147,7 +151,7 @@ const ChapterList: React.FC<ChapterListProps> = ({
                              focus:outline-none"
                 />
               ) : (
-                <span className="flex-1 truncate text-xs">
+                <span className="flex-1 truncate text-xs" title="双击重命名">
                   {chapter.title}
                 </span>
               )}

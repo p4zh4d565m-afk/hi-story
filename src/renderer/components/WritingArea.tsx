@@ -435,6 +435,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
             <button
               key={ch.id}
               onClick={() => onSelectChapter(ch.id)}
+              onDoubleClick={() => handleRenameStart(ch.id)}
               onContextMenu={(e) => handleChapterContextMenu(e, ch.id)}
               className={`
                 flex items-center gap-1 px-3 py-1 rounded text-xs whitespace-nowrap transition-colors
