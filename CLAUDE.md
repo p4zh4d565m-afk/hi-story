@@ -104,7 +104,7 @@ resources/
 
 ## 已实现功能
 
-- **写作 Skill 引擎底座** — `npm run skills:sync` 从相邻的 `cc-write_skill 库/skills` 同步 11 个统一领域 Skill 到 `resources/writing-skills/`；主进程 `SkillRegistry` 提供清单、全文读取和按任务路由，通过 `skills:list/get/route` IPC 暴露。正式包通过 `extraResources` 携带 Skill 资源，后续策划工作台不得把方法全文硬编码进 UI prompt。
+- **写作 Skill 引擎底座** — `npm run skills:sync` 从相邻的 `cc-write_skill 库/skills` 同步统一领域 Skill 到 `resources/writing-skills/`（当前 12 个）；主进程 `SkillRegistry` 提供清单、全文读取和按任务路由，通过 `skills:list/get/route` IPC 暴露。正式包通过 `extraResources` 携带 Skill 资源，后续策划工作台不得把方法全文硬编码进 UI prompt。
 - **策划工作台（故事方案阶段）** — 顶栏可在「策划 / 写作」间切换；策划页保存用户创意与额外要求，按任务路由 Skill 后调用当前首个 AI 配置生成 3 个结构化故事方向，选择结果写入 `planning_ideas`。迁移 v11 只新增表，不改旧项目数据。
 - **全书字数统计** — 小说名后显示 `{totalWords.toLocaleString()} 字`，统计所有章节 CJK 字符
 - **章节保存防丢失** — 三层修复见上方 Critical Implementation Details

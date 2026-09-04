@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "source": "cc-write_skill 库/skills",
-  "skillCount": 11,
+  "skillCount": 12,
   "skills": [
     {
       "id": "character-craft",
@@ -37,6 +37,13 @@
       "description": "用户在写大纲、列不出结构、先写还是先大纲、故事越写越乱、想重排剧情、改稿不知从哪开始、犹豫这段该展示还是讲述时使用。\n不适用于：主线骨架本身（走 story-structure-craft）；单场景怎么写（走 scene-craft）；选题定位（走 premise-craft）。\n关键 trigger：大纲、雪花、提纲、示意图、逆向、扩展版、精简版、场景清单、先写还是先大纲、写作流程、改稿、二稿、分诊、展示还是讲述、创作与编辑分离。",
       "tags": "[outline, workflow, revision, drafting]",
       "file": "outline-workflow-craft.md"
+    },
+    {
+      "id": "pacing-emotion-craft",
+      "name": "pacing-emotion-craft",
+      "description": "用户在规划全书/分卷/连续章节的情绪曲线，或遇到故事太平、一爽到底、持续高压却疲劳、铺垫太久、回报无力、追读节奏下降时使用。\n不适用于：单场戏的目标与翻转（走 scene-craft）；主线事件骨架（走 story-structure-craft）；单纯提高冲突强度（走 conflict-craft）。\n关键 trigger：节奏、情绪曲线、情感弧线、张弛、爽感递减、追读、铺垫、回报、过山车、连续几章太平、高潮疲劳。",
+      "tags": "",
+      "file": "pacing-emotion-craft.md"
     },
     {
       "id": "pov-craft",

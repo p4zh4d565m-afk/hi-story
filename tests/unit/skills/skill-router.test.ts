@@ -7,6 +7,7 @@ const skills: WritingSkillSummary[] = [
   { id: 'story-structure-craft', name: 'story-structure-craft', description: '主线结构', tags: 'structure' },
   { id: 'outline-workflow-craft', name: 'outline-workflow-craft', description: '大纲流程', tags: 'outline' },
   { id: 'character-craft', name: 'character-craft', description: '人物塑造', tags: 'character' },
+  { id: 'pacing-emotion-craft', name: 'pacing-emotion-craft', description: '节奏与情绪', tags: 'pacing' },
 ];
 
 describe('routeWritingSkills', () => {
@@ -21,5 +22,10 @@ describe('routeWritingSkills', () => {
   it('限制返回数量并拒绝空任务', () => {
     expect(routeWritingSkills(skills, '设计主角人物和动机', 1)).toHaveLength(1);
     expect(routeWritingSkills(skills, '   ')).toEqual([]);
+  });
+
+  it('把连续章节的爽感疲劳路由到节奏与情绪', () => {
+    const result = routeWritingSkills(skills, '连续十章都在打架，爽感疲劳，帮我调整节奏', 1);
+    expect(result[0]?.id).toBe('pacing-emotion-craft');
   });
 });

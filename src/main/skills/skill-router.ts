@@ -12,6 +12,7 @@ const ROUTE_HINTS: Record<string, string[]> = {
   'setting-craft': ['世界观', '设定', '背景', '势力', '地点'],
   'description-craft': ['描写', '画面', '感官', '环境', '外貌', '文笔'],
   'pov-craft': ['视角', 'POV', '第一人称', '第三人称', '叙述者'],
+  'pacing-emotion-craft': ['节奏', '情绪曲线', '情感弧线', '张弛', '爽感', '追读', '铺垫', '回报', '过山车'],
 };
 
 export function routeWritingSkills(
