@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { IpcResult, MasterOutline, PlanningIdea, StoryOption, VolumeOutline } from '../../../renderer/types';
+import type { ChapterOutline, IpcResult, MasterOutline, PlanningIdea, StoryOption, VolumeOutline } from '../../../renderer/types';
 
 export interface SavePlanningIdeaInput {
   projectId: string;
@@ -13,6 +13,8 @@ export interface SavePlanningIdeaInput {
   outlineStatus?: PlanningIdea['outlineStatus'];
   volumeOutlines?: VolumeOutline[];
   volumeStatus?: PlanningIdea['volumeStatus'];
+  chapterOutlines?: ChapterOutline[];
+  chapterOutlineStatus?: PlanningIdea['chapterOutlineStatus'];
 }
 
 export class PlanningRepo {
@@ -35,7 +37,8 @@ export class PlanningRepo {
       this.db.prepare(`
         UPDATE planning_ideas
         SET idea = ?, requirements = ?, generated_options = ?, selected_option = ?, status = ?,
-            master_outline = ?, outline_status = ?, volume_outlines = ?, volume_status = ?, updated_at = ?
+            master_outline = ?, outline_status = ?, volume_outlines = ?, volume_status = ?,
+            chapter_outlines = ?, chapter_outline_status = ?, updated_at = ?
         WHERE id = ?
       `).run(
         input.idea,
@@ -47,6 +50,8 @@ export class PlanningRepo {
         input.outlineStatus ?? 'empty',
         JSON.stringify(input.volumeOutlines ?? []),
         input.volumeStatus ?? 'empty',
+        JSON.stringify(input.chapterOutlines ?? []),
+        input.chapterOutlineStatus ?? 'empty',
         now,
         existing.id,
       );
@@ -56,8 +61,8 @@ export class PlanningRepo {
     const id = uuidv4();
     this.db.prepare(`
       INSERT INTO planning_ideas
-        (id, project_id, idea, requirements, generated_options, selected_option, status, master_outline, outline_status, volume_outlines, volume_status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, project_id, idea, requirements, generated_options, selected_option, status, master_outline, outline_status, volume_outlines, volume_status, chapter_outlines, chapter_outline_status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       input.projectId,
@@ -70,6 +75,8 @@ export class PlanningRepo {
       input.outlineStatus ?? 'empty',
       JSON.stringify(input.volumeOutlines ?? []),
       input.volumeStatus ?? 'empty',
+      JSON.stringify(input.chapterOutlines ?? []),
+      input.chapterOutlineStatus ?? 'empty',
       now,
       now,
     );
@@ -86,9 +93,11 @@ export class PlanningRepo {
     let generatedOptions: StoryOption[] = [];
     let masterOutline: MasterOutline | null = null;
     let volumeOutlines: VolumeOutline[] = [];
+    let chapterOutlines: ChapterOutline[] = [];
     try { generatedOptions = JSON.parse(String(row.generated_options || '[]')); } catch {}
     try { masterOutline = row.master_outline ? JSON.parse(String(row.master_outline)) : null; } catch {}
     try { volumeOutlines = JSON.parse(String(row.volume_outlines || '[]')); } catch {}
+    try { chapterOutlines = JSON.parse(String(row.chapter_outlines || '[]')); } catch {}
     return {
       id: String(row.id),
       projectId: String(row.project_id),
@@ -101,6 +110,8 @@ export class PlanningRepo {
       outlineStatus: (row.outline_status || 'empty') as PlanningIdea['outlineStatus'],
       volumeOutlines,
       volumeStatus: (row.volume_status || 'empty') as PlanningIdea['volumeStatus'],
+      chapterOutlines,
+      chapterOutlineStatus: (row.chapter_outline_status || 'empty') as PlanningIdea['chapterOutlineStatus'],
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
     };

@@ -379,6 +379,15 @@ const MIGRATIONS = [
         CHECK(volume_status IN ('empty','generated','locked'));
     `,
   },
+  // 014: 策划工作台 — 可编辑的逐章章纲
+  {
+    version: 14,
+    sql: `
+      ALTER TABLE planning_ideas ADD COLUMN chapter_outlines TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE planning_ideas ADD COLUMN chapter_outline_status TEXT NOT NULL DEFAULT 'empty'
+        CHECK(chapter_outline_status IN ('empty','generated','locked'));
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

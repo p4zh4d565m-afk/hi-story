@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import type { MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, WritingSkill, WritingSkillSummary } from '../types';
+import type { ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, WritingSkill, WritingSkillSummary } from '../types';
 import { decrypt } from '../services/crypto';
 import { aiService } from '../services/ai.service';
-import { buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
+import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
 
 interface PlanningWorkspaceProps {
   project: Project | null;
@@ -58,11 +58,16 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
   const [volumeOutlines, setVolumeOutlines] = useState<VolumeOutline[]>([]);
   const [volumeStatus, setVolumeStatus] = useState<PlanningIdea['volumeStatus']>('empty');
   const [volumeLoading, setVolumeLoading] = useState(false);
+  const [chapterOutlines, setChapterOutlines] = useState<ChapterOutline[]>([]);
+  const [chapterOutlineStatus, setChapterOutlineStatus] = useState<PlanningIdea['chapterOutlineStatus']>('empty');
+  const [chapterLoadingVolume, setChapterLoadingVolume] = useState<number | null>(null);
+  const [activeVolume, setActiveVolume] = useState(0);
 
   useEffect(() => {
     setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft');
     setMasterOutline(null); setOutlineStatus('empty'); setError('');
     setVolumeOutlines([]); setVolumeStatus('empty');
+    setChapterOutlines([]); setChapterOutlineStatus('empty'); setActiveVolume(0);
     if (!project) return;
     window.electronAPI.invoke('db:planning:findByProject', project.id).then((res: any) => {
       if (res?.success && res.data) {
@@ -76,6 +81,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
         setOutlineStatus(data.outlineStatus);
         setVolumeOutlines(data.volumeOutlines);
         setVolumeStatus(data.volumeStatus);
+        setChapterOutlines(data.chapterOutlines || []);
+        setChapterOutlineStatus(data.chapterOutlineStatus || 'empty');
       }
     });
   }, [project?.id]);
@@ -97,6 +104,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
     nextOutlineStatus = outlineStatus,
     nextVolumes = volumeOutlines,
     nextVolumeStatus = volumeStatus,
+    nextChapters = chapterOutlines,
+    nextChapterStatus = chapterOutlineStatus,
   ) => {
     if (!project) return false;
     setSaving(true);
@@ -106,11 +115,13 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
         selectedOption: nextSelected, status: nextStatus,
         masterOutline: nextOutline, outlineStatus: nextOutlineStatus,
         volumeOutlines: nextVolumes, volumeStatus: nextVolumeStatus,
+        chapterOutlines: nextChapters, chapterOutlineStatus: nextChapterStatus,
       }) as any;
       if (!res?.success) throw new Error(res?.error || '保存策划内容失败');
       setStatus(nextStatus);
       setOutlineStatus(nextOutlineStatus);
       setVolumeStatus(nextVolumeStatus);
+      setChapterOutlineStatus(nextChapterStatus);
       return true;
     } catch (err) {
       setError((err as Error).message);
@@ -144,7 +155,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
       setSelectedOption(null);
       setMasterOutline(null); setOutlineStatus('empty');
       setVolumeOutlines([]); setVolumeStatus('empty');
-      await save('generated', null, generated, null, 'empty', [], 'empty');
+      setChapterOutlines([]); setChapterOutlineStatus('empty');
+      await save('generated', null, generated, null, 'empty', [], 'empty', [], 'empty');
     } catch (err) {
       setError((err as Error).message);
     } finally { setLoading(false); }
@@ -154,8 +166,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
     setSelectedOption(index);
     setMasterOutline(null); setOutlineStatus('empty');
     setVolumeOutlines([]); setVolumeStatus('empty');
+    setChapterOutlines([]); setChapterOutlineStatus('empty');
     setError('');
-    await save('confirmed', index, options, null, 'empty', [], 'empty');
+    await save('confirmed', index, options, null, 'empty', [], 'empty', [], 'empty');
   };
 
   const generateMasterOutline = async () => {
@@ -182,7 +195,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
       const outline = parseMasterOutline(raw);
       setMasterOutline(outline);
       setVolumeOutlines([]); setVolumeStatus('empty');
-      await save('confirmed', selectedOption, options, outline, 'generated', [], 'empty');
+      setChapterOutlines([]); setChapterOutlineStatus('empty');
+      await save('confirmed', selectedOption, options, outline, 'generated', [], 'empty', [], 'empty');
     } catch (err) { setError((err as Error).message); }
     finally { setOutlineLoading(false); }
   };
@@ -192,6 +206,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
     setMasterOutline({ ...masterOutline, [field]: value });
     if (outlineStatus === 'locked') setOutlineStatus('generated');
     if (volumeOutlines.length) { setVolumeOutlines([]); setVolumeStatus('empty'); }
+    if (chapterOutlines.length) { setChapterOutlines([]); setChapterOutlineStatus('empty'); }
   };
 
   const updatePhase = (index: number, field: string, value: string | string[]) => {
@@ -200,6 +215,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
     setMasterOutline({ ...masterOutline, phases });
     if (outlineStatus === 'locked') setOutlineStatus('generated');
     if (volumeOutlines.length) { setVolumeOutlines([]); setVolumeStatus('empty'); }
+    if (chapterOutlines.length) { setChapterOutlines([]); setChapterOutlineStatus('empty'); }
   };
 
   const saveOutline = async (lock = false) => {
@@ -228,7 +244,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
       );
       const volumes = parseVolumeOutlines(raw);
       setVolumeOutlines(volumes);
-      await save('confirmed', selectedOption, options, masterOutline, 'locked', volumes, 'generated');
+      setChapterOutlines([]); setChapterOutlineStatus('empty');
+      await save('confirmed', selectedOption, options, masterOutline, 'locked', volumes, 'generated', [], 'empty');
     } catch (err) { setError((err as Error).message); }
     finally { setVolumeLoading(false); }
   };
@@ -237,10 +254,57 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
     const next = volumeOutlines.map((volume, i) => i === index ? { ...volume, [field]: value } : volume);
     setVolumeOutlines(next);
     if (volumeStatus === 'locked') setVolumeStatus('generated');
+    const remaining = chapterOutlines.filter(chapter => chapter.volumeIndex !== index);
+    if (remaining.length !== chapterOutlines.length) {
+      setChapterOutlines(remaining);
+      setChapterOutlineStatus(remaining.length ? 'generated' : 'empty');
+    }
   };
 
   const saveVolumes = async (lock = false) => {
     await save('confirmed', selectedOption, options, masterOutline, 'locked', volumeOutlines, lock ? 'locked' : 'generated');
+  };
+
+  const generateChapters = async (volumeIndex: number) => {
+    if (!project || selectedOption === null || !masterOutline || volumeStatus !== 'locked') return;
+    setChapterLoadingVolume(volumeIndex); setError('');
+    try {
+      const aiConfig = await configureFirstAi();
+      const routed = await window.electronAPI.invoke(
+        'skills:route', '把分卷纲拆成逐章章纲，设计每章目标、冲突、节拍、人物变化、爽点和章末钩子', 5,
+      ) as any;
+      if (!routed?.success || !routed.data?.length) throw new Error('没有匹配到章纲策划方法');
+      const fullSkills: WritingSkill[] = [];
+      for (const summary of routed.data as WritingSkillSummary[]) {
+        const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
+        if (detail?.success) fullSkills.push(detail.data);
+      }
+      setMatchedSkills(routed.data);
+      const raw = await aiService.chat(
+        buildChapterOutlinesPrompt(project, options[selectedOption], masterOutline, volumeOutlines, volumeIndex, requirements, fullSkills),
+        { model: aiConfig.model, maxTokens: 16384, temperature: 0.55 },
+      );
+      const generated = parseChapterOutlines(raw, volumeIndex);
+      const merged = [...chapterOutlines.filter(chapter => chapter.volumeIndex !== volumeIndex), ...generated]
+        .sort((a, b) => a.chapterNumber - b.chapterNumber);
+      setChapterOutlines(merged);
+      setActiveVolume(volumeIndex);
+      await save('confirmed', selectedOption, options, masterOutline, 'locked', volumeOutlines, 'locked', merged, 'generated');
+    } catch (err) { setError((err as Error).message); }
+    finally { setChapterLoadingVolume(null); }
+  };
+
+  const updateChapter = (volumeIndex: number, chapterNumber: number, field: keyof ChapterOutline, value: string | string[] | number) => {
+    setChapterOutlines(chapterOutlines.map(chapter => chapter.volumeIndex === volumeIndex && chapter.chapterNumber === chapterNumber ? { ...chapter, [field]: value } : chapter));
+    if (chapterOutlineStatus === 'locked') setChapterOutlineStatus('generated');
+  };
+
+  const saveChapters = async (lock = false) => {
+    if (lock && volumeOutlines.some((_, index) => !chapterOutlines.some(chapter => chapter.volumeIndex === index))) {
+      setError('请先为每一卷生成章纲，再锁定整本章纲');
+      return;
+    }
+    await save('confirmed', selectedOption, options, masterOutline, 'locked', volumeOutlines, 'locked', chapterOutlines, lock ? 'locked' : 'generated');
   };
 
   if (!project) return <div className="h-full flex items-center justify-center text-gray-500">请先选择或创建一本小说</div>;
@@ -348,6 +412,45 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
                   {([['keyEvents','关键事件（每行一项）'],['promisesOpened','本卷新建承诺'],['promisesPaid','本卷兑现承诺']] as const).map(([field,label]) => <label key={field} className="block mt-2"><span className="text-[11px] text-gray-500">{label}</span><textarea rows={field === 'keyEvents' ? 5 : 3} value={volume[field].join('\n')} onChange={e => updateVolume(index, field, e.target.value.split('\n').filter(Boolean))} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>)}
                 </article>)}</div>
                 {!!volumeOutlines.length && <p className={`mt-4 text-xs ${volumeStatus === 'locked' ? 'text-green-400' : 'text-yellow-500'}`}>{volumeStatus === 'locked' ? '✓ 分卷纲已锁定，可以继续生成章节清单' : '分卷纲尚未锁定，可以直接修改'}</p>}
+              </div>
+            )}
+
+            {volumeStatus === 'locked' && masterOutline && volumeOutlines.length > 0 && (
+              <div className="bg-editor-800 border border-editor-700 rounded-lg p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                  <div><p className="text-xs text-accent">策划工作台 · 第四步</p><h2 className="text-lg text-gray-100 mt-1">逐章章纲</h2></div>
+                  <div className="flex gap-2">
+                    {!!chapterOutlines.length && <button onClick={() => saveChapters(false)} disabled={saving} className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600">保存修改</button>}
+                    {!!chapterOutlines.length && <button onClick={() => saveChapters(true)} disabled={saving} className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">锁定章纲</button>}
+                  </div>
+                </div>
+                <p className="text-xs text-gray-500 mb-3">按卷生成，避免一次生成整本书导致细节失控。重新生成某卷只会替换该卷章纲。</p>
+                <div className="flex flex-wrap gap-2 mb-4">
+                  {volumeOutlines.map((volume, index) => {
+                    const count = chapterOutlines.filter(chapter => chapter.volumeIndex === index).length;
+                    return <button key={index} onClick={() => setActiveVolume(index)} className={`px-3 py-2 rounded border text-xs ${activeVolume === index ? 'border-accent bg-accent/10 text-accent' : 'border-editor-700 bg-editor-900 text-gray-400'}`}>
+                      {volume.title} {count ? `· ${count}章` : '· 未生成'}
+                    </button>;
+                  })}
+                </div>
+                <div className="flex items-center justify-between gap-3 mb-4 rounded bg-editor-900 border border-editor-700 p-3">
+                  <div><p className="text-sm text-gray-200">{volumeOutlines[activeVolume]?.title}</p><p className="text-[11px] text-gray-500 mt-1">{volumeOutlines[activeVolume]?.chapterRange}</p></div>
+                  <button onClick={() => generateChapters(activeVolume)} disabled={chapterLoadingVolume !== null} className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600 disabled:opacity-40">
+                    {chapterLoadingVolume === activeVolume ? '正在生成本卷章纲…' : chapterOutlines.some(chapter => chapter.volumeIndex === activeVolume) ? '重新生成本卷' : '生成本卷章纲'}
+                  </button>
+                </div>
+                <div className="space-y-3">
+                  {chapterOutlines.filter(chapter => chapter.volumeIndex === activeVolume).map(chapter => <article key={chapter.chapterNumber} className="rounded border border-editor-700 bg-editor-900 p-4">
+                    <div className="grid grid-cols-[80px_1fr_160px] gap-2">
+                      <div className="rounded bg-editor-800 border border-editor-700 px-2 py-2 text-xs text-gray-400">第 {chapter.chapterNumber} 章</div>
+                      <input value={chapter.title} onChange={e => updateChapter(chapter.volumeIndex, chapter.chapterNumber, 'title', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-sm text-gray-100" />
+                      <input value={chapter.pov} onChange={e => updateChapter(chapter.volumeIndex, chapter.chapterNumber, 'pov', e.target.value)} placeholder="视角人物" className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-xs text-gray-300" />
+                    </div>
+                    {([['chapterGoal','本章任务'],['openingSituation','开场处境'],['centralConflict','核心冲突与失败代价'],['reveal','信息揭示'],['characterChange','人物/关系变化'],['emotionalBeat','情绪体验'],['payoff','爽点/承诺回报'],['endingHook','章末钩子']] as const).map(([field,label]) => <label key={field} className="block mt-2"><span className="text-[11px] text-gray-500">{label}</span><textarea rows={2} value={chapter[field]} onChange={e => updateChapter(chapter.volumeIndex, chapter.chapterNumber, field, e.target.value)} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>)}
+                    <label className="block mt-2"><span className="text-[11px] text-gray-500">关键节拍（每行一项）</span><textarea rows={4} value={chapter.keyBeats.join('\n')} onChange={e => updateChapter(chapter.volumeIndex, chapter.chapterNumber, 'keyBeats', e.target.value.split('\n').filter(Boolean))} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>
+                  </article>)}
+                </div>
+                {!!chapterOutlines.length && <p className={`mt-4 text-xs ${chapterOutlineStatus === 'locked' ? 'text-green-400' : 'text-yellow-500'}`}>{chapterOutlineStatus === 'locked' ? '✓ 章纲已锁定，可以按章自己写或交给 AI 辅助代写' : '章纲可继续修改；全部卷生成完成后再锁定更稳妥'}</p>}
               </div>
             )}
           </section>

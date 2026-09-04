@@ -1,4 +1,4 @@
-import type { MasterOutline, Project, StoryOption, VolumeOutline, WritingSkill } from '../../types';
+import type { ChapterOutline, MasterOutline, Project, StoryOption, VolumeOutline, WritingSkill } from '../../types';
 
 export function buildStoryOptionsPrompt(
   project: Project,
@@ -171,4 +171,63 @@ export function parseVolumeOutlines(raw: string): VolumeOutline[] {
     }
   }
   return parsed.volumes;
+}
+
+export function buildChapterOutlinesPrompt(
+  project: Project, option: StoryOption, outline: MasterOutline, volumes: VolumeOutline[],
+  volumeIndex: number, requirements: string, skills: WritingSkill[],
+): Array<{ role: 'system' | 'user'; content: string }> {
+  const methods = skills.map(skill => `\n## ${skill.id}\n${skill.content}`).join('\n');
+  const volume = volumes[volumeIndex];
+  return [
+    {
+      role: 'system',
+      content: `你是长篇小说章纲策划编辑。把指定分卷拆成作者可以直接填充正文的逐章施工表，不代写正文。
+每章必须推进局面，关键节拍要有因果关系；相邻章节避免重复功能。章末钩子必须具体，不能只写“留下悬念”。
+仅输出合法 JSON，不要 Markdown 或解释。格式：
+{"chapters":[{"volumeIndex":0,"chapterNumber":1,"title":"章名","pov":"本章视角人物","chapterGoal":"本章要完成的叙事任务","openingSituation":"开场人物处境","centralConflict":"具体阻力与失败代价","keyBeats":["节拍1","节拍2","节拍3"],"reveal":"本章新增或揭示的信息","characterChange":"人物/关系状态变化","emotionalBeat":"读者主要情绪体验","payoff":"本章兑现的爽点、承诺或小回报；没有则写无","endingHook":"迫使读者翻页的具体问题或变化"}]}
+chapterNumber 必须覆盖指定章节范围且连续；volumeIndex 固定为给定值；每章至少 3 个关键节拍，所有字段必须存在。`,
+    },
+    {
+      role: 'user',
+      content: `# 项目与已确认方向\n${project.name} / ${project.typeTags.join('、') || '类型未定'}\n${JSON.stringify(option, null, 2)}
+
+# 全书总纲\n${JSON.stringify(outline, null, 2)}
+
+# 全部分卷（用于前后衔接）\n${JSON.stringify(volumes, null, 2)}
+
+# 本次只拆第 ${volumeIndex + 1} 卷\n${JSON.stringify(volume, null, 2)}
+
+# 作者要求\n${requirements || '无'}
+
+# 本次采用的方法\n${methods}
+
+请生成本卷逐章章纲。`,
+    },
+  ];
+}
+
+export function parseChapterOutlines(raw: string, expectedVolumeIndex?: number): ChapterOutline[] {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  if (start < 0 || end <= start) throw new Error('AI 没有返回可识别的章纲数据');
+  const parsed = JSON.parse(cleaned.slice(start, end + 1)) as { chapters?: ChapterOutline[] };
+  if (!Array.isArray(parsed.chapters) || parsed.chapters.length < 2) throw new Error('本卷章纲至少应包含 2 章');
+  let previous = 0;
+  for (let index = 0; index < parsed.chapters.length; index += 1) {
+    const chapter = parsed.chapters[index];
+    const fields: Array<keyof Pick<ChapterOutline, 'title' | 'pov' | 'chapterGoal' | 'openingSituation' | 'centralConflict' | 'reveal' | 'characterChange' | 'emotionalBeat' | 'payoff' | 'endingHook'>> =
+      ['title', 'pov', 'chapterGoal', 'openingSituation', 'centralConflict', 'reveal', 'characterChange', 'emotionalBeat', 'payoff', 'endingHook'];
+    if (!Number.isInteger(chapter.chapterNumber) || chapter.chapterNumber <= previous ||
+      (index > 0 && chapter.chapterNumber !== previous + 1) ||
+      !Number.isInteger(chapter.volumeIndex) ||
+      (expectedVolumeIndex !== undefined && chapter.volumeIndex !== expectedVolumeIndex) ||
+      fields.some(field => typeof chapter[field] !== 'string' || !chapter[field].trim()) ||
+      !Array.isArray(chapter.keyBeats) || chapter.keyBeats.length < 3) {
+      throw new Error('AI 返回的章纲字段、卷序或章节顺序不正确');
+    }
+    previous = chapter.chapterNumber;
+  }
+  return parsed.chapters;
 }

@@ -324,6 +324,8 @@ export interface PlanningIdea {
   outlineStatus: 'empty' | 'generated' | 'locked';
   volumeOutlines: VolumeOutline[];
   volumeStatus: 'empty' | 'generated' | 'locked';
+  chapterOutlines: ChapterOutline[];
+  chapterOutlineStatus: 'empty' | 'generated' | 'locked';
   createdAt: string;
   updatedAt: string;
 }
@@ -340,6 +342,22 @@ export interface VolumeOutline {
   endingState: string;
   promisesOpened: string[];
   promisesPaid: string[];
+}
+
+export interface ChapterOutline {
+  volumeIndex: number;
+  chapterNumber: number;
+  title: string;
+  pov: string;
+  chapterGoal: string;
+  openingSituation: string;
+  centralConflict: string;
+  keyBeats: string[];
+  reveal: string;
+  characterChange: string;
+  emotionalBeat: string;
+  payoff: string;
+  endingHook: string;
 }
 
 export interface OutlinePhase {

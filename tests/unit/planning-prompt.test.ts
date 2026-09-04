@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../../src/renderer/services/ai-prompts/planning';
+import { parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../../src/renderer/services/ai-prompts/planning';
 
 const option = {
   title: '测试书名',
@@ -60,5 +60,26 @@ describe('parseVolumeOutlines', () => {
   it('拒绝卷数或关键事件不足的分卷纲', () => {
     expect(() => parseVolumeOutlines(JSON.stringify({ volumes: [volume] }))).toThrow();
     expect(() => parseVolumeOutlines(JSON.stringify({ volumes: [volume, { ...volume, keyEvents: [] }] }))).toThrow();
+  });
+});
+
+describe('parseChapterOutlines', () => {
+  const chapter = {
+    volumeIndex: 0, chapterNumber: 1, title: '入局', pov: '主角', chapterGoal: '迫使主角作出选择',
+    openingSituation: '主角试图维持日常', centralConflict: '对手逼迫且拒绝会失去家园',
+    keyBeats: ['异常出现', '主角拒绝', '代价落下'], reveal: '敌人知道主角身份',
+    characterChange: '主角从回避转为应对', emotionalBeat: '不安转紧迫', payoff: '主角第一次反击', endingHook: '家人突然失踪',
+  };
+
+  it('接受卷序一致、章节递增的完整章纲', () => {
+    const chapters = [chapter, { ...chapter, chapterNumber: 2, title: '追踪' }];
+    expect(parseChapterOutlines(JSON.stringify({ chapters }), 0)).toHaveLength(2);
+  });
+
+  it('拒绝卷序错误、章节倒序或关键节拍不足', () => {
+    expect(() => parseChapterOutlines(JSON.stringify({ chapters: [chapter, { ...chapter, chapterNumber: 2, volumeIndex: 1 }] }), 0)).toThrow();
+    expect(() => parseChapterOutlines(JSON.stringify({ chapters: [{ ...chapter, chapterNumber: 2 }, chapter] }), 0)).toThrow();
+    expect(() => parseChapterOutlines(JSON.stringify({ chapters: [chapter, { ...chapter, chapterNumber: 3 }] }), 0)).toThrow();
+    expect(() => parseChapterOutlines(JSON.stringify({ chapters: [chapter, { ...chapter, chapterNumber: 2, keyBeats: [] }] }), 0)).toThrow();
   });
 });
