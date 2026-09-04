@@ -39,6 +39,7 @@ interface FontSizes { editor: FontSizePreset; panels: FontSizePreset; ui: FontSi
 interface DockLayoutProps {
   sidebar: React.ReactNode;
   writingArea: React.ReactNode;
+  planningArea: React.ReactNode;
   aiChat: React.ReactNode;
   inspirationPanel: React.ReactNode;
   mindmapPanel: React.ReactNode;
@@ -65,6 +66,8 @@ interface DockLayoutProps {
   onToggleAiPolish: () => void;
   onToggleForeshadowing: () => void;
   onSetAiLevel: (level: 'off' | 'assist') => void;
+  workspaceMode: 'planning' | 'writing';
+  onSetWorkspaceMode: (mode: 'planning' | 'writing') => void;
   fontSizes: FontSizes;
   onSetFontSize: (domain: keyof FontSizes, preset: FontSizePreset) => void;
 }
@@ -86,13 +89,14 @@ const FontSizeSelect: React.FC<{
 );
 
 const DockLayout: React.FC<DockLayoutProps> = ({
-  sidebar, writingArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
+  sidebar, writingArea, planningArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
   materialPanel, outlinePanel, referencePanel, namegenPanel,
   aiWritePanel, aiReviewPanel, aiPolishPanel, foreshadowingPanel,
   panelState, onToggleSidebar, onToggleAiChat, onMinimizeAiChat, onToggleInspiration, onToggleMindmap,
   onToggleMaterial, onToggleOutline, onToggleReference, onToggleNamegen,
   onToggleAiWrite, onToggleAiReview, onToggleAiPolish, onToggleForeshadowing,
   onSetAiLevel,
+  workspaceMode, onSetWorkspaceMode,
   fontSizes, onSetFontSize,
 }) => {
   const [sidebarWidth, setSidebarWidth] = useState(280);
@@ -291,6 +295,19 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             ☰
           </button>
 
+          <div className="flex bg-editor-700 rounded overflow-hidden ml-1">
+            <button onClick={() => onSetWorkspaceMode('planning')}
+              className={`px-3 py-1 text-xs transition-colors ${workspaceMode === 'planning' ? 'bg-accent text-white' : 'text-gray-400 hover:text-white'}`}
+              title="从创意生成故事方案、大纲和章纲">
+              🧭 策划
+            </button>
+            <button onClick={() => onSetWorkspaceMode('writing')}
+              className={`px-3 py-1 text-xs transition-colors ${workspaceMode === 'writing' ? 'bg-accent text-white' : 'text-gray-400 hover:text-white'}`}
+              title="自己写作或使用 AI 起草、续写">
+              ✍️ 写作
+            </button>
+          </div>
+
           <div className="flex-1" />
 
           {/* ── 字体缩放控件 ── */}
@@ -415,9 +432,9 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
         {/* Content area */}
         <div className="flex-1 flex overflow-hidden">
-          {/* Writing */}
+          {/* 策划与写作共用主区域，数据保持在同一个小说项目中 */}
           <div className="flex-1 min-w-0 overflow-hidden">
-            {writingArea}
+            {workspaceMode === 'planning' ? planningArea : writingArea}
           </div>
 
           {/* AI Chat panel (dockable, resizable) — hidden when aiLevel is 'off' */}

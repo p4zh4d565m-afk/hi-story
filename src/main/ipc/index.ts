@@ -12,6 +12,7 @@ import { registerForeshadowingIpc } from './foreshadowing.ipc';
 import { registerStoryFactsIpc } from './story-facts.ipc';
 import { registerNarrativeHooksIpc } from './narrative-hooks.ipc';
 import { registerSkillsIpc } from './skills.ipc';
+import { registerPlanningIpc } from './planning.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -31,4 +32,5 @@ export function registerAllIpc(): void {
   registerStoryFactsIpc();
   registerNarrativeHooksIpc();
   registerSkillsIpc();
+  registerPlanningIpc();
 }

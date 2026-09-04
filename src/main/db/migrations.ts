@@ -342,6 +342,25 @@ const MIGRATIONS = [
       CREATE INDEX IF NOT EXISTS idx_narrative_debts_status ON narrative_debts(status);
     `,
   },
+  // 011: 策划工作台 — 保存创意、AI 候选方案与确认结果
+  {
+    version: 11,
+    sql: `
+      CREATE TABLE IF NOT EXISTS planning_ideas (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        idea TEXT NOT NULL DEFAULT '',
+        requirements TEXT NOT NULL DEFAULT '',
+        generated_options TEXT NOT NULL DEFAULT '[]',
+        selected_option INTEGER,
+        status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','generated','confirmed')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_planning_ideas_project ON planning_ideas(project_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

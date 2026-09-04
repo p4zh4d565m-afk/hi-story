@@ -13,6 +13,7 @@ import AIWritePanel from './components/AIWritePanel';
 import AIReviewPanel from './components/AIReviewPanel';
 import AIPolishPanel from './components/AIPolishPanel';
 import ForeshadowingPanel from './components/ForeshadowingPanel';
+import PlanningWorkspace from './components/PlanningWorkspace';
 import type { RichEditorHandle, TextRange } from './components/editor/RichEditor';
 import DatabaseBrowser from './components/DatabaseBrowser';
 import CreateProjectDialog from './components/CreateProjectDialog';
@@ -70,6 +71,7 @@ const App: React.FC = () => {
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showDatabaseBrowser, setShowDatabaseBrowser] = useState(false);
   const [importing, setImporting] = useState(false);
+  const [workspaceMode, setWorkspaceMode] = useState<'planning' | 'writing'>('writing');
 
   // ===== Entity state =====
   const [chapters, setChapters] = useState<Chapter[]>([]);
@@ -974,6 +976,8 @@ const App: React.FC = () => {
   return (
     <ErrorBoundary>
       <DockLayout
+        workspaceMode={workspaceMode}
+        onSetWorkspaceMode={setWorkspaceMode}
         panelState={panelState}
         onToggleSidebar={() => setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen }))}
         onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
@@ -1070,6 +1074,7 @@ const App: React.FC = () => {
             }}
           />
         }
+        planningArea={<PlanningWorkspace project={activeProject} />}
         aiChat={
           <AIChatPanel
             contextMessages={contextMessages}

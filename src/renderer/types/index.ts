@@ -299,3 +299,27 @@ export interface WritingSkillSummary {
 export interface WritingSkill extends WritingSkillSummary {
   content: string;
 }
+
+// ===== 策划工作台 =====
+export interface StoryOption {
+  title: string;
+  logline: string;
+  targetReader: string;
+  corePromise: string;
+  protagonist: string;
+  centralConflict: string;
+  differentiator: string;
+  endingDirection: string;
+}
+
+export interface PlanningIdea {
+  id: string;
+  projectId: string;
+  idea: string;
+  requirements: string;
+  generatedOptions: StoryOption[];
+  selectedOption: number | null;
+  status: 'draft' | 'generated' | 'confirmed';
+  createdAt: string;
+  updatedAt: string;
+}
