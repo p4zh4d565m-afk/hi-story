@@ -26,7 +26,7 @@ import { decrypt } from './services/crypto';
 import type { ProviderConfig } from '../main/ai/provider';
 import { useUndo, type UndoCommand } from './hooks/useUndoManager';
 import UndoToast from './components/UndoToast';
-import type { CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
+import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
 import type { ImportResult } from '../main/importer';
 import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
@@ -78,6 +78,8 @@ const App: React.FC = () => {
   const [activeChapterId, setActiveChapterId] = useState<string | null>(null);
   const [chaptersLoading, setChaptersLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const pendingAIOutlineRef = useRef<ChapterOutline | null>(null);
+  const [pendingAIOutline, setPendingAIOutline] = useState<ChapterOutline | null>(null);
 
   // ===== AI 润色相关状态 =====
   const editorRef = useRef<RichEditorHandle | null>(null);
@@ -324,7 +326,9 @@ const App: React.FC = () => {
   // ===== Handlers =====
   const handleCreateChapter = useCallback(async (title: string) => {
     if (!activeProject) return;
-    const res = await window.electronAPI.invoke('db:chapter:create', { projectId: activeProject.id, title }) as any;
+    const planningOutline = pendingAIOutlineRef.current;
+    const res = await window.electronAPI.invoke('db:chapter:create', { projectId: activeProject.id, title, planningOutline }) as any;
+    if (planningOutline) { pendingAIOutlineRef.current = null; setPendingAIOutline(null); }
     if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
   }, [activeProject]);
 
@@ -431,6 +435,36 @@ const App: React.FC = () => {
     const res = await window.electronAPI.invoke('db:outline:create', { projectId: activeProject.id, parentId, title }) as any;
     if (res.success && res.data) { setOutlineNodes(prev => [...prev, res.data]); setActiveOutlineNodeId(res.data.id); }
   }, [activeProject]);
+
+  const handleStartPlannedChapter = useCallback(async (outline: ChapterOutline, mode: 'self' | 'ai') => {
+    if (!activeProject) return;
+    setWorkspaceMode('writing');
+    if (mode === 'self') {
+      const existing = chapters.find(chapter => chapter.planningOutline?.volumeIndex === outline.volumeIndex && chapter.planningOutline?.chapterNumber === outline.chapterNumber);
+      if (existing) { setActiveChapterId(existing.id); return; }
+      const res = await window.electronAPI.invoke('db:chapter:create', {
+        projectId: activeProject.id,
+        title: `第${outline.chapterNumber}章 ${outline.title}`,
+        planningOutline: outline,
+      }) as any;
+      if (res?.success && res.data) { setChapters(previous => [...previous, res.data]); setActiveChapterId(res.data.id); }
+      return;
+    }
+
+    const marker = `[章纲 ${outline.volumeIndex}:${outline.chapterNumber}]`;
+    let node = outlineNodes.find(item => item.summary.includes(marker));
+    if (!node) {
+      const summary = `${marker}\n视角：${outline.pov}\n本章任务：${outline.chapterGoal}\n开场处境：${outline.openingSituation}\n核心冲突：${outline.centralConflict}\n关键节拍：${outline.keyBeats.join(' → ')}\n信息揭示：${outline.reveal}\n人物变化：${outline.characterChange}\n情绪体验：${outline.emotionalBeat}\n爽点/回报：${outline.payoff}\n章末钩子：${outline.endingHook}`;
+      const res = await window.electronAPI.invoke('db:outline:create', { projectId: activeProject.id, parentId: null, title: `第${outline.chapterNumber}章 ${outline.title}`, summary }) as any;
+      if (!res?.success || !res.data) return;
+      node = res.data;
+      setOutlineNodes(previous => [...previous, res.data]);
+    }
+    setActiveOutlineNodeId(node.id);
+    pendingAIOutlineRef.current = outline;
+    setPendingAIOutline(outline);
+    setPanelState(previous => ({ ...previous, aiWriteOpen: true }));
+  }, [activeProject, chapters, outlineNodes]);
 
   const handleDeleteOutlineNode = useCallback(async (id: string) => {
     const node = outlineNodes.find(n => n.id === id);
@@ -1074,7 +1108,7 @@ const App: React.FC = () => {
             }}
           />
         }
-        planningArea={<PlanningWorkspace project={activeProject} />}
+        planningArea={<PlanningWorkspace project={activeProject} onStartChapter={handleStartPlannedChapter} />}
         aiChat={
           <AIChatPanel
             contextMessages={contextMessages}
@@ -1153,7 +1187,7 @@ const App: React.FC = () => {
         aiWritePanel={
           <AIWritePanel
             open={panelState.aiWriteOpen}
-            onClose={() => setPanelState(p => ({ ...p, aiWriteOpen: false }))}
+            onClose={() => { pendingAIOutlineRef.current = null; setPendingAIOutline(null); setPanelState(p => ({ ...p, aiWriteOpen: false })); }}
             outlineNodes={outlineNodes}
             activeOutlineNodeId={activeOutlineNodeId}
             characters={characters}
@@ -1163,6 +1197,7 @@ const App: React.FC = () => {
             projectId={activeProject?.id || ''}
             typeTags={activeProject?.typeTags || []}
             style={activeProject?.style || ''}
+            preferredTitle={pendingAIOutline ? `第${pendingAIOutline.chapterNumber}章 ${pendingAIOutline.title}` : undefined}
             onSaveAsChapter={async (title, content) => {
               await handleCreateChapter(title);
               // 找到刚创建的章节（sortOrder 最大的），更新内容

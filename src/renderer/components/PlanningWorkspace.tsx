@@ -6,6 +6,7 @@ import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptions
 
 interface PlanningWorkspaceProps {
   project: Project | null;
+  onStartChapter?: (outline: ChapterOutline, mode: 'self' | 'ai') => Promise<void>;
 }
 
 interface SavedConfig {
@@ -42,7 +43,7 @@ async function configureFirstAi(): Promise<SavedConfig> {
   return { ...selected, apiKey };
 }
 
-const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
+const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartChapter }) => {
   const [idea, setIdea] = useState('');
   const [requirements, setRequirements] = useState('');
   const [options, setOptions] = useState<StoryOption[]>([]);
@@ -448,6 +449,10 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project }) => {
                     </div>
                     {([['chapterGoal','本章任务'],['openingSituation','开场处境'],['centralConflict','核心冲突与失败代价'],['reveal','信息揭示'],['characterChange','人物/关系变化'],['emotionalBeat','情绪体验'],['payoff','爽点/承诺回报'],['endingHook','章末钩子']] as const).map(([field,label]) => <label key={field} className="block mt-2"><span className="text-[11px] text-gray-500">{label}</span><textarea rows={2} value={chapter[field]} onChange={e => updateChapter(chapter.volumeIndex, chapter.chapterNumber, field, e.target.value)} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>)}
                     <label className="block mt-2"><span className="text-[11px] text-gray-500">关键节拍（每行一项）</span><textarea rows={4} value={chapter.keyBeats.join('\n')} onChange={e => updateChapter(chapter.volumeIndex, chapter.chapterNumber, 'keyBeats', e.target.value.split('\n').filter(Boolean))} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>
+                    {chapterOutlineStatus === 'locked' && onStartChapter && <div className="flex justify-end gap-2 mt-3 pt-3 border-t border-editor-700">
+                      <button onClick={() => onStartChapter(chapter, 'self')} className="px-3 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">自己写这一章</button>
+                      <button onClick={() => onStartChapter(chapter, 'ai')} className="px-3 py-2 rounded bg-editor-700 text-xs text-gray-300 hover:bg-editor-600">AI 代写这一章</button>
+                    </div>}
                   </article>)}
                 </div>
                 {!!chapterOutlines.length && <p className={`mt-4 text-xs ${chapterOutlineStatus === 'locked' ? 'text-green-400' : 'text-yellow-500'}`}>{chapterOutlineStatus === 'locked' ? '✓ 章纲已锁定，可以按章自己写或交给 AI 辅助代写' : '章纲可继续修改；全部卷生成完成后再锁定更稳妥'}</p>}

@@ -75,6 +75,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   const [showHistory, setShowHistory] = useState(false);
   const [snapshots, setSnapshots] = useState<ChapterHistorySnapshot[]>([]);
   const [loadingSnapshots, setLoadingSnapshots] = useState(false);
+  const [showPlanningOutline, setShowPlanningOutline] = useState(true);
   const historyPanelRef = useRef<HTMLDivElement>(null);
 
   const loadSnapshots = useCallback(async () => {
@@ -460,6 +461,23 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           +
         </button>
       </div>
+
+      {activeChapter?.planningOutline && (
+        <div className="mx-6 mt-3 rounded border border-accent/30 bg-accent/5 text-xs">
+          <button onClick={() => setShowPlanningOutline(value => !value)} className="w-full flex items-center justify-between px-3 py-2 text-left text-accent">
+            <span>本章施工卡 · 第 {activeChapter.planningOutline.chapterNumber} 章</span><span>{showPlanningOutline ? '收起' : '展开'}</span>
+          </button>
+          {showPlanningOutline && <div className="grid grid-cols-1 lg:grid-cols-2 gap-2 px-3 pb-3 text-gray-400">
+            <p><span className="text-gray-500">任务：</span>{activeChapter.planningOutline.chapterGoal}</p>
+            <p><span className="text-gray-500">视角：</span>{activeChapter.planningOutline.pov}</p>
+            <p><span className="text-gray-500">冲突：</span>{activeChapter.planningOutline.centralConflict}</p>
+            <p><span className="text-gray-500">人物变化：</span>{activeChapter.planningOutline.characterChange}</p>
+            <p><span className="text-gray-500">回报：</span>{activeChapter.planningOutline.payoff}</p>
+            <p><span className="text-gray-500">章末钩子：</span>{activeChapter.planningOutline.endingHook}</p>
+            <div className="lg:col-span-2"><span className="text-gray-500">关键节拍：</span>{activeChapter.planningOutline.keyBeats.join(' → ')}</div>
+          </div>}
+        </div>
+      )}
 
       {/* Editor area */}
       <div className="flex-1 overflow-hidden">

@@ -388,6 +388,13 @@ const MIGRATIONS = [
         CHECK(chapter_outline_status IN ('empty','generated','locked'));
     `,
   },
+  // 015: 正文章节关联创建时的章纲快照
+  {
+    version: 15,
+    sql: `
+      ALTER TABLE chapters ADD COLUMN planning_outline TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

@@ -104,6 +104,7 @@ export interface Chapter {
   wordCount: number;
   sortOrder: number;
   summary: string;           // AI 生成的章节摘要（100-200字）
+  planningOutline: ChapterOutline | null; // 创建正文时冻结的章纲快照
   createdAt: string;
   updatedAt: string;
 }

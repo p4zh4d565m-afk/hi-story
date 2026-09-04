@@ -1,12 +1,13 @@
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
-import type { Chapter, IpcResult } from '../../../renderer/types';
+import type { Chapter, ChapterOutline, IpcResult } from '../../../renderer/types';
 import type { ChapterHistorySnapshot } from '../../../renderer/types';
 
 export interface CreateChapterInput {
   projectId: string;
   title?: string;
   content?: string;
+  planningOutline?: ChapterOutline | null;
 }
 
 export interface UpdateChapterInput {
@@ -41,9 +42,9 @@ export class ChapterRepo {
     ).get(input.projectId) as { max_sort: number };
 
     this.db.prepare(`
-      INSERT INTO chapters (id, project_id, title, content, status, word_count, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?)
-    `).run(id, input.projectId, title, content, 0, maxSort.max_sort + 1, now, now);
+      INSERT INTO chapters (id, project_id, title, content, status, word_count, sort_order, planning_outline, created_at, updated_at)
+      VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
+    `).run(id, input.projectId, title, content, 0, maxSort.max_sort + 1, input.planningOutline ? JSON.stringify(input.planningOutline) : '', now, now);
 
     return this.findById(id);
   }
@@ -143,12 +144,12 @@ export class ChapterRepo {
   restore(chapterData: Chapter): IpcResult<Chapter> {
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO chapters (id, project_id, title, content, status, word_count, sort_order, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO chapters (id, project_id, title, content, status, word_count, sort_order, planning_outline, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       chapterData.id, chapterData.projectId, chapterData.title, chapterData.content,
       chapterData.status, chapterData.wordCount, chapterData.sortOrder,
-      chapterData.createdAt, now
+      chapterData.planningOutline ? JSON.stringify(chapterData.planningOutline) : '', chapterData.createdAt, now
     );
     return this.findById(chapterData.id);
   }
@@ -193,6 +194,7 @@ export class ChapterRepo {
       wordCount: row.word_count as number,
       sortOrder: row.sort_order as number,
       summary: (row.summary ?? '') as string,
+      planningOutline: (() => { try { return row.planning_outline ? JSON.parse(String(row.planning_outline)) : null; } catch { return null; } })(),
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
@@ -301,6 +303,7 @@ export class ChapterHistoryRepo {
           wordCount: row.word_count as number,
           sortOrder: row.sort_order as number,
           summary: (row.summary as string) || '',
+          planningOutline: (() => { try { return row.planning_outline ? JSON.parse(String(row.planning_outline)) : null; } catch { return null; } })(),
           createdAt: row.created_at as string,
           updatedAt: row.updated_at as string,
         },

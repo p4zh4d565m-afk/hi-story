@@ -135,6 +135,8 @@ interface AIWritePanelProps {
   typeTags: string[];
   /** 项目风格 */
   style: string;
+  /** 从结构化章纲进入时使用的固定章节标题 */
+  preferredTitle?: string;
   /** 保存为新章节的回调 */
   onSaveAsChapter: (title: string, content: string) => void;
 }
@@ -200,6 +202,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   projectId,
   typeTags,
   style,
+  preferredTitle,
   onSaveAsChapter,
 }) => {
   // ===== 配置状态 =====
@@ -647,14 +650,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const plainText = generatedContent.replace(/<[^>]+>/g, '');
     const firstLine = plainText.split('\n').find(l => l.trim().length > 0)?.trim() || '';
     const title = firstLine.length > 40 ? firstLine.slice(0, 40) + '...' : firstLine;
-    onSaveAsChapter(title || 'AI 生成章节', generatedContent);
+    onSaveAsChapter(preferredTitle || title || 'AI 生成章节', generatedContent);
     setSaved(true);
 
     // 异步生成章节摘要 + 抽取叙事事实（后台执行，不阻塞 UI）
     if (aiReady) {
       generateAndSaveSummary(title || 'AI 生成章节', generatedContent);
     }
-  }, [generatedContent, onSaveAsChapter, aiReady, characters, projectName]);
+  }, [generatedContent, onSaveAsChapter, aiReady, characters, projectName, preferredTitle]);
 
   // ===== 后台生成章节摘要 + 抽取叙事事实（合并为一次 AI 调用）=====
   const generateAndSaveSummary = useCallback(async (chapterTitle: string, content: string) => {
