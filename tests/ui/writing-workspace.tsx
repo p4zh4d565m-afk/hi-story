@@ -130,11 +130,42 @@ const cases: Array<[string, () => Promise<void>]> = [
     assert(text() === '', '清空正文后旧内容重新出现');
     await until(() => stored.get('a') === '<p></p>');
   }],
+  ['保存失败时明确显示等待重试', async () => {
+    saveFailuresRemaining = 1;
+    edit('<p>等待重试的正文</p>');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }));
+    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]')));
+    const retryButton = document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]');
+    assert(retryButton?.textContent?.includes('保存失败、等待重试'), '失败状态文案不明确');
+  }],
+  ['保存失败后自动重试最新正文', async () => {
+    saveFailuresRemaining = 1;
+    edit('<p>自动重试的正文</p>');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }));
+    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]')));
+    await until(() => stored.get('a') === '<p>自动重试的正文</p>');
+    assert(writes.length === 2, '自动重试应仅新增一次保存请求');
+  }],
+  ['保存持续失败时切章往返不静默丢失正文', async () => {
+    saveFailuresRemaining = 10;
+    edit('<p>持续失败也不能丢失的正文</p>');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }));
+    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]')));
+
+    flushSync(() => control.select('b'));
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    flushSync(() => control.select('a'));
+    await tick();
+
+    assert(text() === '持续失败也不能丢失的正文', '保存持续失败时切章往返丢失了正文');
+    assert(Boolean(document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]')), '返回失败章节后没有恢复等待重试状态');
+    assert(!stored.has('a'), '保存失败被静默标记为成功');
+  }],
   ['保存失败后保留正文并可点击重试', async () => {
     saveFailuresRemaining = 1;
     edit('<p>数据库尚未保存的正文</p>');
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }));
-    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="保存失败，点击重试"]')));
+    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]')));
     assert(text() === '数据库尚未保存的正文', '保存失败后编辑器丢失了待保存正文');
 
     flushSync(() => control.select('b'));
@@ -143,7 +174,7 @@ const cases: Array<[string, () => Promise<void>]> = [
     await tick();
     assert(text() === '数据库尚未保存的正文', '切章往返后丢失了保存失败的正文');
 
-    const retryButton = document.querySelector<HTMLButtonElement>('button[title="保存失败，点击重试"]');
+    const retryButton = document.querySelector<HTMLButtonElement>('button[title="点击立即重试"]');
     assert(retryButton, '保存失败后没有显示可重试状态');
     flushSync(() => retryButton.click());
     await until(() => stored.get('a') === '<p>数据库尚未保存的正文</p>');

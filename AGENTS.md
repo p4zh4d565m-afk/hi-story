@@ -66,7 +66,7 @@ The save mechanism has been hardened against data-loss race conditions:
 
 5. **策划/写作切换保留编辑器挂载** — `DockLayout` 用 `hidden` 隐藏写作区，保留待保存正文并继续执行两秒防抖保存，避免快速返回时读到旧正文。`WritingArea.isActive` 控制 Ctrl+S 监听，隐藏时不接管快捷键。真实编辑器回归命令：`node tests/ui/run-writing-workspace.cjs`（独立隐藏 Electron 窗口、临时目录及内存数据）。
 
-6. **保存失败保留正文** — `onSaveChapter` 返回明确成功布尔值；`WritingArea` 按章节保留待保存正文，失败时显示可重试状态，切章往返优先恢复草稿，只有对应内容成功落库后才清除。
+6. **保存失败保留正文** — `onSaveChapter` 返回明确成功布尔值；`WritingArea` 按章节保留待保存正文，失败时显示“保存失败、等待重试”，1 秒后自动重试（最多 2 次）且可点击立即重试。切章往返优先恢复草稿，只有对应内容成功落库后才清除。
 
 ### IPC contract
 

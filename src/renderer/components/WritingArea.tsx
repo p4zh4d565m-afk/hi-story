@@ -5,6 +5,9 @@ import ContextMenu from './ContextMenu';
 import type { MenuItem } from './ContextMenu';
 import type { Chapter, ChapterHistorySnapshot, Project } from '../types';
 
+const AUTO_RETRY_DELAY_MS = 1000;
+const MAX_AUTO_RETRIES = 2;
+
 interface WritingAreaProps {
   /** 隐藏写作页时保留自动保存，但不接管键盘快捷键。 */
   isActive?: boolean;
@@ -57,6 +60,9 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   // 按章节保留待保存正文，保存失败或切章都不能覆盖。
   const pendingContentByChapterRef = useRef(new Map<string, string>());
   const failedSaveChapterIdsRef = useRef(new Set<string>());
+  const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const automaticRetryCountsRef = useRef(new Map<string, number>());
+  const doSaveRef = useRef<(chapter: Chapter, html: string) => Promise<boolean>>(async () => false);
   const displayedChapterIdRef = useRef(activeChapter?.id ?? null);
   // 使用 ref 避免切章副作用读取旧闭包。
   const chaptersRef = useRef(chapters);
@@ -136,12 +142,36 @@ const WritingArea: React.FC<WritingAreaProps> = ({
     return new Date(isoStr).toLocaleString('zh-CN');
   }
 
+  const clearScheduledRetry = useCallback((chapterId: string, resetCount = true) => {
+    const timer = retryTimersRef.current.get(chapterId);
+    if (timer !== undefined) clearTimeout(timer);
+    retryTimersRef.current.delete(chapterId);
+    if (resetCount) automaticRetryCountsRef.current.delete(chapterId);
+  }, []);
+
+  const scheduleAutomaticRetry = useCallback((chapterId: string) => {
+    if (retryTimersRef.current.has(chapterId)) return;
+    const retryCount = automaticRetryCountsRef.current.get(chapterId) ?? 0;
+    if (retryCount >= MAX_AUTO_RETRIES) return;
+
+    const timer = setTimeout(() => {
+      retryTimersRef.current.delete(chapterId);
+      const content = pendingContentByChapterRef.current.get(chapterId);
+      const chapter = chaptersRef.current.find(item => item.id === chapterId);
+      if (content === undefined || !chapter || !failedSaveChapterIdsRef.current.has(chapterId)) return;
+      automaticRetryCountsRef.current.set(chapterId, retryCount + 1);
+      void doSaveRef.current(chapter, content);
+    }, AUTO_RETRY_DELAY_MS);
+    retryTimersRef.current.set(chapterId, timer);
+  }, []);
+
   // 自动保存、Ctrl+S 和保存按钮共用同一条回执处理链路。
   const doSave = useCallback(async (chapter: Chapter, html: string) => {
     const pending = pendingContentByChapterRef.current.get(chapter.id);
     if (pending === undefined || html === chapter.content) {
       pendingContentByChapterRef.current.delete(chapter.id);
       failedSaveChapterIdsRef.current.delete(chapter.id);
+      clearScheduledRetry(chapter.id);
       if (activeChapterRef.current?.id === chapter.id) setSaveStatus('saved');
       return true;
     }
@@ -159,9 +189,11 @@ const WritingArea: React.FC<WritingAreaProps> = ({
       if (latestPending === html) {
         pendingContentByChapterRef.current.delete(chapter.id);
         failedSaveChapterIdsRef.current.delete(chapter.id);
+        clearScheduledRetry(chapter.id);
       }
     } else if (latestPending === html) {
       failedSaveChapterIdsRef.current.add(chapter.id);
+      scheduleAutomaticRetry(chapter.id);
     }
 
     if (activeChapterRef.current?.id === chapter.id) {
@@ -171,8 +203,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
         : failedSaveChapterIdsRef.current.has(chapter.id) ? 'failed' : 'unsaved');
     }
     return success;
-  }, [onSaveChapter]);
-  const doSaveRef = useRef(doSave);
+  }, [clearScheduledRetry, onSaveChapter, scheduleAutomaticRetry]);
   doSaveRef.current = doSave;
 
   // 切章前提交上一章待保存正文；失败草稿只保留，等待用户重试。
@@ -208,6 +239,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
     if (!chapterId) return;
     pendingContentByChapterRef.current.set(chapterId, html);
     failedSaveChapterIdsRef.current.delete(chapterId);
+    clearScheduledRetry(chapterId);
     setSaveStatus('unsaved');
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
@@ -222,14 +254,15 @@ const WritingArea: React.FC<WritingAreaProps> = ({
         doSave(currentChapter, html);
       }
     }, 2000);
-  }, [doSave]);
+  }, [clearScheduledRetry, doSave]);
 
   // Manual save with Ctrl+S
   const handleManualSave = useCallback(() => {
     if (!activeChapter) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    doSave(activeChapter, localContent);
-  }, [activeChapter, localContent, doSave]);
+    clearScheduledRetry(activeChapter.id, false);
+    void doSave(activeChapter, localContent);
+  }, [activeChapter, clearScheduledRetry, localContent, doSave]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -247,6 +280,9 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   useEffect(() => {
     return () => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      retryTimersRef.current.forEach(timer => clearTimeout(timer));
+      retryTimersRef.current.clear();
+      automaticRetryCountsRef.current.clear();
     };
   }, []);
 
@@ -336,7 +372,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
                 ? '已保存'
                 : saveStatus === 'unsaved'
                   ? '点击保存 (Ctrl+S)'
-                  : saveStatus === 'failed' ? '保存失败，点击重试' : '保存中...'}
+                  : saveStatus === 'failed' ? '点击立即重试' : '保存中...'}
               className={`
                 flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all
                 ${saveStatus === 'saved'
@@ -370,7 +406,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
               {saveStatus === 'failed' && (
                 <>
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2V8M7 11V11.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
-                  保存失败，重试
+                  保存失败、等待重试
                 </>
               )}
             </button>
@@ -559,7 +595,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           {saveStatus === 'saved' && <span className="text-green-600">✅ 已保存</span>}
           {saveStatus === 'unsaved' && <span className="text-amber-600 animate-pulse">⚠️ 未保存</span>}
           {saveStatus === 'saving' && <span className="text-accent animate-pulse">⏳ 保存中...</span>}
-          {saveStatus === 'failed' && <span className="text-red-500">❌ 保存失败，正文已保留</span>}
+          {saveStatus === 'failed' && <span className="text-red-500">❌ 保存失败、等待重试（正文已保留，可点击立即重试）</span>}
           <span className="text-gray-700 mx-2">|</span>
           <span>Ctrl+S 保存</span>
         </div>
