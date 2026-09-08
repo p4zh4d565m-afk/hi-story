@@ -71,8 +71,9 @@ app.whenReady().then(() => {
     // 清空旧 768 维向量（避免与新 1024 维 API Embedding 维度冲突导致余弦相似度全 0）
     let clearedUser = 0, clearedLit = 0;
     try {
-      clearedUser = db.prepare('UPDATE reference_chunks SET embedding = NULL WHERE embedding IS NOT NULL').run().changes;
-      clearedLit = db.prepare('DELETE FROM lit_embeddings').run().changes;
+      // Float32 每维占 4 字节，仅清理旧的 768 维向量，保留已重建的索引。
+      clearedUser = db.prepare('UPDATE reference_chunks SET embedding = NULL WHERE length(embedding) = 3072').run().changes;
+      clearedLit = db.prepare('DELETE FROM lit_embeddings WHERE length(embedding) = 3072').run().changes;
     } catch {}
     if (clearedUser > 0 || clearedLit > 0) {
       console.log(`[Init] 清空旧向量: user=${clearedUser}, lit=${clearedLit}（请用 build_embeddings.py 重建）`);

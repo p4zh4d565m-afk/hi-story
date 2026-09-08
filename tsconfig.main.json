@@ -6,5 +6,5 @@
     "outDir": "dist/main",
     "rootDir": "src"
   },
-  "include": ["src/main/**/*", "src/renderer/types/**/*"]
+  "include": ["src/main/**/*", "src/preload/**/*", "src/renderer/types/**/*"]
 }

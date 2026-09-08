@@ -100,15 +100,14 @@ class AIServiceImpl implements AIService {
       pendingResolve?.();
     };
 
+    const unsubscribeToken = window.electronAPI.on('ai:streamToken', onToken);
+    const unsubscribeComplete = window.electronAPI.on('ai:streamComplete', onComplete);
+    const unsubscribeError = window.electronAPI.on('ai:streamError', onError);
     const cleanup = () => {
-      window.electronAPI.removeListener('ai:streamToken', onToken);
-      window.electronAPI.removeListener('ai:streamComplete', onComplete);
-      window.electronAPI.removeListener('ai:streamError', onError);
+      unsubscribeToken();
+      unsubscribeComplete();
+      unsubscribeError();
     };
-
-    window.electronAPI.on('ai:streamToken', onToken);
-    window.electronAPI.on('ai:streamComplete', onComplete);
-    window.electronAPI.on('ai:streamError', onError);
 
     try {
       let fullText = '';

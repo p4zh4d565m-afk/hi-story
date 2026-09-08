@@ -6,6 +6,8 @@ import type { MenuItem } from './ContextMenu';
 import type { Chapter, ChapterHistorySnapshot, Project } from '../types';
 
 interface WritingAreaProps {
+  /** 隐藏写作页时保留自动保存，但不接管键盘快捷键。 */
+  isActive?: boolean;
   activeProject: Project | null;
   chapters: Chapter[];
   activeChapter: Chapter | null;
@@ -30,6 +32,7 @@ interface WritingAreaProps {
 }
 
 const WritingArea: React.FC<WritingAreaProps> = ({
+  isActive = true,
   activeProject,
   chapters,
   activeChapter,
@@ -218,6 +221,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   }, [activeChapter, localContent, doSave]);
 
   useEffect(() => {
+    if (!isActive) return;
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault();
@@ -226,7 +230,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleManualSave]);
+  }, [handleManualSave, isActive]);
 
   // Cleanup timer on unmount
   useEffect(() => {

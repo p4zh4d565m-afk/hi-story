@@ -434,7 +434,9 @@ const DockLayout: React.FC<DockLayoutProps> = ({
         <div className="flex-1 flex overflow-hidden">
           {/* 策划与写作共用主区域，数据保持在同一个小说项目中 */}
           <div className="flex-1 min-w-0 overflow-hidden">
-            {workspaceMode === 'planning' ? planningArea : writingArea}
+            {/* 保留编辑器及待保存内容，切换页面时自动保存仍可继续执行。 */}
+            <div className="h-full" hidden={workspaceMode !== 'writing'}>{writingArea}</div>
+            {workspaceMode === 'planning' && planningArea}
           </div>
 
           {/* AI Chat panel (dockable, resizable) — hidden when aiLevel is 'off' */}

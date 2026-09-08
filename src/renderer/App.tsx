@@ -894,14 +894,12 @@ const App: React.FC = () => {
   // === Menu events ===
   useEffect(() => {
     const h = () => setShowCreateDialog(true);
-    window.electronAPI.on('menu:create-project', h);
-    return () => { window.electronAPI.removeListener('menu:create-project', h); };
+    return window.electronAPI.on('menu:create-project', h);
   }, []);
 
   useEffect(() => {
     const h = () => setShowImportDialog(true);
-    window.electronAPI.on('menu:import-novel', h);
-    return () => { window.electronAPI.removeListener('menu:import-novel', h); };
+    return window.electronAPI.on('menu:import-novel', h);
   }, []);
 
   // === Export/Backup menu events ===
@@ -915,8 +913,7 @@ const App: React.FC = () => {
         }
       } catch (err) { console.error('Export failed:', err); }
     };
-    window.electronAPI.on('menu:export-project-json', h);
-    return () => { window.electronAPI.removeListener('menu:export-project-json', h); };
+    return window.electronAPI.on('menu:export-project-json', h);
   }, [activeProject]);
 
   useEffect(() => {
@@ -928,8 +925,7 @@ const App: React.FC = () => {
         }
       } catch (err) { console.error('Export all failed:', err); }
     };
-    window.electronAPI.on('menu:export-all-json', h);
-    return () => { window.electronAPI.removeListener('menu:export-all-json', h); };
+    return window.electronAPI.on('menu:export-all-json', h);
   }, []);
 
   useEffect(() => {
@@ -941,15 +937,13 @@ const App: React.FC = () => {
         }
       } catch (err) { console.error('Backup failed:', err); }
     };
-    window.electronAPI.on('menu:backup-db', h);
-    return () => { window.electronAPI.removeListener('menu:backup-db', h); };
+    return window.electronAPI.on('menu:backup-db', h);
   }, []);
 
   // 数据库浏览器菜单事件
   useEffect(() => {
     const h = () => setShowDatabaseBrowser(true);
-    window.electronAPI.on('menu:browse-database', h);
-    return () => { window.electronAPI.removeListener('menu:browse-database', h); };
+    return window.electronAPI.on('menu:browse-database', h);
   }, []);
 
   // === Keyboard shortcuts ===
@@ -1071,6 +1065,7 @@ const App: React.FC = () => {
         }
         writingArea={
           <WritingArea
+            isActive={workspaceMode === 'writing'}
             activeProject={activeProject}
             chapters={chapters}
             activeChapter={activeChapter}
