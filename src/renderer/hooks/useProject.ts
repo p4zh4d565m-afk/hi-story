@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Project, CreateProjectInput } from '../types';
+import { createProjectSelectionGuard } from '../services/project-data-loader';
 
 interface UseProjectReturn {
   projects: Project[];
@@ -7,6 +8,7 @@ interface UseProjectReturn {
   loading: boolean;
   creating: boolean;
   setActiveProjectId: (id: string | null) => void;
+  isActiveProject: (id: string) => boolean;
   createProject: (input: CreateProjectInput) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
@@ -18,18 +20,30 @@ export function useProject(): UseProjectReturn {
   const [activeProject, setActiveProject] = useState<Project | null>(null);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
+  const selectionGuardRef = useRef(createProjectSelectionGuard());
+  const projectListRequestRef = useRef(0);
+
+  const selectProject = useCallback((id: string | null) => {
+    selectionGuardRef.current.select(id);
+    setActiveProjectId(id);
+  }, []);
+
+  const isActiveProject = useCallback((id: string) => (
+    selectionGuardRef.current.currentProjectId() === id
+  ), []);
 
   const refreshProjects = useCallback(async () => {
+    const requestId = ++projectListRequestRef.current;
     setLoading(true);
     try {
       const result = await window.electronAPI.invoke('db:project:findAll', 50, 0) as any;
-      if (result.success && result.data) {
+      if (requestId === projectListRequestRef.current && result.success && result.data) {
         setProjects(result.data.items);
       }
     } catch (err) {
       console.error('Failed to load projects:', err);
     } finally {
-      setLoading(false);
+      if (requestId === projectListRequestRef.current) setLoading(false);
     }
   }, []);
 
@@ -38,30 +52,42 @@ export function useProject(): UseProjectReturn {
   }, [refreshProjects]);
 
   useEffect(() => {
+    const ticket = selectionGuardRef.current.snapshot();
     if (!activeProjectId) {
       setActiveProject(null);
       return;
     }
     const found = projects.find((p) => p.id === activeProjectId);
     if (found) {
-      setActiveProject(found);
+      if (selectionGuardRef.current.isCurrent(ticket)) setActiveProject(found);
     } else {
+      setActiveProject(null);
+      let disposed = false;
       window.electronAPI.invoke('db:project:findById', activeProjectId)
         .then((result: any) => {
-          if (result.success && result.data) {
+          if (!disposed && selectionGuardRef.current.isCurrent(ticket) && result.success && result.data) {
             setActiveProject(result.data);
           }
+        })
+        .catch((error: unknown) => {
+          if (!disposed && selectionGuardRef.current.isCurrent(ticket)) {
+            console.error('项目加载失败：', error);
+          }
         });
+      return () => { disposed = true; };
     }
   }, [activeProjectId, projects]);
 
   const createProject = useCallback(async (input: CreateProjectInput): Promise<Project | null> => {
+    const selectionAtStart = selectionGuardRef.current.snapshot();
     setCreating(true);
     try {
       const result = await window.electronAPI.invoke('db:project:create', input) as any;
       if (result.success && result.data) {
         await refreshProjects();
-        setActiveProjectId(result.data.id);
+        if (selectionGuardRef.current.isCurrent(selectionAtStart)) {
+          selectProject(result.data.id);
+        }
         return result.data as Project;
       } else {
         console.error('Failed to create project:', result.error);
@@ -70,26 +96,27 @@ export function useProject(): UseProjectReturn {
     } finally {
       setCreating(false);
     }
-  }, [refreshProjects]);
+  }, [refreshProjects, selectProject]);
 
   const deleteProject = useCallback(async (id: string) => {
     try {
       await window.electronAPI.invoke('db:project:remove', id);
-      if (activeProjectId === id) {
-        setActiveProjectId(null);
+      if (selectionGuardRef.current.currentProjectId() === id) {
+        selectProject(null);
       }
       await refreshProjects();
     } catch (err) {
       console.error('Failed to delete project:', err);
     }
-  }, [activeProjectId, refreshProjects]);
+  }, [refreshProjects, selectProject]);
 
   return {
     projects,
     activeProject,
     loading,
     creating,
-    setActiveProjectId,
+    setActiveProjectId: selectProject,
+    isActiveProject,
     createProject,
     deleteProject,
     refreshProjects,

@@ -31,6 +31,7 @@ import type { ImportResult } from '../main/importer';
 import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
 import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
+import { createProjectDataLoader } from './services/project-data-loader';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -65,7 +66,7 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 
 const App: React.FC = () => {
   const { projects, activeProject, loading: projectsLoading, creating: creatingProject,
-    setActiveProjectId, createProject, deleteProject } = useProject();
+    setActiveProjectId, isActiveProject, createProject, deleteProject } = useProject();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -166,39 +167,39 @@ const App: React.FC = () => {
   // ===== Character ↔ Chapter appearances =====
   const [characterAppearances, setCharacterAppearances] = useState<Record<string, string[]>>({});
 
-  const loadCharacterAppearances = useCallback(async (characterId: string) => {
+  const loadCharacterAppearances = useCallback(async (characterId: string, projectId: string) => {
     try {
       const res = await window.electronAPI.invoke('db:referenceLink:findBySource', 'character', characterId) as any;
-      if (res.success && res.data) {
+      if (isActiveProject(projectId) && res.success && res.data) {
         const chapterIds = res.data
           .filter((r: any) => r.targetType === 'chapter')
           .map((r: any) => r.targetId);
         setCharacterAppearances(prev => ({ ...prev, [characterId]: chapterIds }));
       }
     } catch {}
-  }, []);
+  }, [isActiveProject]);
 
   // ===== Character ↔ World Entry associations =====
   const [characterWorldAssoc, setCharacterWorldAssoc] = useState<Record<string, string[]>>({});
 
-  const loadCharacterWorldAssoc = useCallback(async (characterId: string) => {
+  const loadCharacterWorldAssoc = useCallback(async (characterId: string, projectId: string) => {
     try {
       const res = await window.electronAPI.invoke('db:referenceLink:findBySource', 'character', characterId) as any;
-      if (res.success && res.data) {
+      if (isActiveProject(projectId) && res.success && res.data) {
         const worldIds = res.data
           .filter((r: any) => r.targetType === 'world_entry')
           .map((r: any) => r.targetId);
         setCharacterWorldAssoc(prev => ({ ...prev, [characterId]: worldIds }));
       }
     } catch {}
-  }, []);
+  }, [isActiveProject]);
 
   useEffect(() => {
-    if (editingCharacterId) {
-      loadCharacterAppearances(editingCharacterId);
-      loadCharacterWorldAssoc(editingCharacterId);
+    if (editingCharacterId && activeProject) {
+      loadCharacterAppearances(editingCharacterId, activeProject.id);
+      loadCharacterWorldAssoc(editingCharacterId, activeProject.id);
     }
-  }, [editingCharacterId, loadCharacterAppearances, loadCharacterWorldAssoc]);
+  }, [activeProject, editingCharacterId, loadCharacterAppearances, loadCharacterWorldAssoc]);
 
   // ===== Handlers =====
   const handleToggleAppearance = useCallback(async (chapterId: string) => {
@@ -278,72 +279,79 @@ const App: React.FC = () => {
     }
   }, [editingCharacterId, characterWorldAssoc]);
 
-  // ===== Loaders =====
-  const loadRelations = useCallback(async (projectId: string) => {
-    try {
-      const res = await window.electronAPI.invoke('db:referenceLink:findAllCharacterRelations', projectId) as any;
-      if (res.success && res.data) {
-        setRelations(res.data.map((r: any) => ({
-          id: r.id,
-          sourceId: r.sourceId,
-          targetId: r.targetId,
-          relationType: r.relationType,
-          arrowDirection: r.arrowDirection || 'none',
-        })));
-      }
-    } catch {}
+  // ===== 项目数据加载 =====
+  const loadedProjectIdRef = useRef<string | null>(null);
+  const resetProjectData = useCallback(() => {
+    setChapters([]); setActiveChapterId(null);
+    setOutlineNodes([]); setActiveOutlineNodeId(null);
+    setCharacters([]); setActiveCharacterId(null); setEditingCharacterId(null);
+    setWorldEntries([]); setActiveWorldEntryId(null);
+    setRelations([]); setCharacterAppearances({}); setCharacterWorldAssoc({});
+    pendingAIOutlineRef.current = null; setPendingAIOutline(null);
   }, []);
 
-  const loadEntities = useCallback(async (projectId: string) => {
-    setChaptersLoading(true); setOutlineLoading(true);
-    setCharactersLoading(true); setWorldEntriesLoading(true);
-    try {
-      const [chRes, olRes, ch2Res, weRes] = await Promise.all([
-        window.electronAPI.invoke('db:chapter:findByProject', projectId) as any,
-        window.electronAPI.invoke('db:outline:findByProject', projectId) as any,
-        window.electronAPI.invoke('db:character:findByProject', projectId) as any,
-        window.electronAPI.invoke('db:worldEntry:findByProject', projectId) as any,
-      ]);
-      if (chRes.success && chRes.data) { setChapters(chRes.data); if (chRes.data.length > 0) setActiveChapterId(chRes.data[0].id); }
-      if (olRes.success && olRes.data) setOutlineNodes(olRes.data);
-      if (ch2Res.success && ch2Res.data) setCharacters(ch2Res.data);
-      if (weRes.success && weRes.data) setWorldEntries(weRes.data);
-    } catch (err) { console.error(err); }
-    finally { setChaptersLoading(false); setOutlineLoading(false); setCharactersLoading(false); setWorldEntriesLoading(false); }
-  }, []);
+  const projectDataLoader = useMemo(() => createProjectDataLoader({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    onApply: snapshot => {
+      loadedProjectIdRef.current = snapshot.projectId;
+      setChapters(snapshot.chapters);
+      setActiveChapterId(snapshot.chapters[0]?.id ?? null);
+      setOutlineNodes(snapshot.outlineNodes);
+      setActiveOutlineNodeId(null);
+      setCharacters(snapshot.characters);
+      setActiveCharacterId(null);
+      setWorldEntries(snapshot.worldEntries);
+      setActiveWorldEntryId(null);
+      setRelations(snapshot.relations as CharacterRelation[]);
+    },
+    onError: (projectId, error) => console.error(`项目 ${projectId} 数据加载失败：`, error),
+    onLoadingChange: (_projectId, loading) => {
+      setChaptersLoading(loading); setOutlineLoading(loading);
+      setCharactersLoading(loading); setWorldEntriesLoading(loading);
+    },
+    isProjectCurrent: isActiveProject,
+  }), [isActiveProject]);
 
   useEffect(() => {
     if (activeProject) {
-      loadEntities(activeProject.id);
-      loadRelations(activeProject.id);
+      if (loadedProjectIdRef.current !== activeProject.id) {
+        loadedProjectIdRef.current = null;
+        resetProjectData();
+      }
+      void projectDataLoader.load(activeProject.id);
     } else {
-      setChapters([]); setActiveChapterId(null); setOutlineNodes([]); setActiveOutlineNodeId(null);
-      setCharacters([]); setActiveCharacterId(null); setWorldEntries([]); setActiveWorldEntryId(null);
-      setRelations([]);
+      projectDataLoader.invalidate();
+      loadedProjectIdRef.current = null;
+      resetProjectData();
+      setChaptersLoading(false); setOutlineLoading(false);
+      setCharactersLoading(false); setWorldEntriesLoading(false);
     }
-  }, [activeProject?.id, loadEntities, loadRelations]);
+  }, [activeProject?.id, projectDataLoader, resetProjectData]);
 
   // ===== Handlers =====
   const handleCreateChapter = useCallback(async (title: string) => {
     if (!activeProject) return;
+    const projectId = activeProject.id;
     const planningOutline = pendingAIOutlineRef.current;
-    const res = await window.electronAPI.invoke('db:chapter:create', { projectId: activeProject.id, title, planningOutline }) as any;
+    const res = await window.electronAPI.invoke('db:chapter:create', { projectId, title, planningOutline }) as any;
+    if (!isActiveProject(projectId)) return;
     if (planningOutline) { pendingAIOutlineRef.current = null; setPendingAIOutline(null); }
     if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
-  }, [activeProject]);
+  }, [activeProject, isActiveProject]);
 
   const handleInsertChapterAfter = useCallback(async (afterChapterId: string, title: string) => {
+    if (!activeProject) return;
+    const projectId = activeProject.id;
     const res = await window.electronAPI.invoke('db:chapter:insertAfter', afterChapterId, title) as any;
-    if (res.success && res.data) {
+    if (res.success && res.data && isActiveProject(projectId)) {
       // 重新加载全部章节以获取正确的排序顺序
-      if (!activeProject) return;
-      const allRes = await window.electronAPI.invoke('db:chapter:findByProject', activeProject.id) as any;
-      if (allRes.success && allRes.data) {
+      const allRes = await window.electronAPI.invoke('db:chapter:findByProject', projectId) as any;
+      if (isActiveProject(projectId) && allRes.success && allRes.data) {
         setChapters(allRes.data);
         setActiveChapterId(res.data.id);
       }
     }
-  }, [activeProject]);
+  }, [activeProject, isActiveProject]);
 
   const handleRenameChapter = useCallback(async (id: string, title: string) => {
     const ch = chapters.find(c => c.id === id);
@@ -677,9 +685,9 @@ const App: React.FC = () => {
     setShowCreateDialog(false);
     if (project) {
       try {
-        const res = await window.electronAPI.invoke('db:chapter:create', { projectId: project.id, title: '第一章' }) as any;
-        if (res.success && res.data) { setChapters([res.data]); setActiveChapterId(res.data.id); }
+        await window.electronAPI.invoke('db:chapter:create', { projectId: project.id, title: '第一章' });
       } catch {}
+      if (isActiveProject(project.id)) await projectDataLoader.load(project.id);
     }
   };
 
@@ -702,24 +710,23 @@ const App: React.FC = () => {
             content: ch.content,
           }) as any;
         }
-        setActiveProjectId(project.id);
-        await loadEntities(project.id);
-        await loadRelations(project.id);
+        if (isActiveProject(project.id)) await projectDataLoader.load(project.id);
       } finally { setImporting(false); }
     } else {
+      const projectId = activeProject.id;
       setImporting(true);
       try {
         for (const ch of result.chapters) {
           await window.electronAPI.invoke('db:chapter:create', {
-            projectId: activeProject.id,
+            projectId,
             title: ch.title,
             content: ch.content,
           }) as any;
         }
-        await loadEntities(activeProject.id);
+        if (isActiveProject(projectId)) await projectDataLoader.load(projectId);
       } finally { setImporting(false); }
     }
-  }, [activeProject, createProject, setActiveProjectId, loadEntities, loadRelations]);
+  }, [activeProject, createProject, isActiveProject, projectDataLoader]);
 
   // 新的导入到参考库的处理
   const handleImportToReference = useCallback(async (result: ImportToRefResult) => {
@@ -1198,11 +1205,14 @@ const App: React.FC = () => {
             style={activeProject?.style || ''}
             preferredTitle={pendingAIOutline ? `第${pendingAIOutline.chapterNumber}章 ${pendingAIOutline.title}` : undefined}
             onSaveAsChapter={async (title, content) => {
+              const projectId = activeProject?.id;
+              if (!projectId) return;
               await handleCreateChapter(title);
+              if (!isActiveProject(projectId)) return;
               // 找到刚创建的章节（sortOrder 最大的），更新内容
               setTimeout(async () => {
-                const res = await window.electronAPI.invoke('db:chapter:findByProject', activeProject?.id) as any;
-                if (res.success && res.data) {
+                const res = await window.electronAPI.invoke('db:chapter:findByProject', projectId) as any;
+                if (isActiveProject(projectId) && res.success && res.data) {
                   const sorted = [...res.data].sort((a: Chapter, b: Chapter) => b.sortOrder - a.sortOrder);
                   if (sorted.length > 0) {
                     handleSaveChapter(sorted[0].id, content);

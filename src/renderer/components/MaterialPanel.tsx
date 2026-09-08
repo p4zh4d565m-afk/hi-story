@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Material } from '../types';
 import type { SearchResult } from '../types/search';
+import { createProjectSelectionGuard } from '../services/project-data-loader';
 
 interface MaterialPanelProps {
   open: boolean;
@@ -25,9 +26,13 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [selectedMaterial, setSelectedMaterial] = useState<Material | null>(null);
+  const projectLoadGuardRef = useRef(createProjectSelectionGuard());
+  const currentProjectIdRef = useRef(projectId);
+  currentProjectIdRef.current = projectId;
 
   // Load materials
   const loadMaterials = useCallback(async () => {
+    const ticket = projectLoadGuardRef.current.select(projectId);
     setLoading(true);
     try {
       let res: any;
@@ -36,11 +41,20 @@ const MaterialPanel: React.FC<MaterialPanelProps> = ({
       } else {
         res = await window.electronAPI.invoke('db:material:findGlobal') as any;
       }
-      if (res.success && res.data) {
+      if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket) && res.success && res.data) {
         setMaterials(res.data);
       }
     } catch (err) { console.error(err); }
-    finally { setLoading(false); }
+    finally {
+      if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket)) setLoading(false);
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    projectLoadGuardRef.current.select(projectId);
+    setMaterials([]);
+    setSelectedMaterial(null);
+    setLoading(false);
   }, [projectId]);
 
   useEffect(() => {

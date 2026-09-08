@@ -1,5 +1,6 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { Foreshadowing } from '../types';
+import { createProjectSelectionGuard } from '../services/project-data-loader';
 
 // ============================================================
 // 伏笔追踪浮动面板
@@ -61,23 +62,39 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
   const [editing, setEditing] = useState<EditingForeshadowing | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const projectLoadGuardRef = useRef(createProjectSelectionGuard());
+  const currentProjectIdRef = useRef(projectId);
+  currentProjectIdRef.current = projectId;
 
   // ===== 加载 =====
   const loadForeshadowings = useCallback(async () => {
-    if (!projectId) return;
+    if (!projectId || currentProjectIdRef.current !== projectId) return;
+    const ticket = projectLoadGuardRef.current.select(projectId);
     setLoading(true);
     try {
       const res = await window.electronAPI.invoke('db:foreshadowing:findByProject', projectId) as any;
-      if (res.success) setForeshadowings(res.data || []);
+      if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket) && res.success) setForeshadowings(res.data || []);
     } catch (e) {
-      setError((e as Error).message);
+      if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket)) setError((e as Error).message);
     } finally {
-      setLoading(false);
+      if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket)) setLoading(false);
     }
   }, [projectId]);
 
   useEffect(() => {
+    projectLoadGuardRef.current.select(projectId);
+    setForeshadowings([]);
+    setEditing(null);
+    setError(null);
+    setLoading(false);
+  }, [projectId]);
+
+  useEffect(() => {
     if (open && projectId) loadForeshadowings();
+    if (!open) {
+      projectLoadGuardRef.current.select(projectId);
+      setLoading(false);
+    }
   }, [open, projectId, loadForeshadowings]);
 
   // ===== 创建/更新 =====

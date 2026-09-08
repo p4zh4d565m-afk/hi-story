@@ -1,6 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { Chapter } from '../types';
 import type { CreateChapterInput } from '../../main/db/repositories/chapter.repo';
+import { createProjectSelectionGuard } from '../services/project-data-loader';
 
 interface UseChapterReturn {
   chapters: Chapter[];
@@ -20,31 +21,45 @@ export function useChapter(): UseChapterReturn {
   const [activeChapter, setActiveChapter] = useState<Chapter | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const projectLoadGuardRef = useRef(createProjectSelectionGuard());
 
   const loadChapters = useCallback(async (projectId: string) => {
+    const previousProjectId = projectLoadGuardRef.current.currentProjectId();
+    const ticket = projectLoadGuardRef.current.select(projectId);
+    if (previousProjectId !== projectId) {
+      setChapters([]);
+      setActiveChapterId(null);
+      setActiveChapter(null);
+    }
     setLoading(true);
     try {
       const result = await window.electronAPI.invoke('db:chapter:findByProject', projectId) as any;
-      if (result.success && result.data) {
+      if (projectLoadGuardRef.current.isCurrent(ticket) && result.success && result.data) {
         setChapters(result.data);
-        // Auto-select first chapter if none selected
-        if (!activeChapterId && result.data.length > 0) {
-          setActiveChapterId(result.data[0].id);
-        }
+        setActiveChapterId(currentId => (
+          currentId && result.data.some((chapter: Chapter) => chapter.id === currentId)
+            ? currentId
+            : result.data[0]?.id ?? null
+        ));
+        setActiveChapter(current => (
+          current ? result.data.find((chapter: Chapter) => chapter.id === current.id) ?? null : null
+        ));
       }
     } catch (err) {
-      console.error('Failed to load chapters:', err);
+      if (projectLoadGuardRef.current.isCurrent(ticket)) console.error('Failed to load chapters:', err);
     } finally {
-      setLoading(false);
+      if (projectLoadGuardRef.current.isCurrent(ticket)) setLoading(false);
     }
-  }, [activeChapterId]);
+  }, []);
 
   const createChapter = useCallback(async (input: CreateChapterInput): Promise<Chapter | null> => {
     try {
       const result = await window.electronAPI.invoke('db:chapter:create', input) as any;
-      if (result.success && result.data) {
+      if (result.success && result.data && projectLoadGuardRef.current.currentProjectId() === input.projectId) {
         await loadChapters(input.projectId);
-        setActiveChapterId(result.data.id);
+        if (projectLoadGuardRef.current.currentProjectId() === input.projectId) {
+          setActiveChapterId(result.data.id);
+        }
         return result.data;
       }
     } catch (err) {

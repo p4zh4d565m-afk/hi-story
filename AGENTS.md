@@ -52,6 +52,10 @@ Minimal bridge exposing `invoke` and `on` via `contextBridge.exposeInMainWorld('
 
 ## Critical Implementation Details
 
+### Project data load flow (App.tsx)
+
+项目切换使用 `project-data-loader.ts` 的“项目 ID + 请求代次”双重校验：章节、大纲、人物、世界观和人物关系必须全部成功后才原子写入 React 状态；旧代次的成功、失败和 loading 回执一律忽略。选择动作会同步更新项目守卫，不能只在 `useEffect` 中判断，以免点击新项目到副作用执行之间的旧请求落地。独立面板的项目数据加载也必须复用同一守卫；切换项目先清除旧项目可见数据，当前项目刷新失败则保留已有完整快照。
+
 ### Chapter save flow (WritingArea.tsx)
 
 The save mechanism has been hardened against data-loss race conditions:
@@ -120,6 +124,7 @@ resources/
 - **章纲到正文闭环** — 锁定章纲后可选择“自己写”创建空白正文，或把章纲送入 AI 代写面板；正文章节保存创建时的章纲快照，并在编辑器顶部显示可折叠施工卡。迁移 v15 新增章节章纲快照字段。
 - **全书字数统计** — 小说名后显示 `{totalWords.toLocaleString()} 字`，统计所有章节 CJK 字符
 - **章节保存防丢失** — 保存失败保留待保存正文并显示重试入口；切章、延迟回执与策划/写作切换防护见上方 Critical Implementation Details
+- **项目异步加载隔离** — 项目选择与五类核心数据加载使用请求代次及当前项目双重校验，整组数据成功后原子提交；旧项目迟到或失败的回执不会覆盖当前界面，策划、素材、伏笔和角色关联加载遵守同一约束
 - **去 AI 味润色** — 工具栏「✨ 润色」整章润色 + 右键「✨ AI 润色」选中文本润色。保守润色（保留原意、只改不通顺/生硬/有 AI 味处），结果并排预览对比、确认后才写回。复用 `aiService.chatStream` + `POLISH_SYSTEM_PROMPT`，无需改 main 进程
 - **内容安全红线** — `WRITE_SYSTEM_PROMPT` 内置「内容安全红线」段：禁止性行为/性器官/性暗示隐喻描写，亲密戏用含蓄留白+蒙太奇转场，确保生成内容通过番茄等网文平台审核
 - **全书文风统计** — 审稿面板「📊 全书文风统计」Tab：纯本地正则零 LLM 统计全书句式 tic（章均频率/口头禅/跨章重复句/章末形态同构/开篇时间词率），发现单章看不出的固化 AI 味。参考 voocel/ainovel-cli 的 stylestat 设计，核心在 `runStyleStats`

@@ -1,8 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, WritingSkill, WritingSkillSummary } from '../types';
 import { decrypt } from '../services/crypto';
 import { aiService } from '../services/ai.service';
 import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
+import { createProjectSelectionGuard } from '../services/project-data-loader';
 
 interface PlanningWorkspaceProps {
   project: Project | null;
@@ -63,15 +64,20 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const [chapterOutlineStatus, setChapterOutlineStatus] = useState<PlanningIdea['chapterOutlineStatus']>('empty');
   const [chapterLoadingVolume, setChapterLoadingVolume] = useState<number | null>(null);
   const [activeVolume, setActiveVolume] = useState(0);
+  const projectLoadGuardRef = useRef(createProjectSelectionGuard());
+  const currentProjectIdRef = useRef(project?.id ?? null);
+  currentProjectIdRef.current = project?.id ?? null;
 
   useEffect(() => {
     setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft');
     setMasterOutline(null); setOutlineStatus('empty'); setError('');
     setVolumeOutlines([]); setVolumeStatus('empty');
     setChapterOutlines([]); setChapterOutlineStatus('empty'); setActiveVolume(0);
+    const ticket = projectLoadGuardRef.current.select(project?.id ?? null);
     if (!project) return;
+    let disposed = false;
     window.electronAPI.invoke('db:planning:findByProject', project.id).then((res: any) => {
-      if (res?.success && res.data) {
+      if (!disposed && currentProjectIdRef.current === project.id && projectLoadGuardRef.current.isCurrent(ticket) && res?.success && res.data) {
         const data = res.data as PlanningIdea;
         setIdea(data.idea);
         setRequirements(data.requirements);
@@ -85,7 +91,12 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         setChapterOutlines(data.chapterOutlines || []);
         setChapterOutlineStatus(data.chapterOutlineStatus || 'empty');
       }
+    }).catch((loadError: unknown) => {
+      if (!disposed && currentProjectIdRef.current === project.id && projectLoadGuardRef.current.isCurrent(ticket)) {
+        setError((loadError as Error).message || '策划数据加载失败');
+      }
     });
+    return () => { disposed = true; };
   }, [project?.id]);
 
   useEffect(() => {
