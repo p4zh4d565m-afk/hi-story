@@ -13,6 +13,7 @@ let control: { edit: (html: string) => void; select: (id: string) => void };
 let writes: Array<{ id: string; content: string }>;
 let stored: Map<string, string>;
 let saveDelay = 0;
+let saveFailuresRemaining = 0;
 
 function Fixture() {
   const [mode, setMode] = useState<'writing' | 'planning'>('writing');
@@ -25,9 +26,15 @@ function Fixture() {
     writes.push({ id, content });
     setSaving(true);
     await new Promise(resolve => setTimeout(resolve, saveDelay));
+    if (saveFailuresRemaining > 0) {
+      saveFailuresRemaining -= 1;
+      setSaving(false);
+      return false;
+    }
     stored.set(id, content);
     setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content } : ch));
     setSaving(false);
+    return true;
   };
   return <DockLayout
     {...Object.fromEntries(['onToggleSidebar', 'onToggleAiChat', 'onMinimizeAiChat', 'onToggleInspiration', 'onToggleMindmap', 'onToggleMaterial', 'onToggleOutline', 'onToggleReference', 'onToggleNamegen', 'onToggleAiWrite', 'onToggleAiReview', 'onToggleAiPolish', 'onToggleForeshadowing', 'onSetAiLevel', 'onSetFontSize'].map(key => [key, noop])) as any}
@@ -123,12 +130,32 @@ const cases: Array<[string, () => Promise<void>]> = [
     assert(text() === '', '清空正文后旧内容重新出现');
     await until(() => stored.get('a') === '<p></p>');
   }],
+  ['保存失败后保留正文并可点击重试', async () => {
+    saveFailuresRemaining = 1;
+    edit('<p>数据库尚未保存的正文</p>');
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 's', ctrlKey: true, cancelable: true }));
+    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="保存失败，点击重试"]')));
+    assert(text() === '数据库尚未保存的正文', '保存失败后编辑器丢失了待保存正文');
+
+    flushSync(() => control.select('b'));
+    await tick();
+    flushSync(() => control.select('a'));
+    await tick();
+    assert(text() === '数据库尚未保存的正文', '切章往返后丢失了保存失败的正文');
+
+    const retryButton = document.querySelector<HTMLButtonElement>('button[title="保存失败，点击重试"]');
+    assert(retryButton, '保存失败后没有显示可重试状态');
+    flushSync(() => retryButton.click());
+    await until(() => stored.get('a') === '<p>数据库尚未保存的正文</p>');
+    await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="已保存"]')));
+    assert(writes.length === 2, '重试应仅新增一次保存请求');
+  }],
 ];
 
 (window as any).runWritingRegression = async () => {
   const results: Array<{ name: string; error?: string }> = [];
   for (const [name, run] of cases) {
-    writes = []; stored = new Map(); saveDelay = 0;
+    writes = []; stored = new Map(); saveDelay = 0; saveFailuresRemaining = 0;
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);

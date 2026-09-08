@@ -412,9 +412,13 @@ const App: React.FC = () => {
       const res = await window.electronAPI.invoke('db:chapter:update', { id, content, wordCount }) as any;
       if (!res || !res.success) {
         console.error('Chapter save failed:', res?.error || 'unknown error');
-        return; // Don't update local state if save failed
+        return false; // 保存失败时由编辑器保留待保存正文并提供重试
       }
       setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content, wordCount } : ch));
+      return true;
+    } catch (error) {
+      console.error('Chapter save failed:', error);
+      return false;
     } finally { setSaving(false); }
   }, []);
 

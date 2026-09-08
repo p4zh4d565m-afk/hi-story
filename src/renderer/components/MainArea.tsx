@@ -13,7 +13,7 @@ interface MainAreaProps {
   onCreateChapter: (title: string) => void;
   onDeleteChapter: (id: string) => void;
   onRenameChapter?: (id: string, title: string) => void;
-  onSaveChapter: (id: string, content: string) => void;
+  onSaveChapter: (id: string, content: string) => Promise<boolean>;
   saving: boolean;
   // AI Chat
   contextMessages?: { role: 'system' | 'user' | 'assistant'; content: string }[];

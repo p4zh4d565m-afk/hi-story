@@ -15,11 +15,11 @@ hi-story 是面向长篇小说创作的本地 Electron 工作台。当前核心�
 - 当前开发分支：`feature/skill-engine`。
 - 策划工作台已覆盖故事方向、总纲、分卷纲、章纲及正文入口。
 - 维护修复已覆盖 preload 监听释放、启动时保留有效语义索引，以及策划/写作切换时保留待保存正文。
+- 章节保存失败会按章节保留待保存正文、显示可重试状态，成功落库后才清除草稿。
 - 详细维护发现见 `docs/maintenance-review-2026-09-07.md`。
 
 ## 后续优先项
 
-1. 保存失败时保留待保存内容并显示可重试状态。
-2. 防止旧项目的异步加载结果覆盖当前项目。
-3. 确定 Obsidian 与 SQLite 的数据归属、Markdown 模板和单向读取协议。
-4. 将 AI 对话和创作决定从 localStorage 迁入 SQLite。
+1. 防止旧项目的异步加载结果覆盖当前项目。
+2. 确定 Obsidian 与 SQLite 的数据归属、Markdown 模板和单向读取协议。
+3. 将 AI 对话和创作决定从 localStorage 迁入 SQLite。

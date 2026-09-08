@@ -15,7 +15,7 @@ interface WritingAreaProps {
   onCreateChapter: (title: string) => void;
   onDeleteChapter: (id: string) => void;
   onRenameChapter: (id: string, title: string) => void;
-  onSaveChapter: (id: string, content: string) => void;
+  onSaveChapter: (id: string, content: string) => Promise<boolean>;
   onCreateProject: () => void;
   onImportNovel: () => void;
   saving: boolean;
@@ -43,7 +43,6 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   onSaveChapter,
   onCreateProject,
   onImportNovel,
-  saving,
   onSearchInInspiration,
   onSearchInReference,
   onAIPolish,
@@ -55,16 +54,15 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeChapterRef = useRef(activeChapter);
   activeChapterRef.current = activeChapter;
-  // Track pending (unsaved) content keyed by chapter ID for chapter-switch flush
-  const pendingContentRef = useRef<{ chapterId: string; content: string } | null>(null);
-  // Refs to avoid stale closures in effects
+  // 按章节保留待保存正文，保存失败或切章都不能覆盖。
+  const pendingContentByChapterRef = useRef(new Map<string, string>());
+  const failedSaveChapterIdsRef = useRef(new Set<string>());
+  const displayedChapterIdRef = useRef(activeChapter?.id ?? null);
+  // 使用 ref 避免切章副作用读取旧闭包。
   const chaptersRef = useRef(chapters);
   chaptersRef.current = chapters;
-  const onSaveChapterRef = useRef(onSaveChapter);
-  onSaveChapterRef.current = onSaveChapter;
   const [localContent, setLocalContent] = React.useState('');
-  const [saveStatus, setSaveStatus] = React.useState<'saved' | 'unsaved' | 'saving'>('saved');
-  const lastSavedContentRef = useRef(activeChapter?.content ?? '');
+  const [saveStatus, setSaveStatus] = React.useState<'saved' | 'unsaved' | 'saving' | 'failed'>('saved');
 
   // Context menu state
   const [contextMenu, setContextMenu] = useState<{ visible: boolean; x: number; y: number; chapterId: string }>({
@@ -138,56 +136,69 @@ const WritingArea: React.FC<WritingAreaProps> = ({
     return new Date(isoStr).toLocaleString('zh-CN');
   }
 
-  // Sync local content when active chapter changes
-  // CRITICAL: flush any pending save for the PREVIOUS chapter before switching
+  // 自动保存、Ctrl+S 和保存按钮共用同一条回执处理链路。
+  const doSave = useCallback(async (chapter: Chapter, html: string) => {
+    const pending = pendingContentByChapterRef.current.get(chapter.id);
+    if (pending === undefined || html === chapter.content) {
+      pendingContentByChapterRef.current.delete(chapter.id);
+      failedSaveChapterIdsRef.current.delete(chapter.id);
+      if (activeChapterRef.current?.id === chapter.id) setSaveStatus('saved');
+      return true;
+    }
+
+    if (activeChapterRef.current?.id === chapter.id) setSaveStatus('saving');
+    let success = false;
+    try {
+      success = await onSaveChapter(chapter.id, html);
+    } catch (error) {
+      console.error('章节保存失败：', error);
+    }
+
+    const latestPending = pendingContentByChapterRef.current.get(chapter.id);
+    if (success) {
+      if (latestPending === html) {
+        pendingContentByChapterRef.current.delete(chapter.id);
+        failedSaveChapterIdsRef.current.delete(chapter.id);
+      }
+    } else if (latestPending === html) {
+      failedSaveChapterIdsRef.current.add(chapter.id);
+    }
+
+    if (activeChapterRef.current?.id === chapter.id) {
+      const currentPending = pendingContentByChapterRef.current.get(chapter.id);
+      setSaveStatus(currentPending === undefined
+        ? 'saved'
+        : failedSaveChapterIdsRef.current.has(chapter.id) ? 'failed' : 'unsaved');
+    }
+    return success;
+  }, [onSaveChapter]);
+  const doSaveRef = useRef(doSave);
+  doSaveRef.current = doSave;
+
+  // 切章前提交上一章待保存正文；失败草稿只保留，等待用户重试。
   useEffect(() => {
-    // Cancel any pending auto-save timer for the previous chapter
     if (saveTimerRef.current) {
       clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
 
-    // Flush pending content for the previous chapter (if different and unsaved)
-    const pending = pendingContentRef.current;
-    if (pending && pending.chapterId !== activeChapter?.id && pending.content !== lastSavedContentRef.current) {
-      // Synchronously fire off a save for the previous chapter before switching
-      const prevChapter = chaptersRef.current.find(ch => ch.id === pending.chapterId);
-      if (prevChapter && pending.content !== prevChapter.content) {
-        onSaveChapterRef.current(pending.chapterId, pending.content);
+    const previousChapterId = displayedChapterIdRef.current;
+    if (previousChapterId && previousChapterId !== activeChapter?.id) {
+      const pending = pendingContentByChapterRef.current.get(previousChapterId);
+      const previousChapter = chaptersRef.current.find(chapter => chapter.id === previousChapterId);
+      if (pending !== undefined && previousChapter && pending !== previousChapter.content
+        && !failedSaveChapterIdsRef.current.has(previousChapterId)) {
+        void doSaveRef.current(previousChapter, pending);
       }
     }
-    pendingContentRef.current = null;
 
-    // Load new chapter's content into local state
-    setLocalContent(activeChapter?.content ?? '');
-    lastSavedContentRef.current = activeChapter?.content ?? '';
-    setSaveStatus('saved');
+    displayedChapterIdRef.current = activeChapter?.id ?? null;
+    const pending = activeChapter ? pendingContentByChapterRef.current.get(activeChapter.id) : undefined;
+    setLocalContent(pending ?? activeChapter?.content ?? '');
+    setSaveStatus(!activeChapter || pending === undefined || pending === activeChapter.content
+      ? 'saved'
+      : failedSaveChapterIdsRef.current.has(activeChapter.id) ? 'failed' : 'unsaved');
   }, [activeChapter?.id]);
-
-  // When saving prop changes to false, it means save completed
-  useEffect(() => {
-    if (!saving && saveStatus === 'saving') {
-      setSaveStatus('saved');
-      lastSavedContentRef.current = activeChapterRef.current?.content ?? '';
-    }
-  }, [saving]);
-
-  // Track unsaved changes
-  useEffect(() => {
-    if (localContent !== lastSavedContentRef.current) {
-      setSaveStatus('unsaved');
-    }
-  }, [localContent]);
-
-  // Perform save (called by auto-save timer, Ctrl+S, or save button)
-  const doSave = useCallback((chapter: Chapter, html: string) => {
-    if (html !== chapter.content) {
-      setSaveStatus('saving');
-      onSaveChapter(chapter.id, html);
-    } else {
-      setSaveStatus('saved');
-    }
-  }, [onSaveChapter]);
 
   // Auto-save with debounce (2 seconds after last edit)
   const handleUpdate = useCallback((html: string) => {
@@ -195,8 +206,9 @@ const WritingArea: React.FC<WritingAreaProps> = ({
     // Capture chapter ID NOW (at keystroke time), NOT when the timer fires
     const chapterId = activeChapterRef.current?.id;
     if (!chapterId) return;
-    // Track pending content so chapter-switch can flush it
-    pendingContentRef.current = { chapterId, content: html };
+    pendingContentByChapterRef.current.set(chapterId, html);
+    failedSaveChapterIdsRef.current.delete(chapterId);
+    setSaveStatus('unsaved');
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
       // Re-verify we're still on the same chapter when timer fires
@@ -205,7 +217,6 @@ const WritingArea: React.FC<WritingAreaProps> = ({
         // flushed the save; don't double-save or save to wrong chapter
         return;
       }
-      pendingContentRef.current = null;
       const currentChapter = activeChapterRef.current;
       if (currentChapter && html !== currentChapter.content) {
         doSave(currentChapter, html);
@@ -321,14 +332,20 @@ const WritingArea: React.FC<WritingAreaProps> = ({
             <button
               onClick={handleManualSave}
               disabled={saveStatus === 'saving'}
-              title={saveStatus === 'saved' ? '已保存' : saveStatus === 'unsaved' ? '点击保存 (Ctrl+S)' : '保存中...'}
+              title={saveStatus === 'saved'
+                ? '已保存'
+                : saveStatus === 'unsaved'
+                  ? '点击保存 (Ctrl+S)'
+                  : saveStatus === 'failed' ? '保存失败，点击重试' : '保存中...'}
               className={`
                 flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-all
                 ${saveStatus === 'saved'
                   ? 'bg-green-900/40 text-green-400 border border-green-700/50 hover:bg-green-900/60'
                   : saveStatus === 'unsaved'
                     ? 'bg-amber-900/40 text-amber-400 border border-amber-700/50 hover:bg-amber-900/60 animate-pulse'
-                    : 'bg-accent/20 text-accent border border-accent/50 cursor-wait'
+                    : saveStatus === 'failed'
+                      ? 'bg-red-900/40 text-red-400 border border-red-700/50 hover:bg-red-900/60'
+                      : 'bg-accent/20 text-accent border border-accent/50 cursor-wait'
                 }
               `}
             >
@@ -348,6 +365,12 @@ const WritingArea: React.FC<WritingAreaProps> = ({
                 <>
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="animate-spin"><circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2" strokeDasharray="8 26" strokeLinecap="round"/></svg>
                   保存中
+                </>
+              )}
+              {saveStatus === 'failed' && (
+                <>
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 2V8M7 11V11.1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>
+                  保存失败，重试
                 </>
               )}
             </button>
@@ -489,7 +512,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           <RichEditor
             key={activeChapter.id}
             ref={editorRef}
-            content={activeChapter.content}
+            content={pendingContentByChapterRef.current.get(activeChapter.id) ?? activeChapter.content}
             onUpdate={handleUpdate}
             placeholder={`继续写「${activeChapter.title}」...`}
             onSearchInInspiration={onSearchInInspiration}
@@ -536,6 +559,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           {saveStatus === 'saved' && <span className="text-green-600">✅ 已保存</span>}
           {saveStatus === 'unsaved' && <span className="text-amber-600 animate-pulse">⚠️ 未保存</span>}
           {saveStatus === 'saving' && <span className="text-accent animate-pulse">⏳ 保存中...</span>}
+          {saveStatus === 'failed' && <span className="text-red-500">❌ 保存失败，正文已保留</span>}
           <span className="text-gray-700 mx-2">|</span>
           <span>Ctrl+S 保存</span>
         </div>

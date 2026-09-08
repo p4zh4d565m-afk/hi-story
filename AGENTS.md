@@ -66,6 +66,8 @@ The save mechanism has been hardened against data-loss race conditions:
 
 5. **策划/写作切换保留编辑器挂载** — `DockLayout` 用 `hidden` 隐藏写作区，保留待保存正文并继续执行两秒防抖保存，避免快速返回时读到旧正文。`WritingArea.isActive` 控制 Ctrl+S 监听，隐藏时不接管快捷键。真实编辑器回归命令：`node tests/ui/run-writing-workspace.cjs`（独立隐藏 Electron 窗口、临时目录及内存数据）。
 
+6. **保存失败保留正文** — `onSaveChapter` 返回明确成功布尔值；`WritingArea` 按章节保留待保存正文，失败时显示可重试状态，切章往返优先恢复草稿，只有对应内容成功落库后才清除。
+
 ### IPC contract
 
 Every IPC handler wraps its repository call in try/catch and returns `IpcResult<T>`. The renderer **must check `res.success`** before using the data.
@@ -117,7 +119,7 @@ resources/
 - **逐章章纲** — 分卷纲锁定后按卷生成，记录每章目标、开场处境、冲突代价、关键节拍、人物变化、信息揭示、回报与章末钩子；支持逐项编辑、单卷重生成和锁定。迁移 v14 新增章纲字段。
 - **章纲到正文闭环** — 锁定章纲后可选择“自己写”创建空白正文，或把章纲送入 AI 代写面板；正文章节保存创建时的章纲快照，并在编辑器顶部显示可折叠施工卡。迁移 v15 新增章节章纲快照字段。
 - **全书字数统计** — 小说名后显示 `{totalWords.toLocaleString()} 字`，统计所有章节 CJK 字符
-- **章节保存防丢失** — 三层修复见上方 Critical Implementation Details
+- **章节保存防丢失** — 保存失败保留待保存正文并显示重试入口；切章、延迟回执与策划/写作切换防护见上方 Critical Implementation Details
 - **去 AI 味润色** — 工具栏「✨ 润色」整章润色 + 右键「✨ AI 润色」选中文本润色。保守润色（保留原意、只改不通顺/生硬/有 AI 味处），结果并排预览对比、确认后才写回。复用 `aiService.chatStream` + `POLISH_SYSTEM_PROMPT`，无需改 main 进程
 - **内容安全红线** — `WRITE_SYSTEM_PROMPT` 内置「内容安全红线」段：禁止性行为/性器官/性暗示隐喻描写，亲密戏用含蓄留白+蒙太奇转场，确保生成内容通过番茄等网文平台审核
 - **全书文风统计** — 审稿面板「📊 全书文风统计」Tab：纯本地正则零 LLM 统计全书句式 tic（章均频率/口头禅/跨章重复句/章末形态同构/开篇时间词率），发现单章看不出的固化 AI 味。参考 voocel/ainovel-cli 的 stylestat 设计，核心在 `runStyleStats`
