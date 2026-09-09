@@ -1318,7 +1318,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       {showDecisionPanel && projectId && (
         <CreativeDecisionPanel
           projectId={projectId}
-          decisions={creativeDecisions.filter(item => item.status === 'proposed')}
+          decisions={creativeDecisions}
           onClose={() => setShowDecisionPanel(false)}
           onChanged={reloadCreativeDecisions}
           onCommitted={(effects: CreativeDecisionEffect[]) => {

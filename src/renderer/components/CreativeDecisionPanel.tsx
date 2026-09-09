@@ -23,6 +23,20 @@ const TYPE_LABELS: Record<CreativeDecision['type'], string> = {
   narrative_debt: '叙事债务',
 };
 
+const STATUS_LABELS: Record<CreativeDecision['status'], string> = {
+  proposed: '待确认',
+  confirmed: '已确认',
+  rejected: '已拒绝',
+  superseded: '已被修订',
+};
+
+const TARGET_LABELS: Record<CreativeDecisionEffect['targetTable'], string> = {
+  story_facts: '故事事实',
+  character_knowledge: '人物知识',
+  narrative_hooks: '叙事钩子',
+  narrative_debts: '叙事债务',
+};
+
 const FACT_TYPE_OPTIONS = [
   ['location', '位置'], ['possession', '持有物'], ['relationship', '关系'],
   ['knowledge', '已知事实'], ['event', '事件'], ['emotional_state', '情绪状态'],
@@ -47,14 +61,26 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
   const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [committedEffects, setCommittedEffects] = useState<CreativeDecisionEffect[]>([]);
 
   useEffect(() => {
-    setDrafts(Object.fromEntries(decisions.map(item => [item.id, toDraft(item)])));
-    setDirtyIds(new Set());
+    setDrafts(current => Object.fromEntries(decisions.map(item => [
+      item.id,
+      item.status === 'proposed' && dirtyIds.has(item.id) && current[item.id]
+        ? current[item.id]
+        : toDraft(item),
+    ])));
+    setDirtyIds(current => new Set(
+      [...current].filter(id => decisions.some(item => item.id === id && item.status === 'proposed')),
+    ));
   }, [decisions]);
 
   const proposed = useMemo(
     () => decisions.filter(item => item.status === 'proposed'),
+    [decisions],
+  );
+  const history = useMemo(
+    () => decisions.filter(item => item.status !== 'proposed'),
     [decisions],
   );
 
@@ -137,6 +163,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       if (!response.success || !response.data) {
         throw new Error(response.error || '确认写入失败');
       }
+      setCommittedEffects(response.data.effects);
       onCommitted(response.data.effects);
       await onChanged();
     } catch (confirmError) {
@@ -159,6 +186,16 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {committedEffects.length > 0 && (
+            <div className="rounded-lg border border-emerald-800 bg-emerald-950/40 p-3 text-xs text-emerald-200">
+              <div className="font-medium mb-2">写入成功</div>
+              {committedEffects.map(effect => (
+                <div key={effect.id}>
+                  {TARGET_LABELS[effect.targetTable]} · {effect.operation === 'insert' ? '新增' : '更新'} · {effect.targetId}
+                </div>
+              ))}
+            </div>
+          )}
           {proposed.length === 0 && (
             <div className="text-center text-sm text-gray-500 py-12">当前没有待确认决策</div>
           )}
@@ -180,6 +217,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
                     aria-label="决策标题"
                     value={draft.title}
                     onChange={event => updateCommon(decision.id, 'title', event.target.value)}
+                    disabled={isBusy}
                     className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white"
                   />
                 </label>
@@ -189,6 +227,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
                     aria-label="决策理由"
                     value={draft.rationale}
                     onChange={event => updateCommon(decision.id, 'rationale', event.target.value)}
+                    disabled={isBusy}
                     rows={2}
                     className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white resize-y"
                   />
@@ -198,6 +237,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
                   decisionId={decision.id}
                   draft={draft}
                   updatePayload={updatePayload}
+                  disabled={isBusy}
                 />
 
                 <div className="flex items-center justify-end gap-2 pt-1">
@@ -226,6 +266,20 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
               </section>
             );
           })}
+          {history.length > 0 && (
+            <section className="border-t border-aichat-700 pt-4 space-y-2">
+              <h4 className="text-xs font-medium text-gray-400">账本历史</h4>
+              {history.map(decision => (
+                <div key={decision.id} className="rounded border border-aichat-700 bg-aichat-800/40 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-sm text-gray-200">{decision.title}</span>
+                    <span className="text-xs text-gray-500">{STATUS_LABELS[decision.status]}</span>
+                  </div>
+                  <div className="text-xs text-gray-500 mt-1">{TYPE_LABELS[decision.type]} · {decision.rationale}</div>
+                </div>
+              ))}
+            </section>
+          )}
         </div>
 
         <div className="px-5 py-3 border-t border-aichat-700 flex items-center justify-between gap-4">
@@ -247,52 +301,55 @@ interface DecisionPayloadFieldsProps {
   decisionId: string;
   draft: CreativeDecisionDraft;
   updatePayload: (decisionId: string, field: string, value: string | number | null) => void;
+  disabled: boolean;
 }
 
 const DecisionPayloadFields: React.FC<DecisionPayloadFieldsProps> = ({
   decisionId,
   draft,
   updatePayload,
+  disabled,
 }) => {
   const inputClass = 'mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white';
   if (draft.type === 'story_fact') {
     return <div className="grid grid-cols-2 gap-3">
       <SelectField label="事实类型" value={draft.payload.factType} options={FACT_TYPE_OPTIONS}
-        onChange={value => updatePayload(decisionId, 'factType', value)} />
-      <TextField label="主体" value={draft.payload.subject} onChange={value => updatePayload(decisionId, 'subject', value)} />
-      <TextField label="关系/动作" value={draft.payload.predicate} onChange={value => updatePayload(decisionId, 'predicate', value)} />
-      <TextField label="对象/结果" value={draft.payload.object} onChange={value => updatePayload(decisionId, 'object', value)} />
+        onChange={value => updatePayload(decisionId, 'factType', value)} disabled={disabled} />
+      <TextField label="主体" value={draft.payload.subject} onChange={value => updatePayload(decisionId, 'subject', value)} disabled={disabled} />
+      <TextField label="关系/动作" value={draft.payload.predicate} onChange={value => updatePayload(decisionId, 'predicate', value)} disabled={disabled} />
+      <TextField label="对象/结果" value={draft.payload.object} onChange={value => updatePayload(decisionId, 'object', value)} disabled={disabled} />
       <label className="col-span-2 text-xs text-gray-400">事实描述
-        <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+        <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} disabled={disabled} rows={2} className={`${inputClass} resize-y`} />
       </label>
     </div>;
   }
   if (draft.type === 'character_knowledge') {
     return <div className="grid grid-cols-2 gap-3">
-      <TextField label="人物姓名" value={draft.payload.characterName} onChange={value => updatePayload(decisionId, 'characterName', value)} />
-      <TextField label="知识来源" value={draft.payload.source} onChange={value => updatePayload(decisionId, 'source', value)} />
+      <TextField label="人物姓名" value={draft.payload.characterName} onChange={value => updatePayload(decisionId, 'characterName', value)} disabled={disabled} />
+      <TextField label="知识来源" value={draft.payload.source} onChange={value => updatePayload(decisionId, 'source', value)} disabled={disabled} />
       <label className="col-span-2 text-xs text-gray-400">知道的事实
-        <textarea value={draft.payload.factDescription} onChange={event => updatePayload(decisionId, 'factDescription', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+        <textarea value={draft.payload.factDescription} onChange={event => updatePayload(decisionId, 'factDescription', event.target.value)} disabled={disabled} rows={2} className={`${inputClass} resize-y`} />
       </label>
     </div>;
   }
   if (draft.type === 'narrative_hook') {
     return <div className="grid grid-cols-2 gap-3">
       <SelectField label="钩子类型" value={draft.payload.hookType} options={HOOK_TYPE_OPTIONS}
-        onChange={value => updatePayload(decisionId, 'hookType', value)} />
+        onChange={value => updatePayload(decisionId, 'hookType', value)} disabled={disabled} />
       <label className="text-xs text-gray-400">强度（1-5）
         <input type="number" min={1} max={5} value={draft.payload.intensity}
           onChange={event => updatePayload(decisionId, 'intensity', Number(event.target.value))}
+          disabled={disabled}
           className={inputClass} />
       </label>
       <label className="col-span-2 text-xs text-gray-400">钩子描述
-        <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+        <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} disabled={disabled} rows={2} className={`${inputClass} resize-y`} />
       </label>
     </div>;
   }
   return <div className="grid grid-cols-2 gap-3">
     <SelectField label="债务类型" value={draft.payload.debtType} options={DEBT_TYPE_OPTIONS}
-      onChange={value => updatePayload(decisionId, 'debtType', value)} />
+      onChange={value => updatePayload(decisionId, 'debtType', value)} disabled={disabled} />
     <label className="text-xs text-gray-400">承诺章节
       <input type="number" min={1} value={draft.payload.promisedByChapter ?? ''}
         onChange={event => updatePayload(
@@ -300,18 +357,19 @@ const DecisionPayloadFields: React.FC<DecisionPayloadFieldsProps> = ({
           'promisedByChapter',
           event.target.value ? Number(event.target.value) : null,
         )}
+        disabled={disabled}
         className={inputClass} />
     </label>
     <label className="col-span-2 text-xs text-gray-400">债务描述
-      <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+      <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} disabled={disabled} rows={2} className={`${inputClass} resize-y`} />
     </label>
   </div>;
 };
 
-const TextField: React.FC<{ label: string; value: string; onChange: (value: string) => void }> = ({
-  label, value, onChange,
+const TextField: React.FC<{ label: string; value: string; onChange: (value: string) => void; disabled: boolean }> = ({
+  label, value, onChange, disabled,
 }) => <label className="text-xs text-gray-400">{label}
-  <input value={value} onChange={event => onChange(event.target.value)}
+  <input value={value} onChange={event => onChange(event.target.value)} disabled={disabled}
     className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white" />
 </label>;
 
@@ -320,8 +378,9 @@ const SelectField: React.FC<{
   value: string;
   options: ReadonlyArray<readonly [string, string]>;
   onChange: (value: string) => void;
-}> = ({ label, value, options, onChange }) => <label className="text-xs text-gray-400">{label}
-  <select value={value} onChange={event => onChange(event.target.value)}
+  disabled: boolean;
+}> = ({ label, value, options, onChange, disabled }) => <label className="text-xs text-gray-400">{label}
+  <select value={value} onChange={event => onChange(event.target.value)} disabled={disabled}
     className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white">
     {options.map(([optionValue, optionLabel]) => (
       <option key={optionValue} value={optionValue}>{optionLabel}</option>

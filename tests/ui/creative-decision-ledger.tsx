@@ -5,14 +5,17 @@ import AIChatPanel from '../../src/renderer/components/AIChatPanel';
 import type {
   CreativeDecision,
   CreativeDecisionDraft,
+  CreativeDecisionEffect,
   IpcResult,
 } from '../../src/renderer/types';
 
 interface FixtureState {
   decisions: CreativeDecision[];
-  targetRecords: Array<{ decisionId: string }>;
+  targetRecords: CreativeDecisionEffect[];
   confirmFailuresRemaining: number;
   confirmAttempts: number;
+  updateDelay: number;
+  committedEffects: CreativeDecisionEffect[];
 }
 
 const extractedDraft: CreativeDecisionDraft = {
@@ -26,10 +29,10 @@ const extractedDraft: CreativeDecisionDraft = {
   },
 };
 
-function makeDecision(draft: CreativeDecisionDraft): CreativeDecision {
+function makeDecision(draft: CreativeDecisionDraft, id = 'decision-1'): CreativeDecision {
   return {
     ...draft,
-    id: 'decision-1',
+    id,
     projectId: 'project-a',
     sourceThreadId: 'thread-a',
     sourceMessageId: 'assistant-message',
@@ -89,11 +92,14 @@ function createElectronApi(state: FixtureState) {
       }
       if (channel === 'db:creativeDecisions:createProposals') {
         const input = args[0] as { drafts: CreativeDecisionDraft[] };
-        state.decisions = input.drafts.map(makeDecision);
+        state.decisions = input.drafts.map(draft => makeDecision(draft));
         return { success: true, data: state.decisions };
       }
       if (channel === 'db:creativeDecisions:updateProposal') {
         const input = args[0] as { decisionId: string; draft: CreativeDecisionDraft };
+        if (state.updateDelay > 0) {
+          await new Promise(resolve => setTimeout(resolve, state.updateDelay));
+        }
         state.decisions = state.decisions.map(item => item.id === input.decisionId
           ? { ...item, ...input.draft } as CreativeDecision
           : item);
@@ -115,7 +121,16 @@ function createElectronApi(state: FixtureState) {
         const input = args[0] as { decisionIds: string[] };
         for (const decisionId of input.decisionIds) {
           if (!state.targetRecords.some(item => item.decisionId === decisionId)) {
-            state.targetRecords.push({ decisionId });
+            state.targetRecords.push({
+              id: `effect-${decisionId}`,
+              decisionId,
+              targetTable: 'narrative_hooks',
+              targetId: `hook-${decisionId}`,
+              operation: 'insert',
+              before: null,
+              after: { description: '旧车站留下带血车票' },
+              createdAt: '2026-09-09T00:03:00.000Z',
+            });
           }
         }
         state.decisions = state.decisions.map(item => input.decisionIds.includes(item.id)
@@ -164,7 +179,11 @@ function setInput(input: HTMLInputElement | HTMLTextAreaElement, value: string):
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-async function mount(confirmFailuresRemaining = 0): Promise<{
+async function mount(options: {
+  confirmFailuresRemaining?: number;
+  initialDecisions?: CreativeDecision[];
+  updateDelay?: number;
+} = {}): Promise<{
   root: Root;
   container: HTMLDivElement;
   state: FixtureState;
@@ -174,13 +193,20 @@ async function mount(confirmFailuresRemaining = 0): Promise<{
     id: 'config-a', providerId: 'openai', apiKey: 'test-key', model: 'test-model', label: '测试配置',
   }]));
   const state: FixtureState = {
-    decisions: [], targetRecords: [], confirmFailuresRemaining, confirmAttempts: 0,
+    decisions: options.initialDecisions ?? [], targetRecords: [],
+    confirmFailuresRemaining: options.confirmFailuresRemaining ?? 0,
+    confirmAttempts: 0, updateDelay: options.updateDelay ?? 0, committedEffects: [],
   };
   window.electronAPI = createElectronApi(state) as typeof window.electronAPI;
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
-  flushSync(() => root.render(<AIChatPanel projectId="project-a" />));
+  flushSync(() => root.render(
+    <AIChatPanel
+      projectId="project-a"
+      onCreativeDecisionsCommitted={effects => { state.committedEffects = effects; }}
+    />,
+  ));
   await until(
     () => Boolean(button('整理为决策')) && document.body.textContent?.includes('test-model') === true,
     '持久化 assistant 消息没有显示整理入口或 AI 配置未完成加载',
@@ -241,13 +267,17 @@ const cases: Array<[string, () => Promise<void>]> = [
       click('确认此项');
       await until(() => fixture.state.targetRecords.length === 1);
       assert(fixture.state.confirmAttempts === 1, '确认不应发送多次请求');
+      assert(fixture.state.committedEffects.length === 1, '确认效果没有通知上层刷新上下文');
+      await until(() => document.body.textContent?.includes('写入成功') === true);
+      assert(document.body.textContent?.includes('叙事钩子'), '确认结果没有显示目标表');
+      assert(document.body.textContent?.includes('已确认'), '账本没有保留已确认历史');
     } finally {
       flushSync(() => fixture.root.unmount());
       fixture.container.remove();
     }
   }],
   ['确认失败后保留候选并允许重试', async () => {
-    const fixture = await mount(1);
+    const fixture = await mount({ confirmFailuresRemaining: 1 });
     try {
       await extract();
       click('确认此项');
@@ -256,6 +286,51 @@ const cases: Array<[string, () => Promise<void>]> = [
       click('确认此项');
       await until(() => fixture.state.targetRecords.length === 1);
       assert(fixture.state.confirmAttempts === 2, '失败重试次数不正确');
+    } finally {
+      flushSync(() => fixture.root.unmount());
+      fixture.container.remove();
+    }
+  }],
+  ['保存一个候选不会覆盖另一个候选的未保存编辑', async () => {
+    const secondDraft: CreativeDecisionDraft = {
+      ...extractedDraft,
+      title: '站长身份',
+      payload: { ...extractedDraft.payload, description: '站长身份仍然成谜' },
+    };
+    const fixture = await mount({
+      initialDecisions: [makeDecision(extractedDraft), makeDecision(secondDraft, 'decision-2')],
+    });
+    try {
+      click('决策(2)');
+      await until(() => document.querySelectorAll('[aria-label="决策标题"]').length === 2);
+      const inputs = [...document.querySelectorAll<HTMLInputElement>('[aria-label="决策标题"]')];
+      setInput(inputs[0], '已保存的第一项');
+      setInput(inputs[1], '尚未保存的第二项');
+      const saveButtons = [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .filter(item => item.textContent?.trim() === '保存修改');
+      flushSync(() => saveButtons[0].click());
+      await until(() => fixture.state.decisions[0]?.title === '已保存的第一项');
+      await tick();
+      const refreshedInputs = [...document.querySelectorAll<HTMLInputElement>('[aria-label="决策标题"]')];
+      assert(refreshedInputs[1]?.value === '尚未保存的第二项', '刷新覆盖了其他候选的未保存编辑');
+    } finally {
+      flushSync(() => fixture.root.unmount());
+      fixture.container.remove();
+    }
+  }],
+  ['保存期间禁用对应候选的输入控件', async () => {
+    const fixture = await mount({
+      initialDecisions: [makeDecision(extractedDraft)],
+      updateDelay: 120,
+    });
+    try {
+      click('决策(1)');
+      await until(() => Boolean(document.querySelector('[aria-label="决策标题"]')));
+      const titleInput = document.querySelector<HTMLInputElement>('[aria-label="决策标题"]')!;
+      setInput(titleInput, '保存中的标题');
+      click('保存修改');
+      assert(titleInput.disabled, '保存期间标题仍可继续编辑');
+      await until(() => fixture.state.decisions[0]?.title === '保存中的标题');
     } finally {
       flushSync(() => fixture.root.unmount());
       fixture.container.remove();
