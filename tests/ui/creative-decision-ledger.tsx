@@ -2,6 +2,7 @@ import React from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { flushSync } from 'react-dom';
 import AIChatPanel from '../../src/renderer/components/AIChatPanel';
+import CreativeDecisionPanel from '../../src/renderer/components/CreativeDecisionPanel';
 import type {
   CreativeDecision,
   CreativeDecisionDraft,
@@ -20,6 +21,8 @@ interface FixtureState {
   committedEffects: CreativeDecisionEffect[];
   related: boolean;
   revisionsCreated: number;
+  updateFailuresRemaining: number;
+  relatedDelay: number;
 }
 
 const extractedDraft: CreativeDecisionDraft = {
@@ -62,6 +65,7 @@ function createElectronApi(state: FixtureState) {
     },
     async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
       if (channel === 'db:creativeDecisions:findRelatedItems') {
+        if (state.relatedDelay) await new Promise(resolve => setTimeout(resolve, state.relatedDelay));
         return { success: true, data: { matches: state.related ? [{ id: 'existing-hook', targetTable: 'narrative_hooks', subject: '旧车站', description: '相关旧钩子', status: 'open' }] : [], knowledge: [], missingSubject: state.related ? [{ id: 'empty-hook', targetTable: 'narrative_hooks', subject: '', description: '缺主体旧钩子', status: 'open' }] : [] } };
       }
       if (channel === 'db:creativeDecisions:prepareRevision') {
@@ -117,6 +121,10 @@ function createElectronApi(state: FixtureState) {
       }
       if (channel === 'db:creativeDecisions:updateProposal') {
         const input = args[0] as { decisionId: string; draft: CreativeDecisionDraft };
+        if (state.updateFailuresRemaining > 0) {
+          state.updateFailuresRemaining--;
+          return { success: false, error: '模拟选择保存失败' };
+        }
         if (state.updateDelay > 0) {
           await new Promise(resolve => setTimeout(resolve, state.updateDelay));
         }
@@ -209,6 +217,8 @@ async function mount(options: {
   confirmDelay?: number;
   runtimeRefreshDelay?: number;
   related?: boolean;
+  updateFailuresRemaining?: number;
+  relatedDelay?: number;
 } = {}): Promise<{
   root: Root;
   container: HTMLDivElement;
@@ -226,6 +236,7 @@ async function mount(options: {
     confirmDelay: options.confirmDelay ?? 0,
     runtimeRefreshDelay: options.runtimeRefreshDelay ?? 0, committedEffects: [],
     related: options.related ?? false, revisionsCreated: 0,
+    updateFailuresRemaining: options.updateFailuresRemaining ?? 0, relatedDelay: options.relatedDelay ?? 0,
   };
   window.electronAPI = createElectronApi(state) as typeof window.electronAPI;
   const container = document.createElement('div');
@@ -257,6 +268,86 @@ async function extract(): Promise<void> {
 }
 
 const cases: Array<[string, () => Promise<void>]> = [
+  ['确认回执返回前不能关闭面板，确保刷新运行时状态', async () => {
+    const fixture = await mount({ initialDecisions: [makeDecision(extractedDraft)], confirmDelay: 120 });
+    try {
+      click('决策(1)'); await tick(); click('确认此项');
+      await until(() => fixture.state.confirmAttempts === 1);
+      const close = document.querySelector<HTMLButtonElement>('[aria-label="关闭决策面板"]')!;
+      assert(close.disabled, '事务进行中仍能关闭并丢弃成功回执');
+      flushSync(() => close.click());
+      await until(() => fixture.state.committedEffects.length === 1);
+      await until(() => document.body.textContent?.includes('写入成功') === true);
+      assert(!close.disabled, '确认完成后无法关闭');
+    } finally { flushSync(() => fixture.root.unmount()); fixture.container.remove(); }
+  }],
+  ['批量选择保存失败不调用确认并保留所选草稿', async () => {
+    const fixture = await mount({ initialDecisions: [makeDecision(extractedDraft), makeDecision(extractedDraft, 'decision-2')], related: true, updateFailuresRemaining: 1 });
+    try {
+      click('决策(2)'); await tick(); click('全部确认');
+      await until(() => Boolean(button('修订此项'))); click('修订此项');
+      await until(() => document.body.textContent?.includes('模拟选择保存失败') === true);
+      assert(fixture.state.confirmAttempts === 0 && fixture.state.targetRecords.length === 0, '保存失败仍然进行了运行时写入');
+      assert(document.body.textContent?.includes('existing-hook'), '保存失败丢失所选目标');
+      assert(document.body.textContent?.includes('有未保存修改'), '丢失待保存标记');
+      click('清除未保存的修订目标');
+      assert(!document.body.textContent?.includes('existing-hook'), '失败选择不能恢复为独立提议');
+      click('保存修改');
+      await until(() => fixture.state.decisions[0].payload.targetId === null);
+    } finally { flushSync(() => fixture.root.unmount()); fixture.container.remove(); }
+  }],
+  ['延迟相关项查询跨项目往返后不重开旧弹窗', async () => {
+    const fixture = await mount({ initialDecisions: [makeDecision(extractedDraft)], related: true, relatedDelay: 180 });
+    try {
+      click('决策(1)'); await tick(); click('确认此项');
+      fixture.renderProject('project-b'); await tick(); fixture.renderProject('project-a');
+      await new Promise(resolve => setTimeout(resolve, 220));
+      assert(!document.querySelector('[aria-label="疑似相关项提示"]'), '旧代次相关项重新打开');
+      assert(fixture.state.confirmAttempts === 0, '旧查询导致确认');
+    } finally { flushSync(() => fixture.root.unmount()); fixture.container.remove(); }
+  }],
+  ['真实SQLite与界面四类无父修订、交错互斥和失败重试', async () => {
+    const backend = (window as any).decisionTestDb as { invoke: (channel: string, ...args: any[]) => Promise<any> };
+    const drafts: CreativeDecisionDraft[] = [
+      { type: 'story_fact', title: '位置', rationale: '保持一致', payload: { factType: 'location', subject: '主角', predicate: '位于', object: '车站', description: '主角在车站' } },
+      { type: 'character_knowledge', title: '知识', rationale: '保持一致', payload: { characterName: '主角', factDescription: '知道车站有密道', source: '亲眼所见' } },
+      extractedDraft,
+      { type: 'narrative_debt', title: '揭晓', rationale: '兑现承诺', payload: { subject: '车站', debtType: 'reveal', description: '揭晓密道秘密' } },
+    ];
+    for (const draft of drafts) {
+      await backend.invoke('reset');
+      const create = async () => (await backend.invoke('db:creativeDecisions:createProposals', { projectId: 'project-a', sourceThreadId: 'thread-a', sourceMessageId: 'assistant-message', drafts: [draft] })).data[0] as CreativeDecision;
+      const original = await create();
+      const effects = (await backend.invoke('db:creativeDecisions:confirmMany', { projectId: 'project-a', decisionIds: [original.id] })).data.effects;
+      const proposal = await create();
+      window.electronAPI = { invoke: backend.invoke, on: () => () => {} } as typeof window.electronAPI;
+      const container = document.createElement('div'); document.body.append(container);
+      const root = createRoot(container);
+      const render = async () => {
+        const decisions = (await backend.invoke('db:creativeDecisions:findByProject', 'project-a')).data;
+        flushSync(() => root.render(<CreativeDecisionPanel projectId="project-a" decisions={decisions} onClose={() => {}} onChanged={render} onCommitted={() => {}} />));
+      };
+      try {
+        await render(); await tick(); click('确认此项');
+        await until(() => Boolean(button('修订此项')));
+        if (draft.type === 'character_knowledge') assert(document.body.textContent?.includes('相关已有条目'), '人物知识措辞错误');
+        const before = await backend.invoke('snapshot');
+        await backend.invoke('failure', true); click('修订此项');
+        await until(() => document.body.textContent?.includes('写入失败，可重试') === true);
+        const failed = await backend.invoke('snapshot');
+        assert(JSON.stringify(before[effects[0].targetTable]) === JSON.stringify(failed[effects[0].targetTable]), '失败留下部分目标写入');
+        assert(before.creative_decision_effects.length === failed.creative_decision_effects.length, '失败留下effect');
+        await backend.invoke('failure', false); click('确认此项');
+        await until(() => document.body.textContent?.includes('写入成功') === true);
+        const after = await backend.invoke('snapshot');
+        const projected = after.creative_decision_effects.filter((x: any) => x.decision_id === proposal.id);
+        assert(projected.some((x: any) => x.operation === (['story_fact', 'character_knowledge'].includes(draft.type) ? 'supersede' : 'update')), '四类无父修订走错路径');
+        const revisionInput = { projectId: 'project-a', parentDecisionId: proposal.id, draft };
+        const concurrent = await Promise.all([backend.invoke('db:creativeDecisions:createRevision', revisionInput), backend.invoke('db:creativeDecisions:createRevision', revisionInput)]);
+        assert(concurrent.filter(x => x.success).length === 1, '交错创建留下多个pending');
+      } finally { flushSync(() => root.unmount()); container.remove(); }
+    }
+  }],
   ['疑似相关项与空主体兜底可以选修订', async () => {
     const fixture = await mount({ initialDecisions: [makeDecision(extractedDraft)], related: true });
     try {

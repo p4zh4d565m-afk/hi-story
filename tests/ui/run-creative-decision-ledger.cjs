@@ -24,7 +24,8 @@ if (!process.versions.electron) {
   child.on('error', error => { console.error(error); process.exitCode = 1; });
   child.on('exit', code => { process.exitCode = code ?? 1; });
 } else {
-  const { app, BrowserWindow } = require('electron');
+  const { app, BrowserWindow, ipcMain } = require('electron');
+  require('./decision-test-db.cjs')(ipcMain);
   const dir = process.argv[2];
   app.disableHardwareAcceleration();
   app.setPath('userData', path.join(dir, 'user-data'));
@@ -32,7 +33,8 @@ if (!process.versions.electron) {
   app.whenReady().then(async () => {
     const win = new BrowserWindow({
       show: false,
-      webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false },
+      webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false,
+        preload: path.join(__dirname, 'decision-test-preload.cjs') },
     });
     try {
       await win.loadFile(path.join(dir, 'index.html'));

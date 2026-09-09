@@ -296,7 +296,8 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
             <h3 className="text-base font-semibold text-white">创作决策确认</h3>
             <p className="text-xs text-gray-500 mt-1">只有确认成功的项目才会写入小说运行时状态</p>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white" aria-label="关闭决策面板">✕</button>
+          <button onClick={() => { if (!lock.current) onClose(); }} disabled={busyId !== null}
+            className="text-gray-400 hover:text-white disabled:opacity-50" aria-label="关闭决策面板">✕</button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
@@ -383,6 +384,12 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
                   disabled={isBusy}
                 />
                 {draft.payload.targetId && <p className="text-xs text-amber-300">将修订 {TARGET_LABELS[decision.type === 'story_fact' ? 'story_facts' : decision.type === 'narrative_hook' ? 'narrative_hooks' : decision.type === 'narrative_debt' ? 'narrative_debts' : 'character_knowledge']} · {draft.payload.targetId}</p>}
+                {!decision.parentDecisionId && draft.payload.targetId && dirtyIds.has(decision.id) &&
+                  draft.payload.targetId !== decision.payload.targetId && <button
+                    disabled={isBusy} className="text-xs text-amber-300"
+                    onClick={() => updatePayload(decision.id, 'targetId', null)}>
+                    清除未保存的修订目标
+                  </button>}
 
                 <div className="flex items-center justify-end gap-2 pt-1">
                   <button

@@ -96,6 +96,45 @@ describe('CreativeDecisionRepo', () => {
 
   afterEach(() => db.close());
 
+  it.each(['target', 'effect', 'status'])('确认在%s失败时整批回滚，删除故障后可重试', point => {
+    const parents = createProposals([fourDrafts[2], fourDrafts[3]]).data!;
+    repo.confirmMany({ projectId: 'project-a', decisionIds: parents.map(d => d.id) });
+    const revisions = parents.map((parent, i) => repo.createRevision({ projectId: 'project-a', parentDecisionId: parent.id,
+      draft: { ...fourDrafts[i + 2], payload: { ...fourDrafts[i + 2].payload, subject: '新主体' } } as CreativeDecisionDraft,
+    }).data!);
+    const snapshot = () => ['creative_decisions', 'creative_decision_effects', 'narrative_hooks', 'narrative_debts']
+      .map(table => db.prepare(`SELECT * FROM ${table} ORDER BY id`).all());
+    const before = snapshot();
+    const target = point === 'target' ? 'BEFORE UPDATE ON narrative_debts'
+      : point === 'effect' ? 'BEFORE INSERT ON creative_decision_effects' : 'BEFORE UPDATE OF status ON creative_decisions';
+    db.exec(`CREATE TRIGGER injected_failure ${target} BEGIN SELECT RAISE(ABORT, '注入失败'); END;`);
+    const input = { projectId: 'project-a', decisionIds: revisions.map(d => d.id) };
+    expect(repo.confirmMany(input)).toMatchObject({ success: false });
+    expect(snapshot()).toEqual(before);
+    db.exec('DROP TRIGGER injected_failure');
+    const result = repo.confirmMany(input);
+    expect(result.success).toBe(true);
+    expect(result.data!.effects.every(e => e.before?.subject === '旧车站' && e.after.subject === '新主体' && e.after.source_decision_id === e.decisionId)).toBe(true);
+  });
+
+  it('钩子债务空主体兜底最多20条并排除已解决和其他类型', () => {
+    for (let i = 0; i < 23; i++) {
+      db.prepare("INSERT INTO narrative_hooks(id,project_id,hook_type,subject,created_at,updated_at) VALUES (?,'project-a','foreshadowing','','t','t')").run(`h-${String(i).padStart(2, '0')}`);
+      db.prepare("INSERT INTO narrative_debts(id,project_id,debt_type,subject,created_at,updated_at) VALUES (?,'project-a','reveal','','t','t')").run(`d-${String(i).padStart(2, '0')}`);
+    }
+    for (const i of [2, 3]) {
+      const proposal = createProposals([fourDrafts[i]]).data![0];
+      const list = repo.findRelatedItems({ projectId: 'project-a', decisionId: proposal.id }).data!.missingSubject;
+      expect(list).toHaveLength(20);
+      expect(list[0].id).toBe(i === 2 ? 'h-22' : 'd-22');
+    }
+    db.exec("UPDATE narrative_hooks SET status='resolved'; UPDATE narrative_debts SET status='paid';");
+    for (const i of [2, 3]) {
+      const proposal = createProposals([fourDrafts[i]]).data![0];
+      expect(repo.findRelatedItems({ projectId: 'project-a', decisionId: proposal.id }).data!.missingSubject).toHaveLength(0);
+    }
+  });
+
   it.each(['location', 'emotional_state', 'event', 'knowledge', 'relationship', 'possession'])('规则按类型比较主体和对象 %s', factType => {
     const draft = { ...fourDrafts[0], payload: { ...fourDrafts[0].payload, factType, subject: ' Ａlice ', object: 'Ｋey' } } as CreativeDecisionDraft;
     const parent = createProposals([draft]).data![0];
