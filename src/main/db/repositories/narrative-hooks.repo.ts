@@ -259,6 +259,7 @@ export class NarrativeHooksRepo {
       status: row.status as NarrativeHook['status'],
       resolvedInChapterId: (row.resolved_in_chapter_id ?? null) as string | null,
       dueChapterId: (row.due_chapter_id ?? null) as string | null,
+      sourceDecisionId: (row.source_decision_id ?? null) as string | null,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
@@ -274,6 +275,7 @@ export class NarrativeHooksRepo {
       promisedByChapter: (row.promised_by_chapter ?? null) as number | null,
       status: row.status as NarrativeDebt['status'],
       paidInChapterId: (row.paid_in_chapter_id ?? null) as string | null,
+      sourceDecisionId: (row.source_decision_id ?? null) as string | null,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
