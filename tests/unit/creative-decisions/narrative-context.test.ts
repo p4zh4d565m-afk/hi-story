@@ -2,7 +2,10 @@ import Database from 'better-sqlite3';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { ContextBuilder } from '../../../src/main/ai/context-builder';
 import { runMigrations } from '../../../src/main/db/migrations';
+import { CreativeDecisionRepo } from '../../../src/main/db/repositories/creative-decision.repo';
 import { NarrativeHooksRepo } from '../../../src/main/db/repositories/narrative-hooks.repo';
+import { StoryFactsRepo } from '../../../src/main/db/repositories/story-facts.repo';
+import type { CreativeDecisionDraft } from '../../../src/renderer/types';
 
 describe('确认钩子和债务的有界 AI 上下文', () => {
   let db: Database.Database;
@@ -120,5 +123,75 @@ describe('确认钩子和债务的有界 AI 上下文', () => {
     expect(context).toContain('临近到期钩子标记');
     expect(context.indexOf('逾期债务优先标记')).toBeLessThan(context.indexOf('高强度钩子优先标记'));
     expect(context.indexOf('高强度钩子优先标记')).toBeLessThan(context.indexOf('临近到期钩子标记'));
+  });
+
+  it('真实确认事务写入的四类状态可直接构建下一次 AI 上下文', () => {
+    db.prepare(`
+      INSERT INTO conversation_threads (
+        id, project_id, title, category, created_at, updated_at
+      ) VALUES (?, ?, ?, 'general', ?, ?)
+    `).run(
+      'thread-a', 'project-a', '决策来源',
+      '2026-09-09T00:00:00.000Z', '2026-09-09T00:00:00.000Z',
+    );
+    db.prepare(`
+      INSERT INTO conversation_messages (
+        id, thread_id, role, content, timestamp, updated_at, sort_order, context_type
+      ) VALUES (?, ?, 'assistant', ?, ?, ?, 0, 'chat')
+    `).run(
+      'assistant-a', 'thread-a', '决策来源回复',
+      '2026-09-09T00:01:00.000Z', '2026-09-09T00:01:00.000Z',
+    );
+    const drafts: CreativeDecisionDraft[] = [
+      {
+        type: 'story_fact', title: '钥匙归属', rationale: '保持状态一致',
+        payload: {
+          factType: 'possession', subject: '林岚', predicate: '持有', object: '铜钥匙',
+          description: '林岚持有确认过的铜钥匙', chapterId: 'chapter-1',
+        },
+      },
+      {
+        type: 'character_knowledge', title: '角色知情边界', rationale: '避免信息越界',
+        payload: {
+          characterName: '林岚', factDescription: '林岚知道确认过的暗门位置',
+          source: '亲眼发现', learnedAtChapterId: 'chapter-1',
+        },
+      },
+      {
+        type: 'narrative_hook', title: '车票钩子', rationale: '后续回收',
+        payload: {
+          hookType: 'foreshadowing', description: '确认过的带血车票钩子', intensity: 5,
+          chapterId: 'chapter-1', dueChapterId: 'chapter-3',
+        },
+      },
+      {
+        type: 'narrative_debt', title: '站长身份', rationale: '兑现读者承诺',
+        payload: {
+          debtType: 'reveal', description: '确认过的站长身份债务',
+          chapterId: 'chapter-1', promisedByChapter: 3,
+        },
+      },
+    ];
+    const decisions = new CreativeDecisionRepo(db);
+    const proposed = decisions.createProposals({
+      projectId: 'project-a', sourceThreadId: 'thread-a',
+      sourceMessageId: 'assistant-a', drafts,
+    }).data!;
+
+    const confirmed = decisions.confirmMany({
+      projectId: 'project-a', decisionIds: proposed.map(item => item.id),
+    });
+    const factsRepo = new StoryFactsRepo(db);
+    const factContext = ContextBuilder.build({
+      storyFacts: factsRepo.findRecentActive('project-a').data,
+      characterKnowledge: factsRepo.findAllKnowledgeByProject('project-a').data,
+    })[0].content;
+    const hookContext = repo.getHooksAndDebtsContext('project-a', 800);
+
+    expect(confirmed.data?.effects).toHaveLength(4);
+    expect(factContext).toContain('林岚持有确认过的铜钥匙');
+    expect(factContext).toContain('林岚知道确认过的暗门位置');
+    expect(hookContext).toContain('确认过的带血车票钩子');
+    expect(hookContext).toContain('确认过的站长身份债务');
   });
 });
