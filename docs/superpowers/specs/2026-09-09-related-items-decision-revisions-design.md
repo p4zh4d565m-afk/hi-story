@@ -55,7 +55,10 @@ ALTER TABLE narrative_debts
 - `NarrativeHook`、`NarrativeDebt` 增加 `subject: string`。
 - `HookDecisionPayload`、`DebtDecisionPayload` 增加 `subject: string`。
 - `CreateHookInput`、`CreateDebtInput` 增加可选的 `subject?: string`，专门兼容自动抽取和旧调用方。
+- `UpdateHookInput`、`UpdateDebtInput` 增加可选的 `subject?: string`。
 - AI 决策提取提示、渲染端解析和主进程载荷校验均要求新 hook/debt 提议包含非空 `subject`。
+
+`NarrativeHooksRepo` 必须同步覆盖完整读写链路：`create`、`createDebt` 的 INSERT 写入 `subject`，`update`、`updateDebt` 的 UPDATE 能更新 `subject`，`rowToHook`、`rowToDebt` 将数据库列映射到共享类型。自动创建未传主体时写入 `''`，不能把 `undefined` 传入 SQLite。
 
 旧 v18 的 hook/debt `payload_json` 可能不存在 `subject`。读取旧账本行时必须归一为 `subject: ''`，保证 UI 和类型稳定；不得因旧载荷缺字段导致整个账本加载失败。作者若要编辑、确认或创建修订，必须先补填非空主体。已确认旧决策仅用于历史展示时可以继续显示空主体。
 
@@ -215,6 +218,8 @@ targetTable + targetId
 - draft `payload.targetId` 必须严格等于父决策的投影目标。
 - 作者不能通过编辑 proposal 改成独立新增、改到其他目标或改变修订类型。
 
+`UpdateCreativeDecisionProposalInput` 不增加也不接收 `parentDecisionId`。`updateProposal` 必须先用请求中的 `projectId + decisionId` 从数据库读取当前 proposal，再从该持久化记录取得 `parentDecisionId`；不得从 draft 或渲染端推断父项。父 ID 非空时，再按该 ID 读取父决策并执行上述不变量校验。
+
 `confirmMany` 必须在事务内重新执行相同复检，不能只信任 proposal 创建或上次保存时的结果。父决策必须仍可修订，其 effect 必须能唯一定位目标；否则整批确认失败并回滚。
 
 ## 四类修订语义
@@ -228,6 +233,7 @@ targetTable + targetId
 
 hook/debt 原地修订时：
 
+- `subject` 随当前决策载荷一并写入目标行。
 - `source_decision_id` 更新为本次新确认决策 ID。
 - 目标行不再保留原章节抽取来源。
 - 原值仅保留在 `creative_decision_effects.before_json`，更新后值写入 `after_json`。
