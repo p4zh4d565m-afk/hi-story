@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   ConfirmCreativeDecisionsInput,
   CreativeDecision,
@@ -62,6 +62,15 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [committedEffects, setCommittedEffects] = useState<CreativeDecisionEffect[]>([]);
+  const activeProjectIdRef = useRef(projectId);
+  activeProjectIdRef.current = projectId;
+
+  useEffect(() => {
+    setBusyId(null);
+    setError(null);
+    setCommittedEffects([]);
+    setDirtyIds(new Set());
+  }, [projectId]);
 
   useEffect(() => {
     setDrafts(current => Object.fromEntries(decisions.map(item => [
@@ -108,6 +117,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
   const save = async (decisionId: string): Promise<boolean> => {
     const draft = drafts[decisionId];
     if (!draft) return false;
+    const operationProjectId = projectId;
     setBusyId(decisionId);
     setError(null);
     try {
@@ -115,6 +125,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       const response = await window.electronAPI.invoke(
         'db:creativeDecisions:updateProposal', input,
       ) as IpcResult<CreativeDecision>;
+      if (activeProjectIdRef.current !== operationProjectId) return false;
       if (!response.success || !response.data) throw new Error(response.error || '保存修改失败');
       setDrafts(current => ({ ...current, [decisionId]: toDraft(response.data!) }));
       setDirtyIds(current => {
@@ -125,26 +136,30 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       await onChanged();
       return true;
     } catch (saveError) {
+      if (activeProjectIdRef.current !== operationProjectId) return false;
       setError(saveError instanceof Error ? saveError.message : String(saveError));
       return false;
     } finally {
-      setBusyId(null);
+      if (activeProjectIdRef.current === operationProjectId) setBusyId(null);
     }
   };
 
   const reject = async (decisionId: string) => {
+    const operationProjectId = projectId;
     setBusyId(decisionId);
     setError(null);
     try {
       const response = await window.electronAPI.invoke(
         'db:creativeDecisions:reject', projectId, decisionId,
       ) as IpcResult<CreativeDecision>;
+      if (activeProjectIdRef.current !== operationProjectId) return;
       if (!response.success) throw new Error(response.error || '拒绝决策失败');
       await onChanged();
     } catch (rejectError) {
+      if (activeProjectIdRef.current !== operationProjectId) return;
       setError(rejectError instanceof Error ? rejectError.message : String(rejectError));
     } finally {
-      setBusyId(null);
+      if (activeProjectIdRef.current === operationProjectId) setBusyId(null);
     }
   };
 
@@ -153,6 +168,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       setError('请先保存修改，再确认写入');
       return;
     }
+    const operationProjectId = projectId;
     setBusyId(decisionIds.length === 1 ? decisionIds[0] : 'all');
     setError(null);
     try {
@@ -160,6 +176,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       const response = await window.electronAPI.invoke(
         'db:creativeDecisions:confirmMany', input,
       ) as IpcResult<{ decisions: CreativeDecision[]; effects: CreativeDecisionEffect[] }>;
+      if (activeProjectIdRef.current !== operationProjectId) return;
       if (!response.success || !response.data) {
         throw new Error(response.error || '确认写入失败');
       }
@@ -167,10 +184,11 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       onCommitted(response.data.effects);
       await onChanged();
     } catch (confirmError) {
+      if (activeProjectIdRef.current !== operationProjectId) return;
       const message = confirmError instanceof Error ? confirmError.message : String(confirmError);
       setError(`写入失败，可重试：${message}`);
     } finally {
-      setBusyId(null);
+      if (activeProjectIdRef.current === operationProjectId) setBusyId(null);
     }
   };
 

@@ -15,6 +15,7 @@ interface FixtureState {
   confirmFailuresRemaining: number;
   confirmAttempts: number;
   updateDelay: number;
+  confirmDelay: number;
   committedEffects: CreativeDecisionEffect[];
 }
 
@@ -80,7 +81,10 @@ function createElectronApi(state: FixtureState) {
         };
       }
       if (channel === 'db:creativeDecisions:findByProject') {
-        return { success: true, data: state.decisions };
+        return {
+          success: true,
+          data: state.decisions.filter(item => item.projectId === String(args[0])),
+        };
       }
       if (channel === 'ai:chatStream') {
         setTimeout(() => {
@@ -114,6 +118,9 @@ function createElectronApi(state: FixtureState) {
       }
       if (channel === 'db:creativeDecisions:confirmMany') {
         state.confirmAttempts += 1;
+        if (state.confirmDelay > 0) {
+          await new Promise(resolve => setTimeout(resolve, state.confirmDelay));
+        }
         if (state.confirmFailuresRemaining > 0) {
           state.confirmFailuresRemaining -= 1;
           return { success: false, error: '模拟事务写入失败' };
@@ -183,10 +190,12 @@ async function mount(options: {
   confirmFailuresRemaining?: number;
   initialDecisions?: CreativeDecision[];
   updateDelay?: number;
+  confirmDelay?: number;
 } = {}): Promise<{
   root: Root;
   container: HTMLDivElement;
   state: FixtureState;
+  renderProject: (projectId: string) => void;
 }> {
   localStorage.clear();
   localStorage.setItem('hi-story-ai-configs', JSON.stringify([{
@@ -195,23 +204,24 @@ async function mount(options: {
   const state: FixtureState = {
     decisions: options.initialDecisions ?? [], targetRecords: [],
     confirmFailuresRemaining: options.confirmFailuresRemaining ?? 0,
-    confirmAttempts: 0, updateDelay: options.updateDelay ?? 0, committedEffects: [],
+    confirmAttempts: 0, updateDelay: options.updateDelay ?? 0,
+    confirmDelay: options.confirmDelay ?? 0, committedEffects: [],
   };
   window.electronAPI = createElectronApi(state) as typeof window.electronAPI;
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
-  flushSync(() => root.render(
-    <AIChatPanel
-      projectId="project-a"
-      onCreativeDecisionsCommitted={effects => { state.committedEffects = effects; }}
-    />,
+  const renderProject = (projectId: string) => flushSync(() => root.render(
+    <AIChatPanel projectId={projectId} onCreativeDecisionsCommitted={effects => {
+      state.committedEffects = effects;
+    }} />,
   ));
+  renderProject('project-a');
   await until(
     () => Boolean(button('整理为决策')) && document.body.textContent?.includes('test-model') === true,
     '持久化 assistant 消息没有显示整理入口或 AI 配置未完成加载',
   );
-  return { root, container, state };
+  return { root, container, state, renderProject };
 }
 
 async function extract(): Promise<void> {
@@ -331,6 +341,25 @@ const cases: Array<[string, () => Promise<void>]> = [
       click('保存修改');
       assert(titleInput.disabled, '保存期间标题仍可继续编辑');
       await until(() => fixture.state.decisions[0]?.title === '保存中的标题');
+    } finally {
+      flushSync(() => fixture.root.unmount());
+      fixture.container.remove();
+    }
+  }],
+  ['项目切换后忽略旧项目的延迟确认回执', async () => {
+    const fixture = await mount({
+      initialDecisions: [makeDecision(extractedDraft)],
+      confirmDelay: 120,
+    });
+    try {
+      click('决策(1)');
+      await until(() => Boolean(document.querySelector('[aria-label="决策标题"]')));
+      click('确认此项');
+      fixture.renderProject('project-b');
+      await until(() => fixture.state.targetRecords.length === 1);
+      await tick();
+      assert(fixture.state.committedEffects.length === 0, '旧项目确认回执触发了当前项目刷新');
+      assert(!document.body.textContent?.includes('写入成功'), '旧项目写入结果显示在当前项目面板');
     } finally {
       flushSync(() => fixture.root.unmount());
       fixture.container.remove();
