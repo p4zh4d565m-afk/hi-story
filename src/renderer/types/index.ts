@@ -317,6 +317,8 @@ export interface StoryFact {
   description: string;   // 完整描述
   status: 'active' | 'superseded' | 'resolved';
   supersededBy: string | null;
+  sourceDecisionId: string | null;
+  sourceKind: 'legacy' | 'chapter_extraction' | 'author_decision';
   createdAt: string;
 }
 
@@ -328,6 +330,10 @@ export interface CharacterKnowledge {
   factDescription: string;
   source: string;              // 从哪知道的（章节标题或事件）
   learnedAtChapterId: string | null;
+  sourceDecisionId: string | null;
+  sourceKind: 'legacy' | 'chapter_extraction' | 'author_decision';
+  status: 'active' | 'superseded';
+  supersededBy: string | null;
   createdAt: string;
 }
 
@@ -342,6 +348,7 @@ export interface NarrativeHook {
   status: 'open' | 'partially_resolved' | 'resolved' | 'abandoned';
   resolvedInChapterId: string | null;
   dueChapterId: string | null;  // 建议在哪章回收
+  sourceDecisionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -355,8 +362,99 @@ export interface NarrativeDebt {
   promisedByChapter: number | null;
   status: 'unpaid' | 'paid' | 'overdue' | 'waived';
   paidInChapterId: string | null;
+  sourceDecisionId: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+// ===== 创作决策确认账本 =====
+export interface StoryFactDecisionPayload {
+  factType: 'location' | 'possession' | 'relationship' | 'knowledge' | 'event' | 'emotional_state';
+  subject: string;
+  predicate: string;
+  object: string;
+  description: string;
+  chapterId?: string | null;
+  targetId?: string | null;
+}
+
+export interface KnowledgeDecisionPayload {
+  characterId?: string | null;
+  characterName: string;
+  factDescription: string;
+  source: string;
+  learnedAtChapterId?: string | null;
+  targetId?: string | null;
+}
+
+export interface HookDecisionPayload {
+  hookType: 'cliffhanger' | 'foreshadowing' | 'promise' | 'mystery' | 'emotional_hook';
+  description: string;
+  intensity: number;
+  chapterId?: string | null;
+  dueChapterId?: string | null;
+  targetId?: string | null;
+}
+
+export interface DebtDecisionPayload {
+  debtType: 'reveal' | 'payoff' | 'character_return' | 'mystery_answer' | 'power_up';
+  description: string;
+  chapterId?: string | null;
+  promisedByChapter?: number | null;
+  targetId?: string | null;
+}
+
+export type CreativeDecisionDraft =
+  | { type: 'story_fact'; title: string; rationale: string; payload: StoryFactDecisionPayload }
+  | { type: 'character_knowledge'; title: string; rationale: string; payload: KnowledgeDecisionPayload }
+  | { type: 'narrative_hook'; title: string; rationale: string; payload: HookDecisionPayload }
+  | { type: 'narrative_debt'; title: string; rationale: string; payload: DebtDecisionPayload };
+
+export type CreativeDecision = CreativeDecisionDraft & {
+  id: string;
+  projectId: string;
+  sourceThreadId: string | null;
+  sourceMessageId: string | null;
+  parentDecisionId: string | null;
+  status: 'proposed' | 'confirmed' | 'rejected' | 'superseded';
+  createdAt: string;
+  confirmedAt: string | null;
+  rejectedAt: string | null;
+};
+
+export interface CreativeDecisionEffect {
+  id: string;
+  decisionId: string;
+  targetTable: 'story_facts' | 'character_knowledge' | 'narrative_hooks' | 'narrative_debts';
+  targetId: string;
+  operation: 'insert' | 'update' | 'supersede';
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CreateCreativeDecisionProposalsInput {
+  projectId: string;
+  sourceThreadId: string;
+  sourceMessageId: string;
+  drafts: CreativeDecisionDraft[];
+}
+
+export interface ConfirmCreativeDecisionsInput {
+  projectId: string;
+  decisionIds: string[];
+}
+
+export interface UpdateCreativeDecisionProposalInput {
+  projectId: string;
+  decisionId: string;
+  draft: CreativeDecisionDraft;
+}
+
+export interface CreateCreativeDecisionRevisionInput {
+  projectId: string;
+  parentDecisionId: string;
+  draft: CreativeDecisionDraft;
 }
 
 // ===== 风格指纹（P3 — 从 localStorage 迁移到主类型） =====

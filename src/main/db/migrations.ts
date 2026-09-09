@@ -435,6 +435,86 @@ const MIGRATIONS = [
       );
     `,
   },
+  // 018: 创作决策确认账本及运行时投影来源
+  {
+    version: 18,
+    sql: `
+      CREATE TABLE creative_decisions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        source_thread_id TEXT,
+        source_message_id TEXT,
+        parent_decision_id TEXT,
+        decision_type TEXT NOT NULL CHECK(decision_type IN (
+          'story_fact','character_knowledge','narrative_hook','narrative_debt'
+        )),
+        title TEXT NOT NULL DEFAULT '',
+        rationale TEXT NOT NULL DEFAULT '',
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'proposed' CHECK(status IN (
+          'proposed','confirmed','rejected','superseded'
+        )),
+        created_at TEXT NOT NULL,
+        confirmed_at TEXT,
+        rejected_at TEXT,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (source_thread_id) REFERENCES conversation_threads(id) ON DELETE SET NULL,
+        FOREIGN KEY (source_message_id) REFERENCES conversation_messages(id) ON DELETE SET NULL,
+        FOREIGN KEY (parent_decision_id) REFERENCES creative_decisions(id) ON DELETE SET NULL
+      );
+
+      CREATE TABLE creative_decision_effects (
+        id TEXT PRIMARY KEY,
+        decision_id TEXT NOT NULL,
+        target_table TEXT NOT NULL CHECK(target_table IN (
+          'story_facts','character_knowledge','narrative_hooks','narrative_debts'
+        )),
+        target_id TEXT NOT NULL,
+        operation TEXT NOT NULL CHECK(operation IN ('insert','update','supersede')),
+        before_json TEXT,
+        after_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (decision_id) REFERENCES creative_decisions(id) ON DELETE CASCADE
+      );
+
+      ALTER TABLE story_facts ADD COLUMN source_decision_id TEXT
+        REFERENCES creative_decisions(id) ON DELETE SET NULL;
+      ALTER TABLE story_facts ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'legacy'
+        CHECK(source_kind IN ('legacy','chapter_extraction','author_decision'));
+
+      ALTER TABLE character_knowledge ADD COLUMN source_decision_id TEXT
+        REFERENCES creative_decisions(id) ON DELETE SET NULL;
+      ALTER TABLE character_knowledge ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'legacy'
+        CHECK(source_kind IN ('legacy','chapter_extraction','author_decision'));
+      ALTER TABLE character_knowledge ADD COLUMN status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active','superseded'));
+      ALTER TABLE character_knowledge ADD COLUMN superseded_by TEXT;
+
+      ALTER TABLE narrative_hooks ADD COLUMN source_decision_id TEXT
+        REFERENCES creative_decisions(id) ON DELETE SET NULL;
+      ALTER TABLE narrative_debts ADD COLUMN source_decision_id TEXT
+        REFERENCES creative_decisions(id) ON DELETE SET NULL;
+
+      CREATE INDEX idx_creative_decisions_project_status
+        ON creative_decisions(project_id, status);
+      CREATE INDEX idx_creative_decisions_source_thread
+        ON creative_decisions(source_thread_id);
+      CREATE INDEX idx_creative_decisions_source_message
+        ON creative_decisions(source_message_id);
+      CREATE INDEX idx_creative_decisions_parent
+        ON creative_decisions(parent_decision_id);
+      CREATE INDEX idx_creative_decision_effects_decision
+        ON creative_decision_effects(decision_id);
+      CREATE INDEX idx_story_facts_source_decision
+        ON story_facts(source_decision_id);
+      CREATE INDEX idx_character_knowledge_source_decision
+        ON character_knowledge(source_decision_id);
+      CREATE INDEX idx_narrative_hooks_source_decision
+        ON narrative_hooks(source_decision_id);
+      CREATE INDEX idx_narrative_debts_source_decision
+        ON narrative_debts(source_decision_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
