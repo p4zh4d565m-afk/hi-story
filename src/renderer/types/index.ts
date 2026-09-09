@@ -144,6 +144,7 @@ export interface ConversationThread {
   title: string;
   category: 'character' | 'plot' | 'world' | 'general';
   createdAt: string;
+  updatedAt: string;
 }
 
 export interface ConversationMessage {
@@ -151,8 +152,60 @@ export interface ConversationMessage {
   threadId: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
-  providerId?: string;
+  providerId: string | null;
+  contextType: string;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ConversationSnapshot {
+  threads: ConversationThread[];
+  messages: Record<string, ConversationMessage[]>;
+}
+
+export interface CreateConversationThreadInput {
+  projectId: string;
+  title: string;
+  category: ConversationThread['category'];
+  id?: string;
+  createdAt?: string;
+}
+
+export interface AppendConversationMessageInput {
+  projectId: string;
+  threadId: string;
+  role: ConversationMessage['role'];
+  content: string;
+  providerId?: string | null;
+  contextType: string;
+  id?: string;
+  createdAt?: string;
+}
+
+export interface LegacyConversationEntry {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
   timestamp: string;
+}
+
+export interface LegacyConversationThread {
+  id: string;
+  name: string;
+  category: ConversationThread['category'];
+  createdAt: string;
+}
+
+export interface LegacyConversationData {
+  threads: LegacyConversationThread[];
+  messages: Record<string, LegacyConversationEntry[]>;
+}
+
+export interface LegacyMigrationResult {
+  status: 'imported' | 'already_migrated' | 'no_data';
+  threadCount: number;
+  messageCount: number;
 }
 
 export interface Material {

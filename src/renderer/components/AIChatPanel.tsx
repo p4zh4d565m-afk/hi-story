@@ -1,7 +1,9 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
 import { aiService, type ChatOptions } from '../services/ai.service';
 import { encrypt, decrypt } from '../services/crypto';
+import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
+import type { ConversationMessage, ConversationSnapshot, ConversationThread, IpcResult } from '../types';
 
 // Provider preset definitions (mirrors main process but available in renderer)
 interface ProviderPreset {
@@ -201,12 +203,13 @@ function generateId(): string {
   }
 }
 
-// ===== Thread management (localStorage) =====
+// ===== 会话视图模型（主存为 SQLite） =====
 interface Thread {
   id: string;
   name: string;
   category: 'character' | 'plot' | 'world' | 'general';
   createdAt: string;
+  updatedAt: string;
 }
 
 interface ThreadData {
@@ -214,31 +217,25 @@ interface ThreadData {
   messages: Record<string, ChatEntry[]>;  // threadId -> messages
 }
 
-function loadThreadData(projectId: string): ThreadData {
-  try {
-    const raw = localStorage.getItem(`hi-story-threads-${projectId}`);
-    return raw ? JSON.parse(raw) : { threads: [], messages: {} };
-  } catch { return { threads: [], messages: {} }; }
+const EMPTY_THREAD_DATA: ThreadData = { threads: [], messages: {} };
+
+function toChatEntry(message: ConversationMessage): ChatEntry {
+  return { id: message.id, role: message.role as ChatEntry['role'], content: message.content, timestamp: message.createdAt };
 }
 
-function saveThreadData(projectId: string, data: ThreadData): void {
-  try {
-    const json = JSON.stringify(data);
-    // Guard against localStorage quota overflow (5-10MB typical limit)
-    if (json.length > 4_000_000) {
-      console.warn('Thread data exceeds 4MB, truncating oldest messages to prevent data loss');
-      // Truncate: keep only most recent 50 messages per thread
-      const truncated: ThreadData = { threads: data.threads, messages: {} };
-      for (const [tid, msgs] of Object.entries(data.messages)) {
-        truncated.messages[tid] = msgs.slice(-50);
-      }
-      return saveThreadData(projectId, truncated); // Retry with truncated data
-    }
-    localStorage.setItem(`hi-story-threads-${projectId}`, json);
-  } catch (e) {
-    // If still failing after truncation (quota exceeded or privacy mode), log and continue
-    console.error('Failed to save chat history — data may be lost on reload:', e);
-  }
+function toThreadData(snapshot: ConversationSnapshot): ThreadData {
+  return {
+    threads: snapshot.threads.map(thread => ({
+      id: thread.id,
+      name: thread.title,
+      category: thread.category,
+      createdAt: thread.createdAt,
+      updatedAt: thread.updatedAt,
+    })),
+    messages: Object.fromEntries(
+      Object.entries(snapshot.messages).map(([threadId, messages]) => [threadId, messages.map(toChatEntry)]),
+    ),
+  };
 }
 
 const THREAD_CATEGORY_ICONS: Record<string, string> = {
@@ -274,8 +271,10 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const formDirtyRef = useRef(false);
 
   // ===== Chat state =====
-  const [threadData, setThreadData] = useState<ThreadData>(() => loadThreadData(projectId || ''));
-  const [activeThreadId, setActiveThreadId] = useState<string | null>(threadData.threads[0]?.id ?? null);
+  const [threadData, setThreadData] = useState<ThreadData>(EMPTY_THREAD_DATA);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null);
+  const [conversationLoading, setConversationLoading] = useState(false);
   const [showNewThread, setShowNewThread] = useState(false);
   const [newThreadName, setNewThreadName] = useState('');
   const [newThreadCategory, setNewThreadCategory] = useState<Thread['category']>('general');
@@ -286,13 +285,36 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [error, setError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
-  // Track previous project to detect switch
-  const prevProjectRef = useRef<string | null | undefined>(undefined);
-  // Pending AI requests from context menu
-  const pendingPolishRef = useRef<string | null>(null);
-  const pendingContinueRef = useRef<boolean>(false);
-  const prevMessagesLenRef = useRef<number>(0);
-  const prevStreamingRef = useRef<boolean>(false);
+  const projectIdRef = useRef(projectId);
+  const activeThreadIdRef = useRef(activeThreadId);
+  projectIdRef.current = projectId;
+  activeThreadIdRef.current = activeThreadId;
+
+  const conversationLoader = useMemo(() => createConversationLoader({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    storage: localStorage,
+    isProjectCurrent: requestProjectId => projectIdRef.current === requestProjectId,
+    onApply: (requestProjectId, snapshot) => {
+      if (projectIdRef.current !== requestProjectId) return;
+      const nextData = toThreadData(snapshot);
+      setThreadData(nextData);
+      setLoadedProjectId(requestProjectId);
+      setActiveThreadId(current => (
+        current && nextData.threads.some(thread => thread.id === current)
+          ? current
+          : nextData.threads[0]?.id ?? null
+      ));
+      setError(null);
+    },
+    onError: (requestProjectId, loadError) => {
+      if (projectIdRef.current !== requestProjectId) return;
+      const message = loadError instanceof Error ? loadError.message : String(loadError);
+      setError(`会话加载失败：${message}`);
+    },
+    onLoadingChange: (requestProjectId, loading) => {
+      if (projectIdRef.current === requestProjectId) setConversationLoading(loading);
+    },
+  }), []);
 
   // Usage tracking
   const [usage, setUsage] = useState<TokenUsage>(loadUsage);
@@ -343,95 +365,70 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     }
   }, [activeConfigId, activeConfig?.apiKey, activeConfig?.model]);
 
-  // Load messages when active thread changes
+  // 项目切换时只从 SQLite 加载；旧项目的迟到结果会被 loader 丢弃。
+  useEffect(() => {
+    conversationLoader.invalidate();
+    setThreadData(EMPTY_THREAD_DATA);
+    setLoadedProjectId(null);
+    setActiveThreadId(null);
+    setMessages([]);
+    setError(null);
+    setStreamingText('');
+    setIsStreaming(false);
+
+    if (!projectId) {
+      setConversationLoading(false);
+      return;
+    }
+    setConversationLoading(true);
+    void conversationLoader.load(projectId);
+  }, [conversationLoader, projectId]);
+
+  // Load messages when active thread or its SQLite snapshot changes
   useEffect(() => {
     if (activeThreadId && threadData.messages[activeThreadId]) {
       setMessages(threadData.messages[activeThreadId]);
     } else {
       setMessages([]);
     }
-    setError(null);
     setStreamingText('');
-  }, [activeThreadId]);
-
-  // Check for pending continue request
-  useEffect(() => {
-    const continueReq = localStorage.getItem('hi-story-pending-ai-continue');
-    if (continueReq && !isStreaming && activeConfig && contextMessages.length > 0) {
-      localStorage.removeItem('hi-story-pending-ai-continue');
-      const prompt = '请根据当前上下文，继续写接下来的内容。保持风格和情节的连贯性。';
-      const userMsg: ChatEntry = {
-        id: generateId(),
-        role: 'user',
-        content: prompt,
-        timestamp: new Date().toISOString(),
-      };
-      setMessages(prev => [...prev, userMsg]);
-      if (activeThreadId && projectId) {
-        const data = loadThreadData(projectId);
-        data.messages[activeThreadId] = [...messages, userMsg];
-        saveThreadData(projectId, data);
-        setThreadData(data);
-      }
-      // Wait for state to settle then trigger send
-      const chatMessages: ChatMessage[] = [
-        ...contextMessages,
-        ...[...messages, userMsg].map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-      ];
-      setIsStreaming(true);
-      setStreamingText('');
-      (async () => {
-        try {
-          let fullResponse = '';
-          const generator = aiService.chatStream(chatMessages, { model: activeConfig.model, maxTokens: 2048 });
-          for await (const token of generator) {
-            fullResponse = token;
-            setStreamingText(fullResponse);
-          }
-          const assistantMsg: ChatEntry = {
-            id: generateId(),
-            role: 'assistant',
-            content: fullResponse,
-            timestamp: new Date().toISOString(),
-          };
-          const data2 = loadThreadData(projectId);
-          data2.messages[activeThreadId] = [...(data2.messages[activeThreadId] || []), assistantMsg];
-          saveThreadData(projectId, data2);
-          setThreadData(data2);
-          setMessages(prev => [...prev, assistantMsg]);
-        } catch (err: any) {
-          setError(err.message || 'AI 请求失败');
-        } finally {
-          setIsStreaming(false);
-          setStreamingText('');
-        }
-      })();
-    }
-  }, [contextMessages.length > 0, activeConfig, isStreaming, activeConfigId]);
+  }, [activeThreadId, threadData]);
 
   // Handle thread creation
-  const handleCreateThread = () => {
-    if (!newThreadName.trim() || !projectId) return;
-    const thread: Thread = {
-      id: generateId(),
-      name: newThreadName.trim(),
+  const handleCreateThread = async () => {
+    const requestProjectId = projectId;
+    if (!newThreadName.trim() || !requestProjectId || loadedProjectId !== requestProjectId) return;
+    const response = await window.electronAPI.invoke('db:conversation:createThread', {
+      projectId: requestProjectId,
+      title: newThreadName.trim(),
       category: newThreadCategory,
-      createdAt: new Date().toISOString(),
+    }) as IpcResult<ConversationThread>;
+    if (projectIdRef.current !== requestProjectId) return;
+    if (!response.success || !response.data) {
+      setError(response.error || '新建会话失败');
+      return;
+    }
+    const thread: Thread = {
+      id: response.data.id,
+      name: response.data.title,
+      category: response.data.category,
+      createdAt: response.data.createdAt,
+      updatedAt: response.data.updatedAt,
     };
-    const updated: ThreadData = {
-      threads: [...threadData.threads, thread],
-      messages: { ...threadData.messages, [thread.id]: [] },
-    };
-    setThreadData(updated);
-    saveThreadData(projectId, updated);
+    setThreadData(current => ({
+      threads: [...current.threads, thread],
+      messages: { ...current.messages, [thread.id]: [] },
+    }));
     setActiveThreadId(thread.id);
     setNewThreadName('');
     setShowNewThread(false);
+    setError(null);
   };
 
   // Handle thread deletion
-  const handleDeleteThread = (threadId: string) => {
-    if (!projectId) return;
+  const handleDeleteThread = async (threadId: string) => {
+    const requestProjectId = projectId;
+    if (!requestProjectId || loadedProjectId !== requestProjectId) return;
     const thread = threadData.threads.find(t => t.id === threadId);
     const msgs = threadData.messages[threadId] || [];
 
@@ -444,56 +441,34 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         entityType: 'aiThread',
         entityId: threadId,
         entityName: thread?.name || '对话',
-        projectId,
+        projectId: requestProjectId,
         data: { thread, messages: msgs },
         deletedAt: new Date().toISOString(),
       });
       localStorage.setItem('hi-story-trash-bin', JSON.stringify(trash.slice(0, 100)));
     } catch {}
 
-    const { [threadId]: _, ...remainingMessages } = threadData.messages;
-    const updated: ThreadData = {
-      threads: threadData.threads.filter(t => t.id !== threadId),
-      messages: remainingMessages,
-    };
-    setThreadData(updated);
-    saveThreadData(projectId, updated);
-    if (activeThreadId === threadId) {
-      setActiveThreadId(updated.threads[0]?.id ?? null);
+    const response = await window.electronAPI.invoke(
+      'db:conversation:removeThread', requestProjectId, threadId,
+    ) as IpcResult<void>;
+    if (projectIdRef.current !== requestProjectId) return;
+    if (!response.success) {
+      setError(response.error || '删除会话失败');
+      return;
     }
+    setThreadData(current => {
+      const { [threadId]: _removed, ...remainingMessages } = current.messages;
+      return {
+        threads: current.threads.filter(item => item.id !== threadId),
+        messages: remainingMessages,
+      };
+    });
+    if (activeThreadIdRef.current === threadId) {
+      const remaining = threadData.threads.filter(item => item.id !== threadId);
+      setActiveThreadId(remaining[0]?.id ?? null);
+    }
+    setError(null);
   };
-  useEffect(() => {
-    if (prevProjectRef.current !== undefined && prevProjectRef.current !== projectId) {
-      if (activeThreadId && prevProjectRef.current) {
-        const data = loadThreadData(prevProjectRef.current!);
-        const updated: ThreadData = {
-          ...data,
-          messages: { ...data.messages, [activeThreadId]: messages },
-        };
-        saveThreadData(prevProjectRef.current!, updated);
-      }
-      const newData = projectId ? loadThreadData(projectId) : { threads: [], messages: {} };
-      // 如果新项目没有 thread，自动创建一个默认对话
-      if (newData.threads.length === 0 && projectId) {
-        const defaultThread: Thread = {
-          id: generateId(),
-          name: '默认对话',
-          category: 'general',
-          createdAt: new Date().toISOString(),
-        };
-        newData.threads = [defaultThread];
-        newData.messages[defaultThread.id] = [];
-        saveThreadData(projectId, newData);
-      }
-      setThreadData(newData);
-      // 自动选中第一个 thread（保留对话历史）
-      setActiveThreadId(newData.threads[0]?.id ?? null);
-      setMessages([]);
-      setError(null);
-      setStreamingText('');
-    }
-    prevProjectRef.current = projectId;
-  }, [projectId]);
 
   const handleAddConfig = async () => {
     if (!editingApiKey.trim() || !editingProviderId) return;
@@ -537,81 +512,147 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const currentProviderModels = currentProviderPreset?.models || [];
   const currentProviderHint = currentProviderPreset?.hint;
 
-  const sendMessage = async () => {
-    const text = input.trim();
-    if (!text || isStreaming) return;
+  const appendConversationMessage = async (
+    requestProjectId: string,
+    threadId: string,
+    role: 'user' | 'assistant',
+    content: string,
+    contextType: string,
+    providerId: string | null,
+  ): Promise<ConversationMessage> => {
+    const response = await window.electronAPI.invoke('db:conversation:appendMessage', {
+      projectId: requestProjectId,
+      threadId,
+      role,
+      content,
+      contextType,
+      providerId,
+    }) as IpcResult<ConversationMessage>;
+    if (!response.success || !response.data) throw new Error(response.error || '消息保存失败');
+    return response.data;
+  };
 
-    setInput('');
-    setError(null);
-    setLastRequestTokens(null);
+  const appendMessageToCurrentSnapshot = (
+    requestProjectId: string,
+    threadId: string,
+    message: ConversationMessage,
+  ) => {
+    if (projectIdRef.current !== requestProjectId) return;
+    setThreadData(current => ({
+      threads: current.threads.map(thread => (
+        thread.id === threadId ? { ...thread, updatedAt: message.updatedAt } : thread
+      )),
+      messages: {
+        ...current.messages,
+        [threadId]: [...(current.messages[threadId] || []), toChatEntry(message)],
+      },
+    }));
+  };
 
-    if (!activeConfig) {
+  const performConversationTurn = async (text: string, contextType: string) => {
+    const requestProjectId = projectId;
+    const requestThreadId = activeThreadId;
+    const requestConfig = activeConfig;
+    if (!requestConfig) {
       setError('请先添加一个 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
       return;
     }
-
-    const userMsg: ChatEntry = {
-      id: generateId(),
-      role: 'user',
-      content: text,
-      timestamp: new Date().toISOString(),
-    };
-
-    setMessages(prev => [...prev, userMsg]);
-    // Save message to active thread
-    if (activeThreadId && projectId) {
-      const data = loadThreadData(projectId);
-      data.messages[activeThreadId] = [...messages, userMsg];
-      saveThreadData(projectId, data);
-      setThreadData(data);
+    if (!requestProjectId || loadedProjectId !== requestProjectId || !requestThreadId) {
+      setError('会话尚未加载完成，请稍后重试');
+      return;
     }
 
-    // Build messages: context (system prompt with project info) + conversation history + new user message
-    const chatMessages: ChatMessage[] = [
-      ...contextMessages,                     // System context (project, characters, world, etc.)
-      ...[...messages, userMsg].map(m => ({   // Conversation history
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      })),
-    ];
-
+    const history = [...messages];
+    setError(null);
+    setLastRequestTokens(null);
     setIsStreaming(true);
     setStreamingText('');
 
     try {
-      let fullResponse = '';
-      const generator = aiService.chatStream(chatMessages, { model: activeConfig.model, maxTokens: 2048 });
+      const result = await runPersistedConversationTurn({
+        persistUser: () => appendConversationMessage(
+          requestProjectId, requestThreadId, 'user', text, contextType, null,
+        ),
+        onUserPersisted: message => {
+          appendMessageToCurrentSnapshot(requestProjectId, requestThreadId, message);
+          onSaveMessage?.('user', text);
+        },
+        createStream: userMessage => {
+          const chatMessages: ChatMessage[] = [
+            ...contextMessages,
+            ...history.map(message => ({
+              role: message.role,
+              content: message.content,
+            })),
+            { role: 'user', content: userMessage.content },
+          ];
+          return aiService.chatStream(chatMessages, { model: requestConfig.model, maxTokens: 2048 });
+        },
+        onProgress: content => {
+          if (projectIdRef.current === requestProjectId && activeThreadIdRef.current === requestThreadId) {
+            setStreamingText(content);
+          }
+        },
+        persistAssistant: content => appendConversationMessage(
+          requestProjectId,
+          requestThreadId,
+          'assistant',
+          content,
+          contextType,
+          requestConfig.providerId,
+        ),
+      });
 
-      for await (const token of generator) {
-        fullResponse = token;
-        setStreamingText(fullResponse);
+      appendMessageToCurrentSnapshot(requestProjectId, requestThreadId, result.assistantMessage);
+      onSaveMessage?.('assistant', result.assistantMessage.content);
+      const stats = trackUsage(requestConfig.providerId, text, result.assistantMessage.content);
+      if (projectIdRef.current === requestProjectId) {
+        setLastRequestTokens(stats);
+        setUsage(loadUsage());
       }
-
-      const assistantMsg: ChatEntry = {
-        id: generateId(),
-        role: 'assistant',
-        content: fullResponse,
-        timestamp: new Date().toISOString(),
-      };
-
-      // Track token usage
-      const stats = trackUsage(activeConfig.providerId, text, fullResponse);
-      setLastRequestTokens(stats);
-      setUsage(loadUsage());
-
-      setMessages(prev => [...prev, assistantMsg]);
-      if (activeThreadId && projectId) {
-        const data = loadThreadData(projectId);
-        data.messages[activeThreadId] = [...(data.messages[activeThreadId] || []), assistantMsg];
-        saveThreadData(projectId, data);
+    } catch (requestError) {
+      if (projectIdRef.current === requestProjectId) {
+        const message = requestError instanceof Error ? requestError.message : String(requestError);
+        setError(message || 'AI 请求失败');
       }
-    } catch (err: any) {
-      setError(err.message || 'AI 请求失败');
     } finally {
-      setIsStreaming(false);
-      setStreamingText('');
+      if (projectIdRef.current === requestProjectId) {
+        setIsStreaming(false);
+        setStreamingText('');
+      }
     }
   };
+
+  const sendMessage = async () => {
+    const text = input.trim();
+    if (!text || isStreaming) return;
+    if (!activeConfig) {
+      setError('请先添加一个 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
+      return;
+    }
+    setInput('');
+    await performConversationTurn(text, 'chat');
+  };
+
+  // 编辑器“继续写”请求复用同一持久化边界，并记录独立上下文类型。
+  useEffect(() => {
+    const continueReq = localStorage.getItem('hi-story-pending-ai-continue');
+    if (
+      continueReq
+      && !isStreaming
+      && activeConfig
+      && contextMessages.length > 0
+      && projectId
+      && loadedProjectId === projectId
+      && activeThreadId
+    ) {
+      localStorage.removeItem('hi-story-pending-ai-continue');
+      void performConversationTurn(
+        '请根据当前上下文，继续写接下来的内容。保持风格和情节的连贯性。',
+        'continue',
+      );
+    }
+  }, [activeConfigId, activeThreadId, contextMessages.length, isStreaming, loadedProjectId, projectId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -713,7 +754,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             </select>
             <button
               onClick={handleCreateThread}
-              disabled={!newThreadName.trim()}
+              disabled={!newThreadName.trim() || conversationLoading || loadedProjectId !== projectId}
               className="px-3 py-1 text-xs bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50"
             >
               创建
@@ -738,10 +779,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
               onChange={(e) => setChatSearchQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && chatSearchQuery.trim() && projectId) {
-                  const data = loadThreadData(projectId);
                   const allResults: { threadId: string; threadName: string; entries: ChatEntry[] }[] = [];
-                  for (const t of data.threads) {
-                    const msgs = (data.messages[t.id] || []).filter(m =>
+                  for (const t of threadData.threads) {
+                    const msgs = (threadData.messages[t.id] || []).filter(m =>
                       m.content.toLowerCase().includes(chatSearchQuery.trim().toLowerCase())
                     );
                     if (msgs.length > 0) {
@@ -1051,7 +1091,10 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
       {/* === Messages === */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.length === 0 && !isStreaming && (
+        {conversationLoading && (
+          <div className="text-center text-gray-500 text-xs mt-8">正在从数据库加载会话…</div>
+        )}
+        {messages.length === 0 && !isStreaming && !conversationLoading && (
           <div className="text-center text-gray-600 text-sm mt-8">
             <p className="text-2xl mb-2">💬</p>
             <p>开始与 AI 讨论你的创作</p>
@@ -1125,11 +1168,11 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             rows={2}
             className="flex-1 resize-none rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white
                        focus:outline-none focus:border-accent placeholder-gray-600"
-            disabled={isStreaming}
+            disabled={isStreaming || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
           />
           <button
             onClick={sendMessage}
-            disabled={!input.trim() || isStreaming}
+            disabled={!input.trim() || isStreaming || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
             className="px-4 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end"
           >

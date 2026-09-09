@@ -60,6 +60,10 @@ Minimal bridge exposing `invoke` and `on` via `contextBridge.exposeInMainWorld('
 
 迁移 v16 只在项目表保存 `obsidian_path`。`obsidian:scan` 按该项目路径只读扫描 Markdown，渲染端 `obsidian-loader.ts` 仍用“项目 ID + 请求代次”校验；它与核心 SQLite 快照分开加载，未配置、目录缺失和单文件损坏都不能阻断项目。禁止新增自动回写 Obsidian 的 IPC。AI 仅接收总计约 3500 token、单篇约 650 token 的摘录；人物、世界观和长期大纲优先参考 Obsidian，运行期事实仍以 SQLite 为准。使用说明见 `docs/obsidian.md`。
 
+### AI conversation persistence
+
+迁移 v17 将 AI 会话和消息正式归入 SQLite，并用 `data_migration_state` 按项目记录旧 `hi-story-threads-{projectId}` 的一次性导入；导入事务失败必须保留旧 localStorage 数据且不能留下部分记录。渲染端 `conversation-persistence.ts` 用项目 ID + 请求代次过滤迟到回执，加载失败不得用空快照覆盖当前状态。用户消息在发起 AI 请求前落库；assistant 消息仅在流正常结束后写入，中断、空回复或失败不得伪装成完整成功消息。创作决策确认账本不属于该链路。
+
 ### Chapter save flow (WritingArea.tsx)
 
 The save mechanism has been hardened against data-loss race conditions:
@@ -130,6 +134,7 @@ resources/
 - **章节保存防丢失** — 保存失败保留待保存正文并显示重试入口；切章、延迟回执与策划/写作切换防护见上方 Critical Implementation Details
 - **项目异步加载隔离** — 项目选择与五类核心数据加载使用请求代次及当前项目双重校验，整组数据成功后原子提交；旧项目迟到或失败的回执不会覆盖当前界面，策划、素材、伏笔和角色关联加载遵守同一约束
 - **Obsidian 单向读取 MVP** — 每个项目可配置独立目录，只读扫描人物、世界观和长期大纲 Markdown，支持 YAML frontmatter、文件隔离告警、只读浏览和有界 AI 上下文；保留全部原有 SQLite 模块，不监听或回写 Obsidian
+- **AI 会话 SQLite 持久化** — 会话、消息、顺序、功能上下文和更新时间按项目落库；旧 localStorage 会话事务化导入一次且保留原数据，项目竞态与加载失败隔离，流式失败不会写入完整 AI 消息
 - **去 AI 味润色** — 工具栏「✨ 润色」整章润色 + 右键「✨ AI 润色」选中文本润色。保守润色（保留原意、只改不通顺/生硬/有 AI 味处），结果并排预览对比、确认后才写回。复用 `aiService.chatStream` + `POLISH_SYSTEM_PROMPT`，无需改 main 进程
 - **内容安全红线** — `WRITE_SYSTEM_PROMPT` 内置「内容安全红线」段：禁止性行为/性器官/性暗示隐喻描写，亲密戏用含蓄留白+蒙太奇转场，确保生成内容通过番茄等网文平台审核
 - **全书文风统计** — 审稿面板「📊 全书文风统计」Tab：纯本地正则零 LLM 统计全书句式 tic（章均频率/口头禅/跨章重复句/章末形态同构/开篇时间词率），发现单章看不出的固化 AI 味。参考 voocel/ainovel-cli 的 stylestat 设计，核心在 `runStyleStats`

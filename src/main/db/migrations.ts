@@ -402,6 +402,39 @@ const MIGRATIONS = [
       ALTER TABLE projects ADD COLUMN obsidian_path TEXT NOT NULL DEFAULT '';
     `,
   },
+  // 017: AI 会话正式持久化与 localStorage 一次性迁移标记
+  {
+    version: 17,
+    sql: `
+      ALTER TABLE conversation_threads ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+      UPDATE conversation_threads SET updated_at = created_at WHERE updated_at = '';
+
+      ALTER TABLE conversation_messages ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE conversation_messages ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE conversation_messages ADD COLUMN context_type TEXT NOT NULL DEFAULT 'chat';
+      UPDATE conversation_messages SET updated_at = timestamp WHERE updated_at = '';
+
+      WITH ranked AS (
+        SELECT id, ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY timestamp, id) - 1 AS position
+        FROM conversation_messages
+      )
+      UPDATE conversation_messages
+      SET sort_order = (SELECT position FROM ranked WHERE ranked.id = conversation_messages.id);
+
+      CREATE INDEX IF NOT EXISTS idx_conversation_threads_project
+        ON conversation_threads(project_id, updated_at);
+      CREATE INDEX IF NOT EXISTS idx_conversation_messages_thread_order
+        ON conversation_messages(thread_id, sort_order);
+
+      CREATE TABLE IF NOT EXISTS data_migration_state (
+        project_id TEXT NOT NULL,
+        migration_key TEXT NOT NULL,
+        completed_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, migration_key),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {
