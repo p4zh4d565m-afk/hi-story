@@ -15,6 +15,7 @@ import { registerSkillsIpc } from './skills.ipc';
 import { registerPlanningIpc } from './planning.ipc';
 import { registerObsidianIpc } from './obsidian.ipc';
 import { registerConversationIpc } from './conversation.ipc';
+import { registerCreativeDecisionIpc } from './creative-decision.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -37,4 +38,5 @@ export function registerAllIpc(): void {
   registerPlanningIpc();
   registerObsidianIpc();
   registerConversationIpc();
+  registerCreativeDecisionIpc();
 }
