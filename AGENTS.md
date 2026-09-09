@@ -66,7 +66,7 @@ Minimal bridge exposing `invoke` and `on` via `contextBridge.exposeInMainWorld('
 
 ### Creative decision ledger
 
-迁移 v18 新增 `creative_decisions` 与 `creative_decision_effects`。AI 提取只创建 `proposed`，作者确认由 `CreativeDecisionRepo.confirmMany` 在单个 SQLite 事务内校验归属、投影到事实/人物知识/叙事钩子/叙事债务、记录前后快照并更新状态；渲染端不得串联目标表 IPC。事实与人物知识的章节重抽取 `DELETE` 必须排除 `source_decision_id IS NOT NULL`，知识上下文只读 `active`。新决策不写旧 `foreshadowings`，不写 Obsidian。未解决钩子与未偿债务按“逾期债务→高强度钩子→临近到期→其他”进入写章、审稿和普通对话，独立预算最多约 800 token，项目切换用项目 ID + 请求代次隔离。真实回归：`node tests/ui/run-creative-decision-ledger.cjs`。
+迁移 v18 新增 `creative_decisions` 与 `creative_decision_effects`，每个迁移的 DDL 与版本登记必须处于同一事务。AI 提取只创建 `proposed`，作者确认由 `CreativeDecisionRepo.confirmMany` 在单个 SQLite 事务内校验归属、投影到事实/人物知识/叙事钩子/叙事债务、记录前后快照并更新状态；同一父决策只能有一个待确认修订。渲染端不得串联目标表 IPC，必须保留其他候选的未保存草稿并忽略切换项目后的旧操作回执。事实与人物知识的章节重抽取 `DELETE` 必须排除 `source_decision_id IS NOT NULL`，知识上下文只读 `active`。新决策不写旧 `foreshadowings`，不写 Obsidian。确认后四类运行时状态立即刷新到普通对话；未解决钩子与未偿债务另按“逾期债务→高强度钩子→临近到期→其他”进入写章、审稿和普通对话，独立预算最多约 800 token。所有加载使用项目 ID + 请求代次隔离。真实回归：`node tests/ui/run-creative-decision-ledger.cjs`。
 
 ### Chapter save flow (WritingArea.tsx)
 
@@ -139,7 +139,7 @@ resources/
 - **项目异步加载隔离** — 项目选择与五类核心数据加载使用请求代次及当前项目双重校验，整组数据成功后原子提交；旧项目迟到或失败的回执不会覆盖当前界面，策划、素材、伏笔和角色关联加载遵守同一约束
 - **Obsidian 单向读取 MVP** — 每个项目可配置独立目录，只读扫描人物、世界观和长期大纲 Markdown，支持 YAML frontmatter、文件隔离告警、只读浏览和有界 AI 上下文；保留全部原有 SQLite 模块，不监听或回写 Obsidian
 - **AI 会话 SQLite 持久化** — 会话、消息、顺序、功能上下文和更新时间按项目落库；旧 localStorage 会话事务化导入一次且保留原数据，项目竞态与加载失败隔离，流式失败不会写入完整 AI 消息
-- **创作决策确认账本** — AI 已落库回复可整理为四类结构化提议；作者编辑、拒绝或批量确认后，由 v18 账本单事务写入运行时表并记录 effect，支持幂等确认与事实/知识/钩子/债务修订。章节重抽取保护作者确认状态，开放钩子与未偿债务按 800 token 独立预算进入后续 AI 上下文
+- **创作决策确认账本** — AI 已落库回复可整理为四类结构化提议；作者编辑、拒绝或批量确认后，由 v18 账本单事务写入运行时表并记录 effect，支持幂等确认、单线修订、写入结果与历史查看。章节重抽取保护作者确认状态，确认后四类状态立即刷新到普通对话，开放钩子与未偿债务按 800 token 独立预算进入后续 AI 上下文
 - **去 AI 味润色** — 工具栏「✨ 润色」整章润色 + 右键「✨ AI 润色」选中文本润色。保守润色（保留原意、只改不通顺/生硬/有 AI 味处），结果并排预览对比、确认后才写回。复用 `aiService.chatStream` + `POLISH_SYSTEM_PROMPT`，无需改 main 进程
 - **内容安全红线** — `WRITE_SYSTEM_PROMPT` 内置「内容安全红线」段：禁止性行为/性器官/性暗示隐喻描写，亲密戏用含蓄留白+蒙太奇转场，确保生成内容通过番茄等网文平台审核
 - **全书文风统计** — 审稿面板「📊 全书文风统计」Tab：纯本地正则零 LLM 统计全书句式 tic（章均频率/口头禅/跨章重复句/章末形态同构/开篇时间词率），发现单章看不出的固化 AI 味。参考 voocel/ainovel-cli 的 stylestat 设计，核心在 `runStyleStats`
