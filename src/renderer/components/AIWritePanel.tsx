@@ -468,6 +468,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         loadFactsContext(projectId),
       ]);
       if (hooksRes?.success && hooksRes.data) hooksContext = hooksRes.data as string;
+      else if (hooksRes && !hooksRes.success) hooksContext = null;
       factsStr = factsCtx.factsStr;
       knowledgeStr = factsCtx.knowledgeStr;
     } catch { /* ignore */ }
@@ -590,6 +591,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           ]);
           if (hooksRes?.success && hooksRes.data) {
             hooksContext = hooksRes.data as string;
+          } else if (hooksRes && !hooksRes.success) {
+            hooksContext = null;
           }
           factsStr = factsCtx.factsStr;
           knowledgeStr = factsCtx.knowledgeStr;

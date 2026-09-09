@@ -322,6 +322,8 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
 
           if (hooksRes?.success && hooksRes.data) {
             hooksSummary = hooksRes.data as string;
+          } else if (hooksRes && !hooksRes.success) {
+            hooksSummary = '';
           }
         } catch { /* 忽略加载失败 */ }
       }

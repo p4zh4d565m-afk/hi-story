@@ -27,7 +27,7 @@ import { decrypt } from './services/crypto';
 import type { ProviderConfig } from '../main/ai/provider';
 import { useUndo, type UndoCommand } from './hooks/useUndoManager';
 import UndoToast from './components/UndoToast';
-import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult } from './types';
+import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult, IpcResult } from './types';
 import type { ImportResult } from '../main/importer';
 import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
@@ -77,6 +77,11 @@ const App: React.FC = () => {
   const [obsidianSnapshot, setObsidianSnapshot] = useState<{ projectId: string; result: ObsidianScanResult } | null>(null);
   const [obsidianLoading, setObsidianLoading] = useState(false);
   const [obsidianError, setObsidianError] = useState<string | null>(null);
+  const [narrativeContextSnapshot, setNarrativeContextSnapshot] = useState<{
+    projectId: string;
+    content: string;
+  } | null>(null);
+  const narrativeContextGenerationRef = useRef(0);
   const [importing, setImporting] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'planning' | 'writing'>('writing');
 
@@ -358,6 +363,34 @@ const App: React.FC = () => {
       setObsidianLoading(false);
     }
   }, [activeProject?.id, obsidianLoader]);
+
+  // 钩子与债务上下文独立加载；项目和请求代次必须同时匹配才可提交。
+  useEffect(() => {
+    const requestGeneration = ++narrativeContextGenerationRef.current;
+    const projectId = activeProject?.id;
+    setNarrativeContextSnapshot(null);
+    if (!projectId) return;
+
+    void window.electronAPI.invoke('db:narrativeHooks:getContext', projectId)
+      .then(raw => {
+        const response = raw as IpcResult<string>;
+        if (
+          narrativeContextGenerationRef.current !== requestGeneration
+          || !isActiveProject(projectId)
+        ) return;
+        if (!response.success) {
+          setNarrativeContextSnapshot(null);
+          return;
+        }
+        setNarrativeContextSnapshot({ projectId, content: response.data || '' });
+      })
+      .catch(() => {
+        if (
+          narrativeContextGenerationRef.current === requestGeneration
+          && isActiveProject(projectId)
+        ) setNarrativeContextSnapshot(null);
+      });
+  }, [activeProject?.id, isActiveProject]);
 
   const refreshObsidian = useCallback(() => {
     if (activeProject) void obsidianLoader.load(activeProject.id);
@@ -1054,7 +1087,7 @@ const App: React.FC = () => {
 
   const contextMessages = useMemo(() => {
     if (!activeProject) return [];
-    return ContextBuilder.build({
+    const messages = ContextBuilder.build({
       project: activeProject,
       currentChapter: activeChapter ?? undefined,
       characters: characters.length > 0 ? characters : undefined,
@@ -1062,7 +1095,13 @@ const App: React.FC = () => {
       outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
       obsidianDocuments: obsidianDocuments.length > 0 ? obsidianDocuments : undefined,
     });
-  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments]);
+    const narrativeContext = narrativeContextSnapshot?.projectId === activeProject.id
+      ? narrativeContextSnapshot.content
+      : '';
+    return narrativeContext
+      ? [...messages, { role: 'system' as const, content: narrativeContext }]
+      : messages;
+  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments, narrativeContextSnapshot]);
 
   return (
     <ErrorBoundary>

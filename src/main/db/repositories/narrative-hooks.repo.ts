@@ -160,7 +160,9 @@ export class NarrativeHooksRepo {
   /** 获取所有未偿还的债务 */
   findUnpaidDebts(projectId: string): IpcResult<NarrativeDebt[]> {
     const rows = this.db.prepare(`
-      SELECT * FROM narrative_debts WHERE project_id = ? AND status = 'unpaid' ORDER BY created_at ASC
+      SELECT * FROM narrative_debts
+      WHERE project_id = ? AND status IN ('unpaid','overdue')
+      ORDER BY CASE status WHEN 'overdue' THEN 0 ELSE 1 END, created_at ASC
     `).all(projectId) as Record<string, unknown>[];
     return { success: true, data: rows.map(r => this.rowToDebt(r)) };
   }
@@ -200,50 +202,74 @@ export class NarrativeHooksRepo {
 
   // ── 上下文构建用 ──
 
-  /** 生成待回收钩子 + 未偿债务的文字上下文 */
-  getHooksAndDebtsContext(projectId: string): string {
-    const hooks = this.findOpenHooks(projectId);
-    const debts = this.findUnpaidDebts(projectId);
+  /** 按独立预算生成待推进钩子与未偿债务上下文。 */
+  getHooksAndDebtsContext(projectId: string, maxTokens: number = 800): string {
+    const currentChapter = this.db.prepare(`
+      SELECT COALESCE(MAX(sort_order), 0) AS sort_order
+      FROM chapters WHERE project_id = ?
+    `).get(projectId) as { sort_order: number };
+    const hookRows = this.db.prepare(`
+      SELECT hook.*, due.sort_order AS due_sort_order
+      FROM narrative_hooks hook
+      LEFT JOIN chapters due ON due.id = hook.due_chapter_id
+      WHERE hook.project_id = ? AND hook.status IN ('open','partially_resolved')
+    `).all(projectId) as Record<string, unknown>[];
+    const debtRows = this.db.prepare(`
+      SELECT * FROM narrative_debts
+      WHERE project_id = ? AND status IN ('unpaid','overdue')
+    `).all(projectId) as Record<string, unknown>[];
 
-    const parts: string[] = [];
-
-    if (hooks.success && hooks.data && hooks.data.length > 0) {
-      parts.push('## 🪝 待回收的叙事钩子');
-      parts.push('以下是尚未解决的悬念和伏笔，写新章时请考虑推进或回收：\n');
-      const highHooks = hooks.data.filter(h => h.intensity >= 4);
-      const normalHooks = hooks.data.filter(h => h.intensity < 4);
-      if (highHooks.length > 0) {
-        parts.push('### 🔴 高强度钩子（优先回收）');
-        for (const h of highHooks.slice(0, 5)) {
-          parts.push(`- [${HOOK_TYPE_LABELS[h.hookType] || h.hookType}] ${h.description}`);
-        }
-      }
-      if (normalHooks.length > 0) {
-        parts.push('### 🟡 一般钩子');
-        for (const h of normalHooks.slice(0, 8)) {
-          parts.push(`- [${HOOK_TYPE_LABELS[h.hookType] || h.hookType}] ${h.description}`);
-        }
-        if (normalHooks.length > 8) {
-          parts.push(`  *(还有 ${normalHooks.length - 8} 个钩子，已省略)*`);
-        }
-      }
-      parts.push('');
+    const currentOrder = Number(currentChapter.sort_order || 0);
+    const items: NarrativeContextItem[] = [];
+    for (const row of debtRows) {
+      const promisedBy = row.promised_by_chapter == null ? null : Number(row.promised_by_chapter);
+      const isOverdue = row.status === 'overdue'
+        || (promisedBy !== null && promisedBy <= currentOrder);
+      const isDueSoon = promisedBy !== null && promisedBy <= currentOrder + 2;
+      const promised = promisedBy === null ? '' : `（承诺在第 ${promisedBy} 章前）`;
+      items.push({
+        group: isOverdue ? 0 : isDueSoon ? 2 : 3,
+        order: promisedBy ?? Number.MAX_SAFE_INTEGER,
+        line: `- [${isOverdue ? '逾期债务' : '叙事债务'}·${DEBT_TYPE_LABELS[String(row.debt_type)] || String(row.debt_type)}] ${String(row.description)}${promised}`,
+      });
+    }
+    for (const row of hookRows) {
+      const intensity = Number(row.intensity);
+      const dueOrder = row.due_sort_order == null ? null : Number(row.due_sort_order);
+      const isDueSoon = dueOrder !== null && dueOrder <= currentOrder + 2;
+      const due = dueOrder === null ? '' : `（建议第 ${dueOrder} 章前推进）`;
+      items.push({
+        group: intensity >= 4 ? 1 : isDueSoon ? 2 : 3,
+        order: intensity >= 4 ? -intensity : dueOrder ?? Number.MAX_SAFE_INTEGER,
+        line: `- [叙事钩子·${HOOK_TYPE_LABELS[String(row.hook_type)] || String(row.hook_type)}·强度${intensity}] ${String(row.description)}${due}`,
+      });
     }
 
-    if (debts.success && debts.data && debts.data.length > 0) {
-      parts.push('## ⚠️ 未偿还的叙事债务');
-      parts.push('以下是对读者的承诺尚未兑现，请在新章节中考虑回收：\n');
-      for (const d of debts.data.slice(0, 8)) {
-        const promised = d.promisedByChapter ? `（承诺在第 ${d.promisedByChapter} 章前）` : '';
-        parts.push(`- [${DEBT_TYPE_LABELS[d.debtType] || d.debtType}] ${d.description} ${promised}`);
-      }
-      if (debts.data.length > 8) {
-        parts.push(`  *(还有 ${debts.data.length - 8} 笔债务，已省略)*`);
-      }
-      parts.push('');
-    }
+    if (items.length === 0) return '';
+    items.sort((left, right) => left.group - right.group || left.order - right.order);
+    const budget = Number.isFinite(maxTokens) ? Math.max(0, Math.floor(maxTokens)) : 800;
+    const lines = [
+      '## 待推进的叙事钩子与债务',
+      '以下内容来自当前项目已经提交的运行时状态，请优先推进逾期、高强度或临近到期项：',
+    ];
+    let context = truncateToTokenBudget(lines.join('\n'), budget);
+    if (estimateNarrativeTokens(context) >= budget) return context;
 
-    return parts.join('\n');
+    for (const item of items) {
+      const candidate = `${context}\n${item.line}`;
+      if (estimateNarrativeTokens(candidate) <= budget) {
+        context = candidate;
+        continue;
+      }
+      const prefix = `${context}\n`;
+      const remaining = budget - estimateNarrativeTokens(prefix);
+      if (remaining > 12) {
+        const partial = truncateToTokenBudget(item.line, remaining);
+        if (partial) context = `${prefix}${partial}`;
+      }
+      break;
+    }
+    return context;
   }
 
   // ── 私有方法 ──
@@ -280,4 +306,42 @@ export class NarrativeHooksRepo {
       updatedAt: row.updated_at as string,
     };
   }
+}
+
+interface NarrativeContextItem {
+  group: number;
+  order: number;
+  line: string;
+}
+
+function estimateNarrativeTokens(text: string): number {
+  let cjk = 0;
+  let other = 0;
+  for (const character of text) {
+    const code = character.codePointAt(0) ?? 0;
+    if (
+      (code >= 0x4E00 && code <= 0x9FFF)
+      || (code >= 0x3400 && code <= 0x4DBF)
+      || (code >= 0x20000 && code <= 0x2A6DF)
+      || (code >= 0xF900 && code <= 0xFAFF)
+      || (code >= 0x3040 && code <= 0x309F)
+      || (code >= 0x30A0 && code <= 0x30FF)
+    ) cjk += 1;
+    else other += 1;
+  }
+  return Math.ceil(cjk / 1.5 + other / 4);
+}
+
+function truncateToTokenBudget(text: string, maxTokens: number): string {
+  if (maxTokens <= 0) return '';
+  if (estimateNarrativeTokens(text) <= maxTokens) return text;
+  const characters = [...text];
+  let low = 0;
+  let high = characters.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (estimateNarrativeTokens(characters.slice(0, middle).join('')) <= maxTokens) low = middle;
+    else high = middle - 1;
+  }
+  return characters.slice(0, low).join('');
 }
