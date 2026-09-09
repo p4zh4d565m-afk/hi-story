@@ -11,7 +11,7 @@
     "build:main": "tsc -p tsconfig.main.json && node scripts/copy-assets.js",
     "build:renderer": "vite build",
     "build": "npm run skills:sync && npm run build:main && npm run build:renderer",
-    "test": "rm -rf node_modules/better-sqlite3/build && npm rebuild better-sqlite3 && vitest run",
+    "test": "node scripts/run-tests.js",
     "test:watch": "vitest",
     "postinstall": "npm run build:main && npm run electron:rebuild",
     "electron:rebuild": "@electron/rebuild -f -w better-sqlite3",
