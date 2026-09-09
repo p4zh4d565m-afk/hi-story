@@ -25,4 +25,4 @@ hi-story 是面向长篇小说创作的本地 Electron 工作台。当前核心�
 
 ## 后续优先项
 
-1. 创作决策确认账本设计已通过，见 `docs/superpowers/specs/2026-09-09-creative-decision-ledger-design.md`；下一步先制定实施计划，再按计划实现，不与普通 AI 会话记录混用。
+1. 创作决策确认账本设计和实施计划已通过整理，见 `docs/superpowers/specs/2026-09-09-creative-decision-ledger-design.md` 与 `docs/superpowers/plans/2026-09-09-creative-decision-ledger.md`；下一步按计划逐任务实现，不与普通 AI 会话记录混用。
