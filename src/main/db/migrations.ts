@@ -533,8 +533,10 @@ export function runMigrations(db: Database.Database): void {
 
   for (const migration of MIGRATIONS) {
     if (!applied.has(migration.version)) {
-      db.exec(migration.sql);
-      db.prepare('INSERT INTO _migrations (version) VALUES (?)').run(migration.version);
+      db.transaction(() => {
+        db.exec(migration.sql);
+        db.prepare('INSERT INTO _migrations (version) VALUES (?)').run(migration.version);
+      })();
       console.log(`Migration v${migration.version} applied.`);
     }
   }

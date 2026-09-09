@@ -133,4 +133,18 @@ describe('创作决策迁移 v18', () => {
       sourceKind: 'legacy',
     });
   });
+
+  it('迁移中途失败时回滚此前的 DDL 和版本登记', () => {
+    const db = new Database(':memory:');
+    databases.push(db);
+    createV17DecisionTables(db);
+    db.exec('ALTER TABLE story_facts ADD COLUMN source_decision_id TEXT');
+
+    expect(() => runMigrations(db)).toThrow();
+
+    expect(tableExists(db, 'creative_decisions')).toBe(false);
+    expect(tableExists(db, 'creative_decision_effects')).toBe(false);
+    expect(db.prepare('SELECT version FROM _migrations WHERE version = 18').get())
+      .toBeUndefined();
+  });
 });
