@@ -515,6 +515,13 @@ const MIGRATIONS = [
         ON narrative_debts(source_decision_id);
     `,
   },
+  {
+    version: 19,
+    sql: `
+      ALTER TABLE narrative_hooks ADD COLUMN subject TEXT NOT NULL DEFAULT '';
+      ALTER TABLE narrative_debts ADD COLUMN subject TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

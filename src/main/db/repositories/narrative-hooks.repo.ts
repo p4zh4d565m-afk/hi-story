@@ -6,6 +6,7 @@ import type { IpcResult, NarrativeHook, NarrativeDebt } from '../../../renderer/
 // ============================================================
 
 export interface CreateHookInput {
+  subject?: string;
   projectId: string;
   chapterId?: string | null;
   hookType: string;
@@ -14,6 +15,7 @@ export interface CreateHookInput {
 }
 
 export interface UpdateHookInput {
+  subject?: string;
   hookType?: string;
   description?: string;
   intensity?: number;
@@ -23,6 +25,7 @@ export interface UpdateHookInput {
 }
 
 export interface CreateDebtInput {
+  subject?: string;
   projectId: string;
   chapterId?: string | null;
   description: string;
@@ -31,6 +34,7 @@ export interface CreateDebtInput {
 }
 
 export interface UpdateDebtInput {
+  subject?: string;
   description?: string;
   debtType?: string;
   promisedByChapter?: number | null;
@@ -67,9 +71,9 @@ export class NarrativeHooksRepo {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO narrative_hooks (id, project_id, chapter_id, hook_type, description, intensity, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?)
-    `).run(id, input.projectId, input.chapterId || null, input.hookType, input.description, input.intensity ?? 3, now, now);
+      INSERT INTO narrative_hooks (id, project_id, chapter_id, hook_type, description, intensity, status, created_at, updated_at, subject)
+      VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+    `).run(id, input.projectId, input.chapterId || null, input.hookType, input.description, input.intensity ?? 3, now, now, input.subject ?? '');
     return this.findById(id);
   }
 
@@ -114,7 +118,7 @@ export class NarrativeHooksRepo {
     const row = existing.data;
     this.db.prepare(`
       UPDATE narrative_hooks
-      SET hook_type = ?, description = ?, intensity = ?, status = ?, resolved_in_chapter_id = ?, due_chapter_id = ?, updated_at = ?
+      SET hook_type = ?, description = ?, intensity = ?, status = ?, resolved_in_chapter_id = ?, due_chapter_id = ?, updated_at = ?, subject = ?
       WHERE id = ?
     `).run(
       input.hookType ?? row.hookType,
@@ -124,6 +128,7 @@ export class NarrativeHooksRepo {
       input.resolvedInChapterId !== undefined ? input.resolvedInChapterId : row.resolvedInChapterId,
       input.dueChapterId !== undefined ? input.dueChapterId : row.dueChapterId,
       now,
+      input.subject ?? row.subject,
       id,
     );
     return this.findById(id);
@@ -145,9 +150,9 @@ export class NarrativeHooksRepo {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO narrative_debts (id, project_id, chapter_id, description, debt_type, promised_by_chapter, status, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?)
-    `).run(id, input.projectId, input.chapterId || null, input.description, input.debtType, input.promisedByChapter || null, now, now);
+      INSERT INTO narrative_debts (id, project_id, chapter_id, description, debt_type, promised_by_chapter, status, created_at, updated_at, subject)
+      VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?)
+    `).run(id, input.projectId, input.chapterId || null, input.description, input.debtType, input.promisedByChapter || null, now, now, input.subject ?? '');
     return this.findDebtById(id);
   }
 
@@ -176,7 +181,7 @@ export class NarrativeHooksRepo {
     const row = existing.data;
     this.db.prepare(`
       UPDATE narrative_debts
-      SET description = ?, debt_type = ?, promised_by_chapter = ?, status = ?, paid_in_chapter_id = ?, updated_at = ?
+      SET description = ?, debt_type = ?, promised_by_chapter = ?, status = ?, paid_in_chapter_id = ?, updated_at = ?, subject = ?
       WHERE id = ?
     `).run(
       input.description ?? row.description,
@@ -185,6 +190,7 @@ export class NarrativeHooksRepo {
       input.status ?? row.status,
       input.paidInChapterId !== undefined ? input.paidInChapterId : row.paidInChapterId,
       now,
+      input.subject ?? row.subject,
       id,
     );
     return this.findDebtById(id);
@@ -276,6 +282,7 @@ export class NarrativeHooksRepo {
 
   private rowToHook(row: Record<string, unknown>): NarrativeHook {
     return {
+      subject: String(row.subject ?? ''),
       id: row.id as string,
       projectId: row.project_id as string,
       chapterId: (row.chapter_id ?? null) as string | null,
@@ -293,6 +300,7 @@ export class NarrativeHooksRepo {
 
   private rowToDebt(row: Record<string, unknown>): NarrativeDebt {
     return {
+      subject: String(row.subject ?? ''),
       id: row.id as string,
       projectId: row.project_id as string,
       chapterId: (row.chapter_id ?? null) as string | null,

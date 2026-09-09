@@ -339,6 +339,7 @@ export interface CharacterKnowledge {
 
 // ===== 叙事钩子（P1 — 网文追读力） =====
 export interface NarrativeHook {
+  subject: string;
   id: string;
   projectId: string;
   chapterId: string | null;
@@ -354,6 +355,7 @@ export interface NarrativeHook {
 }
 
 export interface NarrativeDebt {
+  subject: string;
   id: string;
   projectId: string;
   chapterId: string | null;
