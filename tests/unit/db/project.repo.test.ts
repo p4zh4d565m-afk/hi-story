@@ -16,6 +16,7 @@ describe('ProjectRepo', () => {
         type_tags TEXT NOT NULL DEFAULT '[]',
         style TEXT NOT NULL DEFAULT '',
         summary TEXT NOT NULL DEFAULT '',
+        obsidian_path TEXT NOT NULL DEFAULT '',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -82,6 +83,24 @@ describe('ProjectRepo', () => {
     if (!updated.success || !updated.data) throw new Error('Expected success');
     expect(updated.data.name).toBe('新名称');
     expect(updated.data.typeTags).toEqual(['武侠']);
+  });
+
+  it('创建项目时默认不配置 Obsidian 目录', () => {
+    const created = repo.create({ name: '无外部目录' });
+    if (!created.success || !created.data) throw new Error('Expected success');
+
+    expect(created.data.obsidianPath).toBe('');
+  });
+
+  it('保存并读取项目的 Obsidian 目录', () => {
+    const created = repo.create({ name: '外部资料项目' });
+    if (!created.success || !created.data) throw new Error('Expected success');
+
+    const updated = repo.update({ id: created.data.id, obsidianPath: 'D:\\小说库\\测试项目' });
+    if (!updated.success || !updated.data) throw new Error('Expected success');
+
+    expect(updated.data.obsidianPath).toBe('D:\\小说库\\测试项目');
+    expect(repo.findById(created.data.id).data?.obsidianPath).toBe('D:\\小说库\\测试项目');
   });
 
   it('should delete a project', () => {

@@ -45,6 +45,8 @@ interface AIReviewPanelProps {
   projectId: string;
   /** 项目类型标签 */
   typeTags: string[];
+  /** Obsidian 只读资料的有界上下文 */
+  obsidianContext?: string;
   /** 跳转到编辑器段落 */
   onNavigateToParagraph?: (searchText: string) => void;
 }
@@ -86,6 +88,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   projectName,
   projectId,
   typeTags,
+  obsidianContext,
   onNavigateToParagraph,
 }) => {
   // ===== 状态 =====
@@ -354,6 +357,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       const extraBlocks: string[] = [];
       if (compassCtx) extraBlocks.push(compassCtx);
       if (styleFpCtx) extraBlocks.push(styleFpCtx);
+      if (obsidianContext) extraBlocks.push(obsidianContext);
 
       const systemPrompt = REVIEW_SYSTEM_PROMPT
         + (extraBlocks.length > 0 ? '\n\n---\n\n' + extraBlocks.join('\n\n---\n\n') : '');
@@ -398,7 +402,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setReviewing(false);
     }
-  }, [selectedChapterId, aiReady, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes]);
+  }, [selectedChapterId, aiReady, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, obsidianContext]);
 
   // ===== AI 自动修复 =====
   const handleAutoRevise = useCallback(async () => {
@@ -447,7 +451,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       );
 
       const messages: ChatMessage[] = [
-        { role: 'system', content: REVISE_SYSTEM_PROMPT },
+        { role: 'system', content: REVISE_SYSTEM_PROMPT + (obsidianContext ? `\n\n---\n\n${obsidianContext}` : '') },
         { role: 'user', content: userPrompt },
       ];
 
@@ -462,7 +466,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setRevising(false);
     }
-  }, [selectedChapterId, result, chapters, projectId, characters, worldEntries]);
+  }, [selectedChapterId, result, chapters, projectId, characters, worldEntries, obsidianContext]);
 
   // ===== 接受修订 =====
   const handleAcceptRevision = useCallback(async () => {

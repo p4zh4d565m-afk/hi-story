@@ -14,6 +14,7 @@ import AIReviewPanel from './components/AIReviewPanel';
 import AIPolishPanel from './components/AIPolishPanel';
 import ForeshadowingPanel from './components/ForeshadowingPanel';
 import PlanningWorkspace from './components/PlanningWorkspace';
+import ObsidianPanel from './components/ObsidianPanel';
 import type { RichEditorHandle, TextRange } from './components/editor/RichEditor';
 import DatabaseBrowser from './components/DatabaseBrowser';
 import CreateProjectDialog from './components/CreateProjectDialog';
@@ -26,12 +27,13 @@ import { decrypt } from './services/crypto';
 import type { ProviderConfig } from '../main/ai/provider';
 import { useUndo, type UndoCommand } from './hooks/useUndoManager';
 import UndoToast from './components/UndoToast';
-import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry } from './types';
+import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult } from './types';
 import type { ImportResult } from '../main/importer';
 import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
 import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
 import { createProjectDataLoader } from './services/project-data-loader';
+import { createObsidianLoader } from './services/obsidian-loader';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -66,11 +68,15 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 
 const App: React.FC = () => {
   const { projects, activeProject, loading: projectsLoading, creating: creatingProject,
-    setActiveProjectId, isActiveProject, createProject, deleteProject } = useProject();
+    setActiveProjectId, isActiveProject, createProject, updateProject, deleteProject } = useProject();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
   const [showDatabaseBrowser, setShowDatabaseBrowser] = useState(false);
+  const [showObsidianPanel, setShowObsidianPanel] = useState(false);
+  const [obsidianSnapshot, setObsidianSnapshot] = useState<{ projectId: string; result: ObsidianScanResult } | null>(null);
+  const [obsidianLoading, setObsidianLoading] = useState(false);
+  const [obsidianError, setObsidianError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'planning' | 'writing'>('writing');
 
@@ -327,6 +333,44 @@ const App: React.FC = () => {
       setCharactersLoading(false); setWorldEntriesLoading(false);
     }
   }, [activeProject?.id, projectDataLoader, resetProjectData]);
+
+  // Obsidian 是独立的只读资料源：加载失败不能影响 SQLite 项目快照。
+  const obsidianLoader = useMemo(() => createObsidianLoader({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    onApply: (projectId, result) => {
+      setObsidianSnapshot({ projectId, result });
+      setObsidianError(null);
+    },
+    onError: (_projectId, error) => {
+      setObsidianError(error instanceof Error ? error.message : 'Obsidian 读取失败');
+    },
+    onLoadingChange: (_projectId, loading) => setObsidianLoading(loading),
+    isProjectCurrent: isActiveProject,
+  }), [isActiveProject]);
+
+  useEffect(() => {
+    setObsidianSnapshot(null);
+    setObsidianError(null);
+    if (activeProject) {
+      void obsidianLoader.load(activeProject.id);
+    } else {
+      obsidianLoader.invalidate();
+      setObsidianLoading(false);
+    }
+  }, [activeProject?.id, obsidianLoader]);
+
+  const refreshObsidian = useCallback(() => {
+    if (activeProject) void obsidianLoader.load(activeProject.id);
+  }, [activeProject, obsidianLoader]);
+
+  const saveObsidianPath = useCallback(async (obsidianPath: string) => {
+    if (!activeProject) return false;
+    const projectId = activeProject.id;
+    const updated = await updateProject({ id: projectId, obsidianPath });
+    if (!updated || !isActiveProject(projectId)) return false;
+    await obsidianLoader.load(projectId);
+    return true;
+  }, [activeProject, isActiveProject, obsidianLoader, updateProject]);
 
   // ===== Handlers =====
   const handleCreateChapter = useCallback(async (title: string) => {
@@ -1001,6 +1045,13 @@ const App: React.FC = () => {
   }, [undo]);
 
   // === AI context ===
+  const obsidianResult = obsidianSnapshot?.projectId === activeProject?.id ? obsidianSnapshot.result : null;
+  const obsidianDocuments = obsidianResult?.status === 'ready' ? obsidianResult.documents : [];
+  const obsidianContext = useMemo(
+    () => ContextBuilder.getObsidianContext(obsidianDocuments) || undefined,
+    [obsidianDocuments],
+  );
+
   const contextMessages = useMemo(() => {
     if (!activeProject) return [];
     return ContextBuilder.build({
@@ -1009,8 +1060,9 @@ const App: React.FC = () => {
       characters: characters.length > 0 ? characters : undefined,
       worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
       outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
+      obsidianDocuments: obsidianDocuments.length > 0 ? obsidianDocuments : undefined,
     });
-  }, [activeProject?.id, activeChapter?.id, characters.length, worldEntries.length, outlineNodes.length]);
+  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments]);
 
   return (
     <ErrorBoundary>
@@ -1047,6 +1099,7 @@ const App: React.FC = () => {
             onSelectProject={setActiveProjectId}
             onCreateProject={() => setShowCreateDialog(true)}
             onImportNovel={() => setShowImportDialog(true)}
+            onOpenObsidian={() => setShowObsidianPanel(true)}
             onDeleteProject={deleteProject}
             loading={projectsLoading}
             chapters={chapters}
@@ -1203,6 +1256,7 @@ const App: React.FC = () => {
             projectId={activeProject?.id || ''}
             typeTags={activeProject?.typeTags || []}
             style={activeProject?.style || ''}
+            obsidianContext={obsidianContext}
             preferredTitle={pendingAIOutline ? `第${pendingAIOutline.chapterNumber}章 ${pendingAIOutline.title}` : undefined}
             onSaveAsChapter={async (title, content) => {
               const projectId = activeProject?.id;
@@ -1285,6 +1339,7 @@ const App: React.FC = () => {
             projectName={activeProject?.name || ''}
             projectId={activeProject?.id || ''}
             typeTags={activeProject?.typeTags || []}
+            obsidianContext={obsidianContext}
             onNavigateToParagraph={(searchText) => {
               // 通过 localStorage 通知 WritingArea 跳转到段落
               localStorage.setItem('hi-story-jump-to-paragraph', searchText);
@@ -1319,6 +1374,17 @@ const App: React.FC = () => {
             outlineNodes={outlineNodes.map(n => ({ id: n.id, title: n.title }))}
           />
         }
+      />
+
+      <ObsidianPanel
+        open={showObsidianPanel}
+        project={activeProject}
+        result={obsidianResult}
+        loading={obsidianLoading}
+        error={obsidianError}
+        onClose={() => setShowObsidianPanel(false)}
+        onSavePath={saveObsidianPath}
+        onRefresh={refreshObsidian}
       />
 
       <CreateProjectDialog

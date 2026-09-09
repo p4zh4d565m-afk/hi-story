@@ -13,6 +13,7 @@ import { registerStoryFactsIpc } from './story-facts.ipc';
 import { registerNarrativeHooksIpc } from './narrative-hooks.ipc';
 import { registerSkillsIpc } from './skills.ipc';
 import { registerPlanningIpc } from './planning.ipc';
+import { registerObsidianIpc } from './obsidian.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -33,4 +34,5 @@ export function registerAllIpc(): void {
   registerNarrativeHooksIpc();
   registerSkillsIpc();
   registerPlanningIpc();
+  registerObsidianIpc();
 }

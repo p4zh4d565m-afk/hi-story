@@ -135,6 +135,8 @@ interface AIWritePanelProps {
   typeTags: string[];
   /** 项目风格 */
   style: string;
+  /** Obsidian 只读资料的有界上下文 */
+  obsidianContext?: string;
   /** 从结构化章纲进入时使用的固定章节标题 */
   preferredTitle?: string;
   /** 保存为新章节的回调 */
@@ -202,6 +204,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   projectId,
   typeTags,
   style,
+  obsidianContext,
   preferredTitle,
   onSaveAsChapter,
 }) => {
@@ -504,6 +507,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         if (compassCtx) extraBlocks.push(compassCtx);
         if (styleFpCtx) extraBlocks.push(styleFpCtx);
         if (hooksContext) extraBlocks.push(hooksContext);
+        if (obsidianContext) extraBlocks.push(obsidianContext);
 
         const systemPrompt = WRITE_SYSTEM_PROMPT
           + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
@@ -550,7 +554,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     setBatchProgress(p => ({ ...p, current: undefined }));
     // 清除进度
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
-  }, [projectId, projectName, typeTags, style, chapters, characters, worldEntries, outlineNodes, includeCharacters, includeWorld, includeContext, styleGuide, extraRequirement, targetWords, writeModel, onSaveAsChapter]);
+  }, [projectId, projectName, typeTags, style, chapters, characters, worldEntries, outlineNodes, includeCharacters, includeWorld, includeContext, styleGuide, extraRequirement, targetWords, writeModel, obsidianContext, onSaveAsChapter]);
 
   // ===== 生成章节（单章）=====
   const handleGenerate = useCallback(async () => {
@@ -599,6 +603,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       if (compassCtx) extraBlocks.push(compassCtx);
       if (styleFpCtx) extraBlocks.push(styleFpCtx);
       if (hooksContext) extraBlocks.push(hooksContext);
+      if (obsidianContext) extraBlocks.push(obsidianContext);
 
       const systemPrompt = WRITE_SYSTEM_PROMPT
         + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
@@ -634,7 +639,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     } finally {
       setGenerating(false);
     }
-  }, [getContext, aiReady, styleGuide, targetWords, extraRequirement, projectId]);
+  }, [getContext, aiReady, styleGuide, targetWords, extraRequirement, projectId, obsidianContext, writeModel]);
 
   // ===== 停止生成 =====
   const handleStop = useCallback(() => {

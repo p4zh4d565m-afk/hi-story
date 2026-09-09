@@ -15,13 +15,14 @@ export class ProjectRepo {
     const tags = JSON.stringify(input.typeTags ?? []);
     const style = input.style ?? '';
     const summary = input.summary ?? '';
+    const obsidianPath = input.obsidianPath ?? '';
 
     const stmt = this.db.prepare(`
-      INSERT INTO projects (id, name, type_tags, style, summary, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO projects (id, name, type_tags, style, summary, obsidian_path, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
-    stmt.run(id, input.name, tags, style, summary, now, now);
+    stmt.run(id, input.name, tags, style, summary, obsidianPath, now, now);
 
     return this.findById(id);
   }
@@ -70,12 +71,13 @@ export class ProjectRepo {
       : JSON.stringify(project.typeTags);
     const style = input.style ?? project.style;
     const summary = input.summary ?? project.summary;
+    const obsidianPath = input.obsidianPath ?? project.obsidianPath;
 
     this.db.prepare(`
       UPDATE projects
-      SET name = ?, type_tags = ?, style = ?, summary = ?, updated_at = ?
+      SET name = ?, type_tags = ?, style = ?, summary = ?, obsidian_path = ?, updated_at = ?
       WHERE id = ?
-    `).run(name, typeTags, style, summary, now, input.id);
+    `).run(name, typeTags, style, summary, obsidianPath, now, input.id);
 
     return this.findById(input.id);
   }
@@ -97,6 +99,7 @@ export class ProjectRepo {
       typeTags: JSON.parse(row.type_tags as string) as string[],
       style: row.style as string,
       summary: row.summary as string,
+      obsidianPath: (row.obsidian_path as string | undefined) ?? '',
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };

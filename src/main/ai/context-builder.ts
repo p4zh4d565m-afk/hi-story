@@ -1,5 +1,5 @@
 import type { ChatMessage } from '../ai/provider';
-import type { Project, Chapter, Character, WorldEntry, OutlineNode, StoryFact, CharacterKnowledge } from '../../renderer/types';
+import type { Project, Chapter, Character, WorldEntry, OutlineNode, StoryFact, CharacterKnowledge, ObsidianDocument } from '../../renderer/types';
 
 export interface ContextSources {
   project?: Project;
@@ -11,6 +11,8 @@ export interface ContextSources {
   /** P0: 叙事事实层（从 story_facts 表加载） */
   storyFacts?: StoryFact[];
   characterKnowledge?: CharacterKnowledge[];
+  /** Obsidian 人物、世界观和长期大纲（只读主资料） */
+  obsidianDocuments?: ObsidianDocument[];
 }
 
 // ============================================================
@@ -28,6 +30,7 @@ const TOKEN_BUDGET = {
     outline: 3000,
     characters: 2500,
     world: 2500,
+    obsidian: 3500,
     literatureKnowledge: 500,
     compass: 1000,
     styleFingerprint: 800,
@@ -193,6 +196,12 @@ export class ContextBuilder {
       blocks.push({ text, priority: 8 });
     }
 
+    // Obsidian 是人物、世界观和长期大纲的主要编辑来源，但只注入有界摘录。
+    if (sources.obsidianDocuments && sources.obsidianDocuments.length > 0) {
+      const text = this.getObsidianContext(sources.obsidianDocuments);
+      if (text) blocks.push({ text, priority: 9 });
+    }
+
     // 7. 创作罗盘 [priority=9 — 作者的直接指令，高优先级]
     if (sources.project) {
       const compass = this.getCompassContext(sources.project.id);
@@ -244,6 +253,10 @@ export class ContextBuilder {
    */
   static estimateTokens(text: string): number {
     return estimateTokens(text);
+  }
+
+  static getObsidianContext(documents: ObsidianDocument[]): string | null {
+    return getObsidianContext(documents);
   }
 
   // ── 创作罗盘（来自 OpenWrite 移植，不改动） ──
@@ -445,6 +458,54 @@ function getWorldContext(entries: WorldEntry[]): string {
     }
   }
   return lines.join('\n');
+}
+
+function getObsidianContext(documents: ObsidianDocument[]): string | null {
+  if (documents.length === 0) return null;
+
+  const kindLabels: Record<ObsidianDocument['kind'], string> = {
+    character: '人物',
+    world: '世界观',
+    outline: '长期大纲',
+  };
+  const lines = [
+    '## Obsidian 只读主资料',
+    '以下内容来自作者配置的 Obsidian 目录。人物、世界观或长期大纲冲突时优先参考 Obsidian；正文进度、运行期事实和伏笔仍以 hi-story 为准。',
+  ];
+  let remaining = TOKEN_BUDGET.allocation.obsidian - estimateTokens(lines.join('\n'));
+  const documentsByKind = {
+    character: documents.filter(document => document.kind === 'character'),
+    world: documents.filter(document => document.kind === 'world'),
+    outline: documents.filter(document => document.kind === 'outline'),
+  };
+  const orderedDocuments: ObsidianDocument[] = [];
+  const kindOrder: ObsidianDocument['kind'][] = ['outline', 'character', 'world'];
+  const maxKindLength = Math.max(...kindOrder.map(kind => documentsByKind[kind].length));
+  for (let index = 0; index < maxKindLength; index++) {
+    for (const kind of kindOrder) {
+      const document = documentsByKind[kind][index];
+      if (document) orderedDocuments.push(document);
+    }
+  }
+
+  for (const document of orderedDocuments) {
+    if (remaining <= 40) break;
+    const heading = `### [${kindLabels[document.kind]}] ${document.name}\n来源：${document.relativePath}`;
+    const headingTokens = estimateTokens(heading);
+    if (headingTokens >= remaining) break;
+    const contentBudget = Math.min(650, remaining - headingTokens);
+    const [content] = truncateByBudget(document.content, contentBudget, { preserveSentence: true });
+    let block = `${heading}\n${content}`;
+    while (block.length > 0 && estimateTokens(block) > remaining) {
+      block = block.slice(0, -20);
+    }
+    if (!block) break;
+    lines.push(block);
+    remaining -= estimateTokens(block);
+  }
+
+  const result = lines.join('\n\n');
+  return estimateTokens(result) <= TOKEN_BUDGET.allocation.obsidian ? result : null;
 }
 
 function buildWorldEntryText(entry: WorldEntry): string {

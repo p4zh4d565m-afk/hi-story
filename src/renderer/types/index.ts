@@ -5,6 +5,7 @@ export interface Project {
   typeTags: string[];       // 类型标签: ["仙侠", "宫斗"]
   style: string;             // 风格描述
   summary: string;           // 简介
+  obsidianPath: string;      // Obsidian 仓库或项目目录（只读数据源）
   createdAt: string;         // ISO 8601
   updatedAt: string;         // ISO 8601
 }
@@ -14,6 +15,7 @@ export interface CreateProjectInput {
   typeTags?: string[];
   style?: string;
   summary?: string;
+  obsidianPath?: string;
 }
 
 export interface UpdateProjectInput {
@@ -22,6 +24,33 @@ export interface UpdateProjectInput {
   typeTags?: string[];
   style?: string;
   summary?: string;
+  obsidianPath?: string;
+}
+
+// ===== Obsidian 单向只读资料 =====
+export type ObsidianDocumentKind = 'character' | 'world' | 'outline';
+
+export interface ObsidianDocument {
+  id: string;
+  kind: ObsidianDocumentKind;
+  name: string;
+  relativePath: string;
+  content: string;
+  frontmatter: Record<string, unknown>;
+  updatedAt: string;
+}
+
+export interface ObsidianScanWarning {
+  relativePath: string;
+  message: string;
+}
+
+export interface ObsidianScanResult {
+  status: 'unconfigured' | 'missing' | 'ready';
+  path: string;
+  documents: ObsidianDocument[];
+  warnings: ObsidianScanWarning[];
+  message?: string;
 }
 
 // ===== 数据库通用 =====

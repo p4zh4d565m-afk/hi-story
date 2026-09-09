@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { Project, CreateProjectInput } from '../types';
+import type { Project, CreateProjectInput, UpdateProjectInput } from '../types';
 import { createProjectSelectionGuard } from '../services/project-data-loader';
 
 interface UseProjectReturn {
@@ -10,6 +10,7 @@ interface UseProjectReturn {
   setActiveProjectId: (id: string | null) => void;
   isActiveProject: (id: string) => boolean;
   createProject: (input: CreateProjectInput) => Promise<Project | null>;
+  updateProject: (input: UpdateProjectInput) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<void>;
   refreshProjects: () => Promise<void>;
 }
@@ -110,6 +111,23 @@ export function useProject(): UseProjectReturn {
     }
   }, [refreshProjects, selectProject]);
 
+  const updateProject = useCallback(async (input: UpdateProjectInput): Promise<Project | null> => {
+    try {
+      const result = await window.electronAPI.invoke('db:project:update', input) as any;
+      if (!result.success || !result.data) {
+        console.error('Failed to update project:', result.error);
+        return null;
+      }
+      const updated = result.data as Project;
+      setProjects(previous => previous.map(project => project.id === updated.id ? updated : project));
+      if (selectionGuardRef.current.currentProjectId() === updated.id) setActiveProject(updated);
+      return updated;
+    } catch (error) {
+      console.error('Failed to update project:', error);
+      return null;
+    }
+  }, []);
+
   return {
     projects,
     activeProject,
@@ -118,6 +136,7 @@ export function useProject(): UseProjectReturn {
     setActiveProjectId: selectProject,
     isActiveProject,
     createProject,
+    updateProject,
     deleteProject,
     refreshProjects,
   };

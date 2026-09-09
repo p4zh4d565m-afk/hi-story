@@ -395,6 +395,13 @@ const MIGRATIONS = [
       ALTER TABLE chapters ADD COLUMN planning_outline TEXT NOT NULL DEFAULT '';
     `,
   },
+  // 016: 每个项目可选的 Obsidian 只读资料目录
+  {
+    version: 16,
+    sql: `
+      ALTER TABLE projects ADD COLUMN obsidian_path TEXT NOT NULL DEFAULT '';
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

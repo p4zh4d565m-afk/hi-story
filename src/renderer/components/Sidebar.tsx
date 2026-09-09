@@ -11,6 +11,7 @@ interface SidebarProps {
   onSelectProject: (id: string) => void;
   onCreateProject: () => void;
   onImportNovel: () => void;
+  onOpenObsidian: () => void;
   onDeleteProject: (id: string) => void;
   loading: boolean;
   // Chapter props
@@ -49,6 +50,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   onSelectProject,
   onCreateProject,
   onImportNovel,
+  onOpenObsidian,
   onDeleteProject,
   loading,
   chapters,
@@ -102,6 +104,15 @@ const Sidebar: React.FC<SidebarProps> = ({
       <div className="px-4 py-3 border-b border-sidebar-700 flex items-center justify-between">
         <h1 className="text-lg font-bold text-accent">hi story</h1>
         <div className="flex items-center gap-0.5">
+          {activeProjectId && (
+            <button
+              onClick={onOpenObsidian}
+              className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+              title="Obsidian 资料"
+            >
+              📚
+            </button>
+          )}
           <button
             onClick={onImportNovel}
             className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-white transition-colors"

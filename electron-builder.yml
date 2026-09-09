@@ -21,3 +21,4 @@ extraResources:
     filter:
       - "*.db"
       - "writing-skills/**/*"
+      - "obsidian-templates/**/*"
