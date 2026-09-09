@@ -16,6 +16,7 @@ interface FixtureState {
   confirmAttempts: number;
   updateDelay: number;
   confirmDelay: number;
+  runtimeRefreshDelay: number;
   committedEffects: CreativeDecisionEffect[];
 }
 
@@ -191,6 +192,7 @@ async function mount(options: {
   initialDecisions?: CreativeDecision[];
   updateDelay?: number;
   confirmDelay?: number;
+  runtimeRefreshDelay?: number;
 } = {}): Promise<{
   root: Root;
   container: HTMLDivElement;
@@ -205,14 +207,18 @@ async function mount(options: {
     decisions: options.initialDecisions ?? [], targetRecords: [],
     confirmFailuresRemaining: options.confirmFailuresRemaining ?? 0,
     confirmAttempts: 0, updateDelay: options.updateDelay ?? 0,
-    confirmDelay: options.confirmDelay ?? 0, committedEffects: [],
+    confirmDelay: options.confirmDelay ?? 0,
+    runtimeRefreshDelay: options.runtimeRefreshDelay ?? 0, committedEffects: [],
   };
   window.electronAPI = createElectronApi(state) as typeof window.electronAPI;
   const container = document.createElement('div');
   document.body.append(container);
   const root = createRoot(container);
   const renderProject = (projectId: string) => flushSync(() => root.render(
-    <AIChatPanel projectId={projectId} onCreativeDecisionsCommitted={effects => {
+    <AIChatPanel projectId={projectId} onCreativeDecisionsCommitted={async effects => {
+      if (state.runtimeRefreshDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, state.runtimeRefreshDelay));
+      }
       state.committedEffects = effects;
     }} />,
   ));
@@ -360,6 +366,27 @@ const cases: Array<[string, () => Promise<void>]> = [
       await tick();
       assert(fixture.state.committedEffects.length === 0, '旧项目确认回执触发了当前项目刷新');
       assert(!document.body.textContent?.includes('写入成功'), '旧项目写入结果显示在当前项目面板');
+    } finally {
+      flushSync(() => fixture.root.unmount());
+      fixture.container.remove();
+    }
+  }],
+  ['运行时上下文刷新完成前不显示成功且禁用普通对话发送', async () => {
+    const fixture = await mount({
+      initialDecisions: [makeDecision(extractedDraft)],
+      runtimeRefreshDelay: 120,
+    });
+    try {
+      click('决策(1)');
+      await until(() => Boolean(document.querySelector('[aria-label="决策标题"]')));
+      click('确认此项');
+      await until(() => fixture.state.targetRecords.length === 1);
+      const chatInput = document.querySelector<HTMLTextAreaElement>('textarea[placeholder*="和 AI 讨论"]');
+      await until(() => chatInput?.disabled === true, '上下文刷新期间普通对话仍可发送');
+      assert(!document.body.textContent?.includes('写入成功'), '上下文刷新前过早显示写入成功');
+      await until(() => fixture.state.committedEffects.length === 1);
+      await until(() => document.body.textContent?.includes('写入成功') === true);
+      assert(!chatInput.disabled, '上下文刷新完成后普通对话仍被禁用');
     } finally {
       flushSync(() => fixture.root.unmount());
       fixture.container.remove();

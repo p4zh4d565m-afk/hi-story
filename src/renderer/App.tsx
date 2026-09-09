@@ -376,8 +376,10 @@ const App: React.FC = () => {
     else aiRuntimeContextLoader.invalidate();
   }, [activeProject?.id, aiRuntimeContextLoader]);
 
-  const refreshAiRuntimeContext = useCallback(() => {
-    if (activeProject) void aiRuntimeContextLoader.load(activeProject.id);
+  const refreshAiRuntimeContext = useCallback(async () => {
+    if (!activeProject) return;
+    const status = await aiRuntimeContextLoader.load(activeProject.id);
+    if (status === 'failed') throw new Error('AI 运行时上下文刷新失败');
   }, [activeProject, aiRuntimeContextLoader]);
 
   const refreshObsidian = useCallback(() => {

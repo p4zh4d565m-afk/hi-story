@@ -44,7 +44,7 @@ interface AIChatPanelProps {
   /** Current project ID - conversations are isolated per project */
   projectId?: string | null;
   /** 确认决策写入运行时表后，通知上层刷新 AI 上下文 */
-  onCreativeDecisionsCommitted?: (effects: CreativeDecisionEffect[]) => void;
+  onCreativeDecisionsCommitted?: (effects: CreativeDecisionEffect[]) => void | Promise<void>;
 }
 
 interface ChatEntry {
@@ -295,6 +295,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
+  const [decisionContextRefreshing, setDecisionContextRefreshing] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [creativeDecisions, setCreativeDecisions] = useState<CreativeDecision[]>([]);
@@ -305,6 +306,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const projectIdRef = useRef(projectId);
   const activeThreadIdRef = useRef(activeThreadId);
   const decisionOperationGenerationRef = useRef(0);
+  const contextRefreshGenerationRef = useRef(0);
   projectIdRef.current = projectId;
   activeThreadIdRef.current = activeThreadId;
 
@@ -417,6 +419,8 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   useEffect(() => {
     decisionOperationGenerationRef.current += 1;
+    contextRefreshGenerationRef.current += 1;
+    setDecisionContextRefreshing(false);
     creativeDecisionLoader.invalidate();
     setCreativeDecisions([]);
     setShowDecisionPanel(false);
@@ -665,7 +669,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const sendMessage = async () => {
     const text = input.trim();
-    if (!text || isStreaming) return;
+    if (!text || isStreaming || decisionContextRefreshing) return;
     if (!activeConfig) {
       setError('请先添加一个 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
       return;
@@ -1302,11 +1306,11 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             rows={2}
             className="flex-1 resize-none rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white
                        focus:outline-none focus:border-accent placeholder-gray-600"
-            disabled={isStreaming || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
+            disabled={isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
           />
           <button
             onClick={sendMessage}
-            disabled={!input.trim() || isStreaming || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
+            disabled={!input.trim() || isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
             className="px-4 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover
                        disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end"
           >
@@ -1321,9 +1325,17 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           decisions={creativeDecisions}
           onClose={() => setShowDecisionPanel(false)}
           onChanged={reloadCreativeDecisions}
-          onCommitted={(effects: CreativeDecisionEffect[]) => {
+          onCommitted={async (effects: CreativeDecisionEffect[]) => {
+            const refreshGeneration = ++contextRefreshGenerationRef.current;
             setError(null);
-            onCreativeDecisionsCommitted?.(effects);
+            setDecisionContextRefreshing(true);
+            try {
+              await onCreativeDecisionsCommitted?.(effects);
+            } finally {
+              if (contextRefreshGenerationRef.current === refreshGeneration) {
+                setDecisionContextRefreshing(false);
+              }
+            }
           }}
         />
       )}

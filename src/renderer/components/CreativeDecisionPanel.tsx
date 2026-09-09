@@ -13,7 +13,7 @@ interface CreativeDecisionPanelProps {
   decisions: CreativeDecision[];
   onClose: () => void;
   onChanged: () => void | Promise<void>;
-  onCommitted: (effects: CreativeDecisionEffect[]) => void;
+  onCommitted: (effects: CreativeDecisionEffect[]) => void | Promise<void>;
 }
 
 const TYPE_LABELS: Record<CreativeDecision['type'], string> = {
@@ -180,8 +180,9 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       if (!response.success || !response.data) {
         throw new Error(response.error || '确认写入失败');
       }
+      await onCommitted(response.data.effects);
+      if (activeProjectIdRef.current !== operationProjectId) return;
       setCommittedEffects(response.data.effects);
-      onCommitted(response.data.effects);
       await onChanged();
     } catch (confirmError) {
       if (activeProjectIdRef.current !== operationProjectId) return;
