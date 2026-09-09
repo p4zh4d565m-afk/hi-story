@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3';
+import { findDecisionRelatedItems } from './decision-related-items';
 import type {
   ConfirmCreativeDecisionsInput,
   CreateCreativeDecisionProposalsInput,
@@ -6,6 +7,7 @@ import type {
   CreativeDecision,
   CreativeDecisionDraft,
   CreativeDecisionEffect,
+  CreativeDecisionRelatedItems,
   IpcResult,
   UpdateCreativeDecisionProposalInput,
 } from '../../../renderer/types';
@@ -30,6 +32,24 @@ const TARGET_TABLE_BY_TYPE: Record<DecisionType, TargetTable> = {
 
 export class CreativeDecisionRepo {
   constructor(private db: Database.Database) {}
+
+  findRelatedItems(input: { projectId: string; decisionId: string }): IpcResult<CreativeDecisionRelatedItems> {
+    try {
+      const decision = this.requireDecision(input.projectId, input.decisionId);
+      if (decision.status !== 'proposed') throw new Error('只有待确认决策可以查询疑似相关项');
+      return { success: true, data: findDecisionRelatedItems(this.db, decision) };
+    } catch (error) { return failure(error); }
+  }
+
+  prepareRevision(projectId: string, decisionId: string): IpcResult<CreativeDecisionDraft> {
+    try {
+      const parent = this.requireDecision(projectId, decisionId);
+      if (parent.status !== 'confirmed') throw new Error('只有已确认决策可以修订');
+      const targetId = this.findProjectionTarget(parent);
+      this.requireOptionalTarget(projectId, TARGET_TABLE_BY_TYPE[parent.type], targetId);
+      return { success: true, data: withTargetId(toDraft(parent), targetId) };
+    } catch (error) { return failure(error); }
+  }
 
   createProposals(input: CreateCreativeDecisionProposalsInput): IpcResult<CreativeDecision[]> {
     try {

@@ -96,6 +96,57 @@ describe('CreativeDecisionRepo', () => {
 
   afterEach(() => db.close());
 
+  it.each(['location', 'emotional_state', 'event', 'knowledge', 'relationship', 'possession'])('规则按类型比较主体和对象 %s', factType => {
+    const draft = { ...fourDrafts[0], payload: { ...fourDrafts[0].payload, factType, subject: ' Ａlice ', object: 'Ｋey' } } as CreativeDecisionDraft;
+    const parent = createProposals([draft]).data![0];
+    repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] });
+    const proposal = createProposals([{ ...draft, payload: { ...draft.payload, subject: 'alice', object: 'key' } } as CreativeDecisionDraft]).data![0];
+    expect(repo.findRelatedItems({ projectId: 'project-a', decisionId: proposal.id }).data?.matches).toHaveLength(1);
+    repo.updateProposal({ projectId: 'project-a', decisionId: proposal.id, draft: { ...draft, payload: { ...draft.payload, subject: 'alice', object: '不同物品' } } as CreativeDecisionDraft });
+    expect(repo.findRelatedItems({ projectId: 'project-a', decisionId: proposal.id }).data?.matches).toHaveLength(['location', 'emotional_state'].includes(factType) ? 1 : 0);
+    db.prepare("UPDATE story_facts SET status='superseded'").run();
+    expect(repo.findRelatedItems({ projectId: 'project-a', decisionId: proposal.id }).data?.matches).toHaveLength(0);
+    expect(repo.findRelatedItems({ projectId: 'project-b', decisionId: proposal.id }).success).toBe(false);
+  });
+
+  it.each([2, 3])('钩子债务按类型和非空主体匹配并单列最多20个空主体 %i', index => {
+    const draft = fourDrafts[index];
+    const original = createProposals([draft]).data![0];
+    const effect = repo.confirmMany({ projectId: 'project-a', decisionIds: [original.id] }).data!.effects[0];
+    const proposal = createProposals([draft]).data![0];
+    const query = () => repo.findRelatedItems({ projectId: 'project-a', decisionId: proposal.id }).data!;
+    expect(query().matches).toHaveLength(1);
+    db.prepare(`UPDATE ${effect.targetTable} SET subject='　 '`).run();
+    expect(query().matches).toHaveLength(0);
+    expect(query().missingSubject.map(x => x.id)).toEqual([effect.targetId]);
+    db.prepare(`UPDATE ${effect.targetTable} SET project_id='project-b'`).run();
+    expect(query().missingSubject).toHaveLength(0);
+  });
+
+  it('人物知识优先角色ID，按姓名兜底并稳定取最新20条', () => {
+    const originals = createProposals(Array.from({ length: 23 }, () => fourDrafts[1])).data!;
+    repo.confirmMany({ projectId: 'project-a', decisionIds: originals.map(d => d.id) });
+    const proposal = createProposals([fourDrafts[1]]).data![0];
+    const input = { projectId: 'project-a', decisionId: proposal.id };
+    const rows = repo.findRelatedItems(input).data!.knowledge;
+    expect(rows).toHaveLength(20);
+    expect(rows.map(x => x.id)).toEqual(db.prepare("SELECT id FROM character_knowledge WHERE status='active' ORDER BY created_at DESC,id DESC LIMIT 20").all().map((x: any) => x.id));
+    db.prepare("UPDATE character_knowledge SET character_name='另一个名字'").run();
+    expect(repo.findRelatedItems(input).data?.knowledge).toHaveLength(20);
+    repo.updateProposal({ ...input, draft: { ...fourDrafts[1], payload: { ...fourDrafts[1].payload, characterId: null, characterName: ' 另一个名字 ' } } as CreativeDecisionDraft });
+    expect(repo.findRelatedItems(input).data?.knowledge).toHaveLength(20);
+    db.prepare("UPDATE character_knowledge SET status='superseded'").run();
+    expect(repo.findRelatedItems(input).data?.knowledge).toHaveLength(0);
+  });
+
+  it('历史预填只读取已确认项目并固定effect目标', () => {
+    const parent = createProposals([fourDrafts[0]]).data![0];
+    expect(repo.prepareRevision('project-a', parent.id).success).toBe(false);
+    const target = repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] }).data!.effects[0];
+    expect(repo.prepareRevision('project-a', parent.id).data).toMatchObject({ title: parent.title, payload: { targetId: target.targetId } });
+    expect(repo.prepareRevision('project-b', parent.id).success).toBe(false);
+  });
+
   it.each([0, 1, 2, 3])('无父修订按 targetId 投影并可继续修订：类型 %i', index => {
     const original = createProposals([fourDrafts[index]]).data![0];
     const first = repo.confirmMany({ projectId: 'project-a', decisionIds: [original.id] }).data!;

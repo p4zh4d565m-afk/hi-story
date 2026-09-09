@@ -13,6 +13,14 @@ function getRepo(): CreativeDecisionRepo {
 }
 
 export function registerCreativeDecisionIpc(): void {
+  ipcMain.handle('db:creativeDecisions:findRelatedItems', (_event, input: { projectId: string; decisionId: string }) => {
+    try { return getRepo().findRelatedItems(input); }
+    catch (error) { return { success: false, error: (error as Error).message }; }
+  });
+  ipcMain.handle('db:creativeDecisions:prepareRevision', (_event, projectId: string, decisionId: string) => {
+    try { return getRepo().prepareRevision(projectId, decisionId); }
+    catch (error) { return { success: false, error: (error as Error).message }; }
+  });
   ipcMain.handle(
     'db:creativeDecisions:createProposals',
     (_event, input: CreateCreativeDecisionProposalsInput) => {

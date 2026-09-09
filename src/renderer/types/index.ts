@@ -461,6 +461,20 @@ export interface CreateCreativeDecisionRevisionInput {
   draft: CreativeDecisionDraft;
 }
 
+export interface DecisionRelatedItem {
+  id: string;
+  targetTable: CreativeDecisionEffect['targetTable'];
+  subject: string;
+  description: string;
+  status: string;
+}
+
+export interface CreativeDecisionRelatedItems {
+  matches: DecisionRelatedItem[];
+  knowledge: DecisionRelatedItem[];
+  missingSubject: DecisionRelatedItem[];
+}
+
 // ===== 风格指纹（P3 — 从 localStorage 迁移到主类型） =====
 export interface StyleFingerprint {
   sentenceStyle: string;
