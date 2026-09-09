@@ -66,7 +66,9 @@ Minimal bridge exposing `invoke` and `on` via `contextBridge.exposeInMainWorld('
 
 ### Creative decision ledger
 
-迁移 v18 新增 `creative_decisions` 与 `creative_decision_effects`，每个迁移的 DDL 与版本登记必须处于同一事务。AI 提取只创建 `proposed`，作者确认由 `CreativeDecisionRepo.confirmMany` 在单个 SQLite 事务内校验归属、投影到事实/人物知识/叙事钩子/叙事债务、记录前后快照并更新状态；同一父决策只能有一个待确认修订。渲染端不得串联目标表 IPC，必须保留其他候选的未保存草稿并忽略切换项目后的旧操作回执。事实与人物知识的章节重抽取 `DELETE` 必须排除 `source_decision_id IS NOT NULL`，知识上下文只读 `active`。新决策不写旧 `foreshadowings`，不写 Obsidian。确认后四类运行时状态立即刷新到普通对话；未解决钩子与未偿债务另按“逾期债务→高强度钩子→临近到期→其他”进入写章、审稿和普通对话，独立预算最多约 800 token。所有加载使用项目 ID + 请求代次隔离。真实回归：`node tests/ui/run-creative-decision-ledger.cjs`。
+迁移 v18 新增 `creative_decisions` 与 `creative_decision_effects`，每个迁移的 DDL 与版本登记必须处于同一事务。AI 提取只创建 `proposed`，作者确认由 `CreativeDecisionRepo.confirmMany` 在单个 SQLite 事务内校验归属、投影到事实/人物知识/叙事钩子/叙事债务、记录前后快照并更新状态。渲染端不得串联目标表 IPC，必须保留其他候选的未保存草稿并忽略切换项目后的旧操作回执。事实与人物知识的章节重抽取 `DELETE` 必须排除 `source_decision_id IS NOT NULL`，知识上下文只读 `active`。新决策不写旧 `foreshadowings`，不写 Obsidian。确认后四类运行时状态立即刷新到普通对话；未解决钩子与未偿债务另按“逾期债务→高强度钩子→临近到期→其他”进入写章、审稿和普通对话，独立预算最多约 800 token。
+
+v19 为 hook/debt 增加 `subject`，作者提议及修订必填，底层 create 和 App.tsx 章节自动同步仍允许空主体。疑似相关项提示为主进程 NFKC 规则查询，空主体进入同类活跃兜底区；人物知识仅提示相关已有条目。修订由 `targetId` 决定路径，允许无父修订；同项目 `targetTable + targetId` 只能有一个 pending，创建、保存和确认以写事务互斥。有父 proposal 的父 ID 从数据库读取，类型及非空目标必须等于父投影。hook/debt 原地更新 subject 和决策来源，并保留 effect 前后快照。界面覆盖项目 ID + 代次守卫、历史预填和失败草稿恢复。真实回归先 `npm run build:main`，再 `node tests/ui/run-creative-decision-ledger.cjs`（独立隐藏窗口、内存 SQLite，不接触用户数据）。
 
 ### Chapter save flow (WritingArea.tsx)
 
@@ -125,6 +127,8 @@ resources/
 | hi-story-auditor | `.Codex/agents/` | 审计 Electron+React+SQLite 跨进程一致性 |
 
 ## 已实现功能
+
+- **疑似相关项提示与修订（2026-09-10）** — 纯规则查询、空主体兜底、独立确认/修订/取消、无父目标修订和已确认历史修订入口；全量 122 项测试、写作 UI 10 项、决策 UI 16 项通过，后者包含真实 React→IPC→内存 SQLite 的四类修订、交错互斥和故障回滚。请求进行中禁止关闭决策面板，确保成功回执刷新上下文。外部 AI 烟测未执行。
 
 - **维护修复（2026-09-07）** — preload 的 `on` 返回取消订阅函数，菜单与 AI 流式消息统一调用该函数释放监听，避免跨 contextBridge 比较回调引用；启动清理仅针对 768 维 Float32 旧向量（3072 字节），保留已构建的 1024 维索引。详情见 `docs/maintenance-review-2026-09-07.md`。
 
