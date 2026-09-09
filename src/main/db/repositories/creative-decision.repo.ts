@@ -117,6 +117,15 @@ export class CreativeDecisionRepo {
         const decisionIds = [...new Set(input.decisionIds)];
         if (decisionIds.length === 0) throw new Error('请选择要确认的决策');
         const decisions = decisionIds.map(id => this.requireDecision(input.projectId, id));
+        const selectedParents = new Set<string>();
+
+        for (const decision of decisions) {
+          if (decision.status !== 'proposed' || !decision.parentDecisionId) continue;
+          if (selectedParents.has(decision.parentDecisionId)) {
+            throw new Error('同一决策不能同时确认多个修订');
+          }
+          selectedParents.add(decision.parentDecisionId);
+        }
 
         for (const decision of decisions) {
           if (decision.status !== 'proposed' && decision.status !== 'confirmed') {
@@ -173,28 +182,36 @@ export class CreativeDecisionRepo {
 
   createRevision(input: CreateCreativeDecisionRevisionInput): IpcResult<CreativeDecision> {
     try {
-      const parent = this.requireDecision(input.projectId, input.parentDecisionId);
-      if (parent.status !== 'confirmed') throw new Error('只有已确认决策可以修订');
-      if (parent.type !== input.draft.type) throw new Error('修订类型必须与原决策一致');
+      const create = this.db.transaction(() => {
+        const parent = this.requireDecision(input.projectId, input.parentDecisionId);
+        if (parent.status !== 'confirmed') throw new Error('只有已确认决策可以修订');
+        if (parent.type !== input.draft.type) throw new Error('修订类型必须与原决策一致');
+        const pendingSibling = this.db.prepare(`
+          SELECT 1 FROM creative_decisions
+          WHERE project_id = ? AND parent_decision_id = ? AND status = 'proposed'
+        `).get(input.projectId, parent.id);
+        if (pendingSibling) throw new Error('该决策已有待确认修订');
 
-      const targetId = this.findProjectionTarget(parent);
-      const suppliedTargetId = getTargetId(input.draft);
-      if (suppliedTargetId && suppliedTargetId !== targetId) throw new Error('修订目标与原决策不一致');
-      const draft = withTargetId(input.draft, targetId);
-      this.validateDraft(input.projectId, draft);
+        const targetId = this.findProjectionTarget(parent);
+        const suppliedTargetId = getTargetId(input.draft);
+        if (suppliedTargetId && suppliedTargetId !== targetId) throw new Error('修订目标与原决策不一致');
+        const draft = withTargetId(input.draft, targetId);
+        this.validateDraft(input.projectId, draft);
 
-      const id = crypto.randomUUID();
-      const now = new Date().toISOString();
-      this.db.prepare(`
-        INSERT INTO creative_decisions (
-          id, project_id, source_thread_id, source_message_id, parent_decision_id,
-          decision_type, title, rationale, payload_json, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)
-      `).run(
-        id, input.projectId, parent.sourceThreadId, parent.sourceMessageId, parent.id,
-        draft.type, draft.title.trim(), draft.rationale.trim(), JSON.stringify(draft.payload), now,
-      );
-      return { success: true, data: this.requireDecision(input.projectId, id) };
+        const id = crypto.randomUUID();
+        const now = new Date().toISOString();
+        this.db.prepare(`
+          INSERT INTO creative_decisions (
+            id, project_id, source_thread_id, source_message_id, parent_decision_id,
+            decision_type, title, rationale, payload_json, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)
+        `).run(
+          id, input.projectId, parent.sourceThreadId, parent.sourceMessageId, parent.id,
+          draft.type, draft.title.trim(), draft.rationale.trim(), JSON.stringify(draft.payload), now,
+        );
+        return this.requireDecision(input.projectId, id);
+      });
+      return { success: true, data: create() };
     } catch (error) {
       return failure(error);
     }

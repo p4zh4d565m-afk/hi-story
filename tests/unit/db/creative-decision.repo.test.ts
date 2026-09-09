@@ -295,4 +295,66 @@ describe('CreativeDecisionRepo', () => {
       }),
     ]));
   });
+
+  it('同一父决策只能存在一个待确认修订', () => {
+    const parent = createProposals([fourDrafts[2]]).data![0];
+    repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] });
+    const revisionDraft: CreativeDecisionDraft = {
+      type: 'narrative_hook', title: '车票线索推进', rationale: '第一版修订',
+      payload: {
+        hookType: 'mystery', description: '车票背面出现站长姓名', intensity: 5,
+        chapterId: 'chapter-b', dueChapterId: 'chapter-b',
+      },
+    };
+
+    const first = repo.createRevision({
+      projectId: 'project-a', parentDecisionId: parent.id, draft: revisionDraft,
+    });
+    const second = repo.createRevision({
+      projectId: 'project-a', parentDecisionId: parent.id,
+      draft: { ...revisionDraft, title: '另一个修订版本' },
+    });
+
+    expect(first.success).toBe(true);
+    expect(second).toMatchObject({ success: false, error: '该决策已有待确认修订' });
+    expect(db.prepare(`
+      SELECT COUNT(*) AS count FROM creative_decisions
+      WHERE parent_decision_id = ? AND status = 'proposed'
+    `).get(parent.id)).toEqual({ count: 1 });
+  });
+
+  it('批量确认兄弟修订时整体拒绝且不覆盖目标', () => {
+    const parent = createProposals([fourDrafts[2]]).data![0];
+    repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] });
+    const revision = repo.createRevision({
+      projectId: 'project-a', parentDecisionId: parent.id,
+      draft: {
+        type: 'narrative_hook', title: '第一版修订', rationale: '推进线索',
+        payload: {
+          hookType: 'mystery', description: '车票背面出现站长姓名', intensity: 5,
+          chapterId: 'chapter-b', dueChapterId: 'chapter-b',
+        },
+      },
+    }).data!;
+    db.prepare(`
+      INSERT INTO creative_decisions (
+        id, project_id, source_thread_id, source_message_id, parent_decision_id,
+        decision_type, title, rationale, payload_json, status, created_at
+      )
+      SELECT ?, project_id, source_thread_id, source_message_id, parent_decision_id,
+        decision_type, ?, rationale, payload_json, status, created_at
+      FROM creative_decisions WHERE id = ?
+    `).run('sibling-revision', '第二版修订', revision.id);
+
+    const result = repo.confirmMany({
+      projectId: 'project-a', decisionIds: [revision.id, 'sibling-revision'],
+    });
+
+    expect(result).toMatchObject({ success: false, error: '同一决策不能同时确认多个修订' });
+    expect(db.prepare('SELECT description FROM narrative_hooks').get())
+      .toEqual({ description: '旧车站留下带血车票' });
+    expect(db.prepare(`
+      SELECT DISTINCT status FROM creative_decisions WHERE parent_decision_id = ?
+    `).all(parent.id)).toEqual([{ status: 'proposed' }]);
+  });
 });
