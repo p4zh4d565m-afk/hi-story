@@ -21,8 +21,20 @@ hi-story 是面向长篇小说创作的本地 Electron 工作台。当前核心�
 - Obsidian 上下文已接入 AI 对话、写章、审稿与修订，总预算约 3500 token、单篇约 650 token；目录未配置或不可用时继续使用原有 SQLite 功能。数据归属与目录规范见 `docs/obsidian.md`。
 - AI 多会话及消息已迁入 SQLite：迁移 v17 保存稳定顺序、功能上下文和更新时间；旧项目 localStorage 会话按项目事务化导入一次且保留原数据，读取失败不覆盖现有会话，项目切换的迟到回执不会串线。
 - AI 流式输出仍实时显示临时内容；用户消息先落库，只有正常完成的 AI 全文才落库，中断、空回复或失败不会产生完整成功记录。
+- 创作决策确认账本已完成：迁移 v18、四类严格载荷、assistant 来源归属校验、单事务批量确认、effect 审计、幂等、拒绝和四类修订均已落地；AI 提取仅保存 `proposed`，确认失败保留候选重试。
+- 章节重新抽取只替换无 `source_decision_id` 的事实与人物知识；人物知识上下文只读取 `active`。新决策不写旧 `foreshadowings`，不修改 Obsidian。
+- 未解决钩子和未偿债务按逾期债务、高强度钩子、临近到期、其他的顺序，在独立 800 token 预算内进入普通对话、写章与审稿；项目切换使用项目 ID + 请求代次隔离。
 - 详细维护发现见 `docs/maintenance-review-2026-09-07.md`。
 
-## 后续优先项
+## 本次验证
 
-1. 创作决策确认账本设计和实施计划已通过整理，见 `docs/superpowers/specs/2026-09-09-creative-decision-ledger-design.md` 与 `docs/superpowers/plans/2026-09-09-creative-decision-ledger.md`；下一步按计划逐任务实现，不与普通 AI 会话记录混用。
+- 账本专项：6 个测试文件、24 项测试通过。
+- 真实 UI：写作工作区 10/10，创作决策 5/5 通过。
+- 完整 Vitest：Electron Node 模式 20 个测试文件、85 项测试通过；`npm run build` 通过。
+- 当前 Windows PowerShell 直接执行 `npm run test` 会因脚本中的 Unix `rm` 不存在而在测试前退出，已按 `AGENTS.md` 使用不改变 better-sqlite3 Electron ABI 的完整 Vitest 命令替代。
+
+## 已知限制与后续优先项
+
+1. 真实外部 AI 提取未使用用户 API Key 做烟测；当前由解析单测和隐藏 Electron 内存 AI 流回归覆盖。
+2. 首版不自动判断语义冲突；后续可增加同主体、同类型活跃事实提示和已确认决策的修订入口。
+3. 可将 `npm run test` 改为跨平台清理脚本，消除 Windows PowerShell 对 Unix `rm` 的依赖。
