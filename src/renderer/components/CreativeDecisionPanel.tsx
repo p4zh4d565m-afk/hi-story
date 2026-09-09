@@ -4,6 +4,7 @@ import type {
   CreativeDecision,
   CreativeDecisionDraft,
   CreativeDecisionEffect,
+  CreativeDecisionRelatedItems,
   IpcResult,
   UpdateCreativeDecisionProposalInput,
 } from '../types';
@@ -62,14 +63,29 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [committedEffects, setCommittedEffects] = useState<CreativeDecisionEffect[]>([]);
-  const activeProjectIdRef = useRef(projectId);
-  activeProjectIdRef.current = projectId;
+  // 用对象身份记录每次项目代次，防止 A→B→A 接受第一次 A 的回执。
+  const activeProjectIdRef = useRef({ projectId });
+  const lock = useRef(false);
+  if (activeProjectIdRef.current.projectId !== projectId) {
+    activeProjectIdRef.current = { projectId };
+    lock.current = false;
+  }
+  const [related, setRelated] = useState<{ title: string; items: CreativeDecisionRelatedItems } | null>(null);
+  const chooseRef = useRef<((choice: string | null) => void) | null>(null);
+  const [revision, setRevision] = useState<{ parentId: string; draft: CreativeDecisionDraft } | null>(null);
+  useEffect(() => () => {
+    activeProjectIdRef.current = { projectId };
+    chooseRef.current?.('cancel');
+    chooseRef.current = null;
+  }, [projectId]);
 
   useEffect(() => {
     setBusyId(null);
     setError(null);
     setCommittedEffects([]);
     setDirtyIds(new Set());
+    setRelated(null);
+    setRevision(null);
   }, [projectId]);
 
   useEffect(() => {
@@ -115,9 +131,11 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
   } as CreativeDecisionDraft));
 
   const save = async (decisionId: string): Promise<boolean> => {
+    if (lock.current) return false;
     const draft = drafts[decisionId];
     if (!draft) return false;
-    const operationProjectId = projectId;
+    const operationProjectId = activeProjectIdRef.current;
+    lock.current = true;
     setBusyId(decisionId);
     setError(null);
     try {
@@ -140,12 +158,14 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       setError(saveError instanceof Error ? saveError.message : String(saveError));
       return false;
     } finally {
-      if (activeProjectIdRef.current === operationProjectId) setBusyId(null);
+      if (activeProjectIdRef.current === operationProjectId) { lock.current = false; setBusyId(null); }
     }
   };
 
   const reject = async (decisionId: string) => {
-    const operationProjectId = projectId;
+    if (lock.current) return;
+    const operationProjectId = activeProjectIdRef.current;
+    lock.current = true;
     setBusyId(decisionId);
     setError(null);
     try {
@@ -159,20 +179,53 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       if (activeProjectIdRef.current !== operationProjectId) return;
       setError(rejectError instanceof Error ? rejectError.message : String(rejectError));
     } finally {
-      if (activeProjectIdRef.current === operationProjectId) setBusyId(null);
+      if (activeProjectIdRef.current === operationProjectId) { lock.current = false; setBusyId(null); }
     }
   };
 
   const confirm = async (decisionIds: string[]) => {
+    if (lock.current) return;
     if (decisionIds.some(id => dirtyIds.has(id))) {
       setError('请先保存修改，再确认写入');
       return;
     }
-    const operationProjectId = projectId;
+    const operationProjectId = activeProjectIdRef.current;
+    lock.current = true;
     setBusyId(decisionIds.length === 1 ? decisionIds[0] : 'all');
     setError(null);
     try {
-      const input: ConfirmCreativeDecisionsInput = { projectId, decisionIds };
+      const selected: string[] = [];
+      for (const decisionId of decisionIds) {
+        const savedDecision = decisions.find(item => item.id === decisionId);
+        const draft = drafts[decisionId] ?? (savedDecision ? toDraft(savedDecision) : undefined);
+        if (!draft) throw new Error('候选尚未加载');
+        if ((draft.type === 'narrative_hook' || draft.type === 'narrative_debt') && !draft.payload.subject?.trim()) {
+          throw new Error('请先补填主体并保存修改');
+        }
+        if (!draft.payload.targetId) {
+          const result = await window.electronAPI.invoke('db:creativeDecisions:findRelatedItems', { projectId, decisionId }) as IpcResult<CreativeDecisionRelatedItems>;
+          if (activeProjectIdRef.current !== operationProjectId) return;
+          if (!result.success || !result.data) throw new Error(result.error || '疑似相关项查询失败');
+          if (result.data.matches.length || result.data.knowledge.length || result.data.missingSubject.length) {
+            const targetId = await new Promise<string | null>(resolve => {
+              chooseRef.current = resolve;
+              setRelated({ title: draft.title, items: result.data! });
+            });
+            if (activeProjectIdRef.current !== operationProjectId) return;
+            if (targetId === 'cancel') continue;
+            const chosen = { ...draft, payload: { ...draft.payload, targetId } } as CreativeDecisionDraft;
+            setDrafts(current => ({ ...current, [decisionId]: chosen }));
+            setDirtyIds(current => new Set(current).add(decisionId));
+            const saved = await window.electronAPI.invoke('db:creativeDecisions:updateProposal', { projectId, decisionId, draft: chosen }) as IpcResult<CreativeDecision>;
+            if (activeProjectIdRef.current !== operationProjectId) return;
+            if (!saved.success || !saved.data) throw new Error(saved.error || '选择保存失败');
+            setDirtyIds(current => { const next = new Set(current); next.delete(decisionId); return next; });
+          }
+        }
+        selected.push(decisionId);
+      }
+      if (!selected.length) return;
+      const input: ConfirmCreativeDecisionsInput = { projectId, decisionIds: selected };
       const response = await window.electronAPI.invoke(
         'db:creativeDecisions:confirmMany', input,
       ) as IpcResult<{ decisions: CreativeDecision[]; effects: CreativeDecisionEffect[] }>;
@@ -189,7 +242,49 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
       const message = confirmError instanceof Error ? confirmError.message : String(confirmError);
       setError(`写入失败，可重试：${message}`);
     } finally {
-      if (activeProjectIdRef.current === operationProjectId) setBusyId(null);
+      if (activeProjectIdRef.current === operationProjectId) { lock.current = false; setBusyId(null); }
+    }
+  };
+
+  const choose = (choice: string | null) => {
+    const resolve = chooseRef.current;
+    chooseRef.current = null;
+    setRelated(null);
+    resolve?.(choice);
+  };
+
+  const prepareRevision = async (parentId: string) => {
+    if (lock.current) return;
+    const generation = activeProjectIdRef.current;
+    lock.current = true; setBusyId(parentId); setError(null);
+    try {
+      const result = await window.electronAPI.invoke('db:creativeDecisions:prepareRevision', projectId, parentId) as IpcResult<CreativeDecisionDraft>;
+      if (activeProjectIdRef.current !== generation) return;
+      if (!result.success || !result.data) throw new Error(result.error || '修订预填失败');
+      setRevision({ parentId, draft: result.data });
+    } catch (error) {
+      if (activeProjectIdRef.current === generation) setError(String(error));
+    } finally {
+      if (activeProjectIdRef.current === generation) { lock.current = false; setBusyId(null); }
+    }
+  };
+
+  const createRevision = async () => {
+    if (!revision || lock.current) return;
+    const generation = activeProjectIdRef.current;
+    lock.current = true; setBusyId(revision.parentId); setError(null);
+    try {
+      const result = await window.electronAPI.invoke('db:creativeDecisions:createRevision', {
+        projectId, parentDecisionId: revision.parentId, draft: revision.draft,
+      }) as IpcResult<CreativeDecision>;
+      if (activeProjectIdRef.current !== generation) return;
+      if (!result.success || !result.data) throw new Error(result.error || '创建修订失败');
+      setRevision(null);
+      await onChanged();
+    } catch (error) {
+      if (activeProjectIdRef.current === generation) setError(String(error));
+    } finally {
+      if (activeProjectIdRef.current === generation) { lock.current = false; setBusyId(null); }
     }
   };
 
@@ -205,6 +300,35 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
         </div>
 
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {related && <section role="dialog" aria-label="疑似相关项提示" className="border border-amber-700 rounded p-4 space-y-3">
+            <h4>疑似相关项提示 · {related.title}</h4>
+            {([
+              ['疑似相关项', related.items.matches],
+              ['相关已有条目', related.items.knowledge],
+              ['同类活跃项（缺少主体，无法自动配对）', related.items.missingSubject],
+            ] as const).map(([label, items]) => items.length > 0 && <div key={label}>
+              <h5>{label}</h5>
+              {items.map(item => <div key={`${item.targetTable}:${item.id}`} className="my-2 text-sm">
+                {item.subject} · {item.description} <button onClick={() => choose(item.id)}>修订此项</button>
+              </div>)}
+            </div>)}
+            <button onClick={() => choose(null)} className="mr-4">作为独立项确认</button>
+            <button onClick={() => choose('cancel')}>取消确认</button>
+          </section>}
+          {revision && <section role="dialog" aria-label="修订草稿" className="border border-accent rounded p-4 space-y-3">
+            <h4>修订草稿 · 将修订 {revision.draft.payload.targetId}</h4>
+            <TextField label="修订标题" value={revision.draft.title} disabled={busyId !== null}
+              onChange={title => setRevision(current => current && ({ ...current, draft: { ...current.draft, title } }))} />
+            <TextField label="修订理由" value={revision.draft.rationale} disabled={busyId !== null}
+              onChange={rationale => setRevision(current => current && ({ ...current, draft: { ...current.draft, rationale } }))} />
+            <DecisionPayloadFields decisionId={revision.parentId} draft={revision.draft} disabled={busyId !== null}
+              updatePayload={(_id, field, value) => setRevision(current => current && ({ ...current,
+                draft: { ...current.draft, payload: { ...current.draft.payload, [field]: value } } as CreativeDecisionDraft,
+              }))} />
+            <button onClick={() => void createRevision()} disabled={busyId !== null || !revision.draft.title.trim() ||
+              ((revision.draft.type === 'narrative_hook' || revision.draft.type === 'narrative_debt') && !revision.draft.payload.subject?.trim())}>保存修订提议</button>
+            <button disabled={busyId !== null} onClick={() => setRevision(null)} className="ml-4">取消修订</button>
+          </section>}
           {committedEffects.length > 0 && (
             <div className="rounded-lg border border-emerald-800 bg-emerald-950/40 p-3 text-xs text-emerald-200">
               <div className="font-medium mb-2">写入成功</div>
@@ -220,7 +344,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
           )}
           {proposed.map(decision => {
             const draft = drafts[decision.id] ?? toDraft(decision);
-            const isBusy = busyId === decision.id || busyId === 'all';
+            const isBusy = busyId !== null || revision !== null;
             return (
               <section key={decision.id} className="border border-aichat-700 rounded-lg p-4 space-y-3 bg-aichat-800/50">
                 <div className="flex items-center justify-between">
@@ -258,6 +382,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
                   updatePayload={updatePayload}
                   disabled={isBusy}
                 />
+                {draft.payload.targetId && <p className="text-xs text-amber-300">将修订 {TARGET_LABELS[decision.type === 'story_fact' ? 'story_facts' : decision.type === 'narrative_hook' ? 'narrative_hooks' : decision.type === 'narrative_debt' ? 'narrative_debts' : 'character_knowledge']} · {draft.payload.targetId}</p>}
 
                 <div className="flex items-center justify-end gap-2 pt-1">
                   <button
@@ -295,6 +420,8 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
                     <span className="text-xs text-gray-500">{STATUS_LABELS[decision.status]}</span>
                   </div>
                   <div className="text-xs text-gray-500 mt-1">{TYPE_LABELS[decision.type]} · {decision.rationale}</div>
+                  {decision.status === 'confirmed' && <button disabled={busyId !== null || revision !== null}
+                    onClick={() => void prepareRevision(decision.id)} className="text-xs text-accent mt-2">创建修订</button>}
                 </div>
               ))}
             </section>
@@ -305,7 +432,7 @@ const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
           <div className="text-xs text-red-400">{error}</div>
           <button
             onClick={() => void confirm(proposed.map(item => item.id))}
-            disabled={proposed.length === 0 || busyId !== null || dirtyIds.size > 0}
+            disabled={proposed.length === 0 || busyId !== null || dirtyIds.size > 0 || revision !== null}
             className="px-4 py-2 text-xs bg-accent text-white rounded disabled:opacity-50"
           >
             全部确认
@@ -353,6 +480,7 @@ const DecisionPayloadFields: React.FC<DecisionPayloadFieldsProps> = ({
   }
   if (draft.type === 'narrative_hook') {
     return <div className="grid grid-cols-2 gap-3">
+      <TextField label="主体" value={draft.payload.subject ?? ''} onChange={value => updatePayload(decisionId, 'subject', value)} disabled={disabled} />
       <SelectField label="钩子类型" value={draft.payload.hookType} options={HOOK_TYPE_OPTIONS}
         onChange={value => updatePayload(decisionId, 'hookType', value)} disabled={disabled} />
       <label className="text-xs text-gray-400">强度（1-5）
@@ -367,6 +495,7 @@ const DecisionPayloadFields: React.FC<DecisionPayloadFieldsProps> = ({
     </div>;
   }
   return <div className="grid grid-cols-2 gap-3">
+    <TextField label="主体" value={draft.payload.subject ?? ''} onChange={value => updatePayload(decisionId, 'subject', value)} disabled={disabled} />
     <SelectField label="债务类型" value={draft.payload.debtType} options={DEBT_TYPE_OPTIONS}
       onChange={value => updatePayload(decisionId, 'debtType', value)} disabled={disabled} />
     <label className="text-xs text-gray-400">承诺章节
@@ -388,7 +517,7 @@ const DecisionPayloadFields: React.FC<DecisionPayloadFieldsProps> = ({
 const TextField: React.FC<{ label: string; value: string; onChange: (value: string) => void; disabled: boolean }> = ({
   label, value, onChange, disabled,
 }) => <label className="text-xs text-gray-400">{label}
-  <input value={value} onChange={event => onChange(event.target.value)} disabled={disabled}
+  <input aria-label={label} value={value} onChange={event => onChange(event.target.value)} disabled={disabled}
     className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white" />
 </label>;
 

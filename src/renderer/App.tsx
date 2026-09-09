@@ -1336,6 +1336,7 @@ const App: React.FC = () => {
                                 projectId: activeProject?.id,
                                 chapterId: sorted[0].id,
                                 hookType: 'foreshadowing',
+                                subject: hook.subject ?? '',
                                 description: `${hook.subject}${hook.predicate}${hook.object}：${hook.description}`,
                                 intensity: 3,
                               });

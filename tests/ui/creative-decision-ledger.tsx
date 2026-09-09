@@ -18,6 +18,8 @@ interface FixtureState {
   confirmDelay: number;
   runtimeRefreshDelay: number;
   committedEffects: CreativeDecisionEffect[];
+  related: boolean;
+  revisionsCreated: number;
 }
 
 const extractedDraft: CreativeDecisionDraft = {
@@ -59,6 +61,19 @@ function createElectronApi(state: FixtureState) {
       return () => entries.delete(callback);
     },
     async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
+      if (channel === 'db:creativeDecisions:findRelatedItems') {
+        return { success: true, data: { matches: state.related ? [{ id: 'existing-hook', targetTable: 'narrative_hooks', subject: '旧车站', description: '相关旧钩子', status: 'open' }] : [], knowledge: [], missingSubject: state.related ? [{ id: 'empty-hook', targetTable: 'narrative_hooks', subject: '', description: '缺主体旧钩子', status: 'open' }] : [] } };
+      }
+      if (channel === 'db:creativeDecisions:prepareRevision') {
+        return { success: true, data: { ...extractedDraft, payload: { ...extractedDraft.payload, subject: '', targetId: 'existing-hook' } } };
+      }
+      if (channel === 'db:creativeDecisions:createRevision') {
+        const input = args[0] as { draft: CreativeDecisionDraft; parentDecisionId: string };
+        state.revisionsCreated++;
+        const decision = { ...makeDecision(input.draft, 'revision-1'), parentDecisionId: input.parentDecisionId };
+        state.decisions.push(decision);
+        return { success: true, data: decision };
+      }
       if (channel === 'db:conversation:migrateLegacy') {
         return { success: true, data: { status: 'no_data', threadCount: 0, messageCount: 0 } };
       }
@@ -193,6 +208,7 @@ async function mount(options: {
   updateDelay?: number;
   confirmDelay?: number;
   runtimeRefreshDelay?: number;
+  related?: boolean;
 } = {}): Promise<{
   root: Root;
   container: HTMLDivElement;
@@ -209,6 +225,7 @@ async function mount(options: {
     confirmAttempts: 0, updateDelay: options.updateDelay ?? 0,
     confirmDelay: options.confirmDelay ?? 0,
     runtimeRefreshDelay: options.runtimeRefreshDelay ?? 0, committedEffects: [],
+    related: options.related ?? false, revisionsCreated: 0,
   };
   window.electronAPI = createElectronApi(state) as typeof window.electronAPI;
   const container = document.createElement('div');
@@ -240,6 +257,44 @@ async function extract(): Promise<void> {
 }
 
 const cases: Array<[string, () => Promise<void>]> = [
+  ['疑似相关项与空主体兜底可以选修订', async () => {
+    const fixture = await mount({ initialDecisions: [makeDecision(extractedDraft)], related: true });
+    try {
+      click('决策(1)'); click('确认此项');
+      await until(() => document.body.textContent?.includes('同类活跃项（缺少主体，无法自动配对）') === true);
+      assert(document.body.textContent?.includes('疑似相关项提示'), '缺少规则提示标题');
+      const choices = [...document.querySelectorAll<HTMLButtonElement>('button')].filter(b => b.textContent === '修订此项');
+      flushSync(() => choices[1].click());
+      await until(() => fixture.state.confirmAttempts === 1);
+      assert(fixture.state.decisions[0].payload.targetId === 'empty-hook', '未保存所选兜底目标');
+    } finally { flushSync(() => fixture.root.unmount()); fixture.container.remove(); }
+  }],
+  ['取消确认保持待确认，独立选择清空目标', async () => {
+    const fixture = await mount({ initialDecisions: [makeDecision(extractedDraft)], related: true });
+    try {
+      click('决策(1)'); click('确认此项');
+      await until(() => Boolean(button('取消确认'))); click('取消确认'); await tick();
+      assert(fixture.state.confirmAttempts === 0, '取消仍发送了确认');
+      click('确认此项'); await until(() => Boolean(button('作为独立项确认'))); click('作为独立项确认');
+      await until(() => fixture.state.confirmAttempts === 1);
+      assert(fixture.state.decisions[0].payload.targetId === null, '独立项没有明确空目标');
+    } finally { flushSync(() => fixture.root.unmount()); fixture.container.remove(); }
+  }],
+  ['已确认历史预填修订且旧主体必须补填，重复点击只创建一次', async () => {
+    const fixture = await mount({ initialDecisions: [{ ...makeDecision(extractedDraft), status: 'confirmed' }] });
+    try {
+      click('决策'); await until(() => Boolean(button('创建修订'))); click('创建修订');
+      await until(() => Boolean(button('保存修订提议')));
+      assert(button('保存修订提议')!.disabled, '缺少主体仍允许创建');
+      const subject = document.querySelector<HTMLInputElement>('[aria-label="主体"]')!;
+      assert(subject && subject.value === '', '旧主体没有预填为空');
+      setInput(subject, '车票'); await tick();
+      const submit = button('保存修订提议')!;
+      flushSync(() => { submit.click(); submit.click(); });
+      await until(() => fixture.state.revisionsCreated === 1);
+      assert(fixture.state.decisions.find(d => d.id === 'revision-1')?.status === 'proposed', '修订被提前确认');
+    } finally { flushSync(() => fixture.root.unmount()); fixture.container.remove(); }
+  }],
   ['只有已落库 assistant 消息显示整理入口', async () => {
     const fixture = await mount();
     try {
@@ -361,6 +416,7 @@ const cases: Array<[string, () => Promise<void>]> = [
       click('决策(1)');
       await until(() => Boolean(document.querySelector('[aria-label="决策标题"]')));
       click('确认此项');
+      await until(() => fixture.state.confirmAttempts === 1);
       fixture.renderProject('project-b');
       await until(() => fixture.state.targetRecords.length === 1);
       await tick();
