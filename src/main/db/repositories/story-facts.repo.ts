@@ -75,14 +75,19 @@ export class StoryFactsRepo {
   batchUpsert(input: BatchUpsertFactsInput): IpcResult<{ inserted: number }> {
     const tx = this.db.transaction(() => {
       // 删除该章节已有的 active 事实
-      this.db.prepare('DELETE FROM story_facts WHERE chapter_id = ?').run(input.chapterId);
+      this.db.prepare(`
+        DELETE FROM story_facts
+        WHERE chapter_id = ? AND source_decision_id IS NULL
+      `).run(input.chapterId);
 
       if (input.facts.length === 0) return { inserted: 0 };
 
       const now = new Date().toISOString();
       const stmt = this.db.prepare(`
-        INSERT INTO story_facts (id, project_id, chapter_id, fact_type, subject, predicate, object, description, status, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)
+        INSERT INTO story_facts (
+          id, project_id, chapter_id, fact_type, subject, predicate, object,
+          description, status, source_kind, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'chapter_extraction', ?)
       `);
 
       for (const f of input.facts) {
@@ -195,14 +200,19 @@ export class StoryFactsRepo {
   /** 批量覆盖某章的角色知识 */
   batchUpsertKnowledge(input: BatchUpsertKnowledgeInput): IpcResult<{ inserted: number }> {
     const tx = this.db.transaction(() => {
-      this.db.prepare('DELETE FROM character_knowledge WHERE learned_at_chapter_id = ?').run(input.chapterId);
+      this.db.prepare(`
+        DELETE FROM character_knowledge
+        WHERE learned_at_chapter_id = ? AND source_decision_id IS NULL
+      `).run(input.chapterId);
 
       if (input.knowledge.length === 0) return { inserted: 0 };
 
       const now = new Date().toISOString();
       const stmt = this.db.prepare(`
-        INSERT INTO character_knowledge (id, project_id, character_id, character_name, fact_description, source, learned_at_chapter_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO character_knowledge (
+          id, project_id, character_id, character_name, fact_description,
+          source, learned_at_chapter_id, source_kind, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'chapter_extraction', ?)
       `);
 
       for (const k of input.knowledge) {
@@ -225,7 +235,9 @@ export class StoryFactsRepo {
   /** 获取某角色的已知信息（用于判断是否信息越界） */
   findByCharacter(projectId: string, characterName: string): IpcResult<CharacterKnowledge[]> {
     const rows = this.db.prepare(`
-      SELECT * FROM character_knowledge WHERE project_id = ? AND character_name = ? ORDER BY created_at DESC
+      SELECT * FROM character_knowledge
+      WHERE project_id = ? AND character_name = ? AND status = 'active'
+      ORDER BY created_at DESC
     `).all(projectId, characterName) as Record<string, unknown>[];
     return { success: true, data: rows.map(r => this.rowToKnowledge(r)) };
   }
@@ -233,7 +245,9 @@ export class StoryFactsRepo {
   /** 获取项目所有角色知识（用于审稿上下文） */
   findAllKnowledgeByProject(projectId: string): IpcResult<CharacterKnowledge[]> {
     const rows = this.db.prepare(`
-      SELECT * FROM character_knowledge WHERE project_id = ? ORDER BY created_at DESC
+      SELECT * FROM character_knowledge
+      WHERE project_id = ? AND status = 'active'
+      ORDER BY created_at DESC
     `).all(projectId) as Record<string, unknown>[];
     return { success: true, data: rows.map(r => this.rowToKnowledge(r)) };
   }
@@ -254,6 +268,8 @@ export class StoryFactsRepo {
       description: row.description as string,
       status: row.status as StoryFact['status'],
       supersededBy: (row.superseded_by ?? null) as string | null,
+      sourceDecisionId: (row.source_decision_id ?? null) as string | null,
+      sourceKind: (row.source_kind ?? 'legacy') as StoryFact['sourceKind'],
       createdAt: row.created_at as string,
     };
   }
@@ -267,6 +283,10 @@ export class StoryFactsRepo {
       factDescription: row.fact_description as string,
       source: row.source as string,
       learnedAtChapterId: (row.learned_at_chapter_id ?? null) as string | null,
+      sourceDecisionId: (row.source_decision_id ?? null) as string | null,
+      sourceKind: (row.source_kind ?? 'legacy') as CharacterKnowledge['sourceKind'],
+      status: (row.status ?? 'active') as CharacterKnowledge['status'],
+      supersededBy: (row.superseded_by ?? null) as string | null,
       createdAt: row.created_at as string,
     };
   }
