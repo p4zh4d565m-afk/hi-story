@@ -43,6 +43,8 @@ interface AIChatPanelProps {
   onSaveMessage?: (role: 'user' | 'assistant', content: string) => void;
   /** Current project ID - conversations are isolated per project */
   projectId?: string | null;
+  /** 确认决策写入运行时表后，通知上层刷新 AI 上下文 */
+  onCreativeDecisionsCommitted?: (effects: CreativeDecisionEffect[]) => void;
 }
 
 interface ChatEntry {
@@ -267,6 +269,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   contextMessages = [],
   onSaveMessage,
   projectId,
+  onCreativeDecisionsCommitted,
 }) => {
   // ===== Config management =====
   const [savedConfigs, setSavedConfigs] = useState<SavedConfig[]>([]);
@@ -1318,7 +1321,10 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           decisions={creativeDecisions.filter(item => item.status === 'proposed')}
           onClose={() => setShowDecisionPanel(false)}
           onChanged={reloadCreativeDecisions}
-          onCommitted={(_effects: CreativeDecisionEffect[]) => { setError(null); }}
+          onCommitted={(effects: CreativeDecisionEffect[]) => {
+            setError(null);
+            onCreativeDecisionsCommitted?.(effects);
+          }}
         />
       )}
     </div>

@@ -27,13 +27,14 @@ import { decrypt } from './services/crypto';
 import type { ProviderConfig } from '../main/ai/provider';
 import { useUndo, type UndoCommand } from './hooks/useUndoManager';
 import UndoToast from './components/UndoToast';
-import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult, IpcResult } from './types';
+import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult } from './types';
 import type { ImportResult } from '../main/importer';
 import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
 import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
 import { createProjectDataLoader } from './services/project-data-loader';
 import { createObsidianLoader } from './services/obsidian-loader';
+import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './services/ai-runtime-context-loader';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -77,11 +78,7 @@ const App: React.FC = () => {
   const [obsidianSnapshot, setObsidianSnapshot] = useState<{ projectId: string; result: ObsidianScanResult } | null>(null);
   const [obsidianLoading, setObsidianLoading] = useState(false);
   const [obsidianError, setObsidianError] = useState<string | null>(null);
-  const [narrativeContextSnapshot, setNarrativeContextSnapshot] = useState<{
-    projectId: string;
-    content: string;
-  } | null>(null);
-  const narrativeContextGenerationRef = useRef(0);
+  const [aiRuntimeContext, setAiRuntimeContext] = useState<AiRuntimeContextSnapshot | null>(null);
   const [importing, setImporting] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'planning' | 'writing'>('writing');
 
@@ -364,33 +361,24 @@ const App: React.FC = () => {
     }
   }, [activeProject?.id, obsidianLoader]);
 
-  // 钩子与债务上下文独立加载；项目和请求代次必须同时匹配才可提交。
-  useEffect(() => {
-    const requestGeneration = ++narrativeContextGenerationRef.current;
-    const projectId = activeProject?.id;
-    setNarrativeContextSnapshot(null);
-    if (!projectId) return;
+  // 确认后的四类运行时状态独立加载；项目和请求代次必须同时匹配才可提交。
+  const aiRuntimeContextLoader = useMemo(() => createAiRuntimeContextLoader({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    onApply: setAiRuntimeContext,
+    onError: (projectId, error) => console.error(`项目 ${projectId} AI 运行时上下文加载失败：`, error),
+    isProjectCurrent: isActiveProject,
+  }), [isActiveProject]);
 
-    void window.electronAPI.invoke('db:narrativeHooks:getContext', projectId)
-      .then(raw => {
-        const response = raw as IpcResult<string>;
-        if (
-          narrativeContextGenerationRef.current !== requestGeneration
-          || !isActiveProject(projectId)
-        ) return;
-        if (!response.success) {
-          setNarrativeContextSnapshot(null);
-          return;
-        }
-        setNarrativeContextSnapshot({ projectId, content: response.data || '' });
-      })
-      .catch(() => {
-        if (
-          narrativeContextGenerationRef.current === requestGeneration
-          && isActiveProject(projectId)
-        ) setNarrativeContextSnapshot(null);
-      });
-  }, [activeProject?.id, isActiveProject]);
+  useEffect(() => {
+    const projectId = activeProject?.id;
+    setAiRuntimeContext(null);
+    if (projectId) void aiRuntimeContextLoader.load(projectId);
+    else aiRuntimeContextLoader.invalidate();
+  }, [activeProject?.id, aiRuntimeContextLoader]);
+
+  const refreshAiRuntimeContext = useCallback(() => {
+    if (activeProject) void aiRuntimeContextLoader.load(activeProject.id);
+  }, [activeProject, aiRuntimeContextLoader]);
 
   const refreshObsidian = useCallback(() => {
     if (activeProject) void obsidianLoader.load(activeProject.id);
@@ -1094,14 +1082,18 @@ const App: React.FC = () => {
       worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
       outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
       obsidianDocuments: obsidianDocuments.length > 0 ? obsidianDocuments : undefined,
+      storyFacts: aiRuntimeContext?.projectId === activeProject.id
+        ? aiRuntimeContext.storyFacts : undefined,
+      characterKnowledge: aiRuntimeContext?.projectId === activeProject.id
+        ? aiRuntimeContext.characterKnowledge : undefined,
     });
-    const narrativeContext = narrativeContextSnapshot?.projectId === activeProject.id
-      ? narrativeContextSnapshot.content
+    const narrativeContext = aiRuntimeContext?.projectId === activeProject.id
+      ? aiRuntimeContext.narrativeContext
       : '';
     return narrativeContext
       ? [...messages, { role: 'system' as const, content: narrativeContext }]
       : messages;
-  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments, narrativeContextSnapshot]);
+  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments, aiRuntimeContext]);
 
   return (
     <ErrorBoundary>
@@ -1212,6 +1204,7 @@ const App: React.FC = () => {
             contextMessages={contextMessages}
             projectId={activeProject?.id ?? null}
             onSaveMessage={() => {}}
+            onCreativeDecisionsCommitted={refreshAiRuntimeContext}
           />
         }
         inspirationPanel={
