@@ -25,7 +25,7 @@ const extractedDraft: CreativeDecisionDraft = {
   title: '失踪者线索',
   rationale: '后续需要回收',
   payload: {
-    hookType: 'foreshadowing',
+    subject: '旧车站', hookType: 'foreshadowing',
     description: '旧车站留下带血车票',
     intensity: 4,
   },

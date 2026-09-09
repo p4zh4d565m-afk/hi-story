@@ -40,6 +40,7 @@ export class CreativeDecisionRepo {
       input.drafts.forEach(draft => this.validateDraft(input.projectId, draft));
 
       const create = this.db.transaction(() => input.drafts.map(draft => {
+        this.requireNoPendingTarget(input.projectId, draft);
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
         this.db.prepare(`
@@ -54,7 +55,7 @@ export class CreativeDecisionRepo {
         return this.requireDecision(input.projectId, id);
       }));
 
-      return { success: true, data: create() };
+      return { success: true, data: create.immediate() };
     } catch (error) {
       return failure(error);
     }
@@ -75,9 +76,12 @@ export class CreativeDecisionRepo {
 
   updateProposal(input: UpdateCreativeDecisionProposalInput): IpcResult<CreativeDecision> {
     try {
+      const update = this.db.transaction(() => {
       this.validateDraft(input.projectId, input.draft);
       const decision = this.requireDecision(input.projectId, input.decisionId);
       if (decision.status !== 'proposed') throw new Error('只有待确认决策可以编辑');
+      this.requireParentInvariant(decision, input.draft);
+      this.requireNoPendingTarget(input.projectId, input.draft, decision.id);
 
       this.db.prepare(`
         UPDATE creative_decisions
@@ -87,7 +91,9 @@ export class CreativeDecisionRepo {
         input.draft.type, input.draft.title.trim(), input.draft.rationale.trim(),
         JSON.stringify(input.draft.payload), input.decisionId, input.projectId,
       );
-      return { success: true, data: this.requireDecision(input.projectId, input.decisionId) };
+      return this.requireDecision(input.projectId, input.decisionId);
+      });
+      return { success: true, data: update.immediate() };
     } catch (error) {
       return failure(error);
     }
@@ -117,14 +123,15 @@ export class CreativeDecisionRepo {
         const decisionIds = [...new Set(input.decisionIds)];
         if (decisionIds.length === 0) throw new Error('请选择要确认的决策');
         const decisions = decisionIds.map(id => this.requireDecision(input.projectId, id));
-        const selectedParents = new Set<string>();
+        const selectedTargets = new Set<string>();
 
         for (const decision of decisions) {
-          if (decision.status !== 'proposed' || !decision.parentDecisionId) continue;
-          if (selectedParents.has(decision.parentDecisionId)) {
-            throw new Error('同一决策不能同时确认多个修订');
+          if (decision.status !== 'proposed' || !getTargetId(decision)) continue;
+          const key = JSON.stringify([TARGET_TABLE_BY_TYPE[decision.type], getTargetId(decision)]);
+          if (selectedTargets.has(key)) {
+            throw new Error('同一目标不能同时确认多个修订');
           }
-          selectedParents.add(decision.parentDecisionId);
+          selectedTargets.add(key);
         }
 
         for (const decision of decisions) {
@@ -133,11 +140,8 @@ export class CreativeDecisionRepo {
           }
           if (decision.status === 'proposed') {
             this.validateDraft(input.projectId, toDraft(decision));
-            if (decision.parentDecisionId) {
-              const parent = this.requireDecision(input.projectId, decision.parentDecisionId);
-              if (parent.status !== 'confirmed') throw new Error('原决策已不可修订');
-              if (parent.type !== decision.type) throw new Error('修订类型必须与原决策一致');
-            }
+            this.requireParentInvariant(decision, toDraft(decision));
+            this.requireNoPendingTarget(input.projectId, decision, decision.id);
           }
         }
 
@@ -150,7 +154,7 @@ export class CreativeDecisionRepo {
             continue;
           }
 
-          const applied = decision.parentDecisionId
+          const applied = getTargetId(decision)
             ? this.applyRevision(decision)
             : this.applyNewDecision(decision);
           effects.push(...applied);
@@ -174,7 +178,7 @@ export class CreativeDecisionRepo {
         };
       });
 
-      return { success: true, data: confirm() };
+      return { success: true, data: confirm.immediate() };
     } catch (error) {
       return failure(error);
     }
@@ -186,17 +190,12 @@ export class CreativeDecisionRepo {
         const parent = this.requireDecision(input.projectId, input.parentDecisionId);
         if (parent.status !== 'confirmed') throw new Error('只有已确认决策可以修订');
         if (parent.type !== input.draft.type) throw new Error('修订类型必须与原决策一致');
-        const pendingSibling = this.db.prepare(`
-          SELECT 1 FROM creative_decisions
-          WHERE project_id = ? AND parent_decision_id = ? AND status = 'proposed'
-        `).get(input.projectId, parent.id);
-        if (pendingSibling) throw new Error('该决策已有待确认修订');
-
         const targetId = this.findProjectionTarget(parent);
         const suppliedTargetId = getTargetId(input.draft);
         if (suppliedTargetId && suppliedTargetId !== targetId) throw new Error('修订目标与原决策不一致');
         const draft = withTargetId(input.draft, targetId);
         this.validateDraft(input.projectId, draft);
+        this.requireNoPendingTarget(input.projectId, draft);
 
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
@@ -211,7 +210,7 @@ export class CreativeDecisionRepo {
         );
         return this.requireDecision(input.projectId, id);
       });
-      return { success: true, data: create() };
+      return { success: true, data: create.immediate() };
     } catch (error) {
       return failure(error);
     }
@@ -226,6 +225,29 @@ export class CreativeDecisionRepo {
         AND thread.id = ? AND thread.project_id = ? AND message.role = 'assistant'
     `).get(messageId, threadId, threadId, projectId);
     if (!row) throw new Error('提议来源必须是当前项目中已保存的 AI 回复');
+  }
+
+  private requireParentInvariant(decision: CreativeDecision, draft: CreativeDecisionDraft): void {
+    if (!decision.parentDecisionId) return;
+    const parent = this.requireDecision(decision.projectId, decision.parentDecisionId);
+    if (parent.status !== 'confirmed') throw new Error('原决策已不可修订');
+    if (parent.type !== draft.type) throw new Error('修订类型必须与原决策一致');
+    if (!getTargetId(draft) || getTargetId(draft) !== this.findProjectionTarget(parent)) {
+      throw new Error('有父修订目标不能为空且必须与原决策一致');
+    }
+  }
+
+  private requireNoPendingTarget(projectId: string, draft: CreativeDecisionDraft, excludeId?: string): void {
+    const targetId = getTargetId(draft);
+    if (!targetId) return;
+    const pending = this.db.prepare(`SELECT * FROM creative_decisions WHERE project_id = ? AND status = 'proposed'`)
+      .all(projectId) as RawRow[];
+    if (pending.some(row => {
+      if (row.id === excludeId) return false;
+      const other = rowToDecision(row);
+      return TARGET_TABLE_BY_TYPE[other.type] === TARGET_TABLE_BY_TYPE[draft.type]
+        && getTargetId(other) === targetId;
+    })) throw new Error('该目标已有待确认修订');
   }
 
   private requireDecision(projectId: string, decisionId: string): CreativeDecision {
@@ -279,10 +301,11 @@ export class CreativeDecisionRepo {
       case 'narrative_hook': {
         const payload = draft.payload;
         assertOnlyKeys(payload as unknown as RawRow, [
-          'hookType', 'description', 'intensity', 'chapterId', 'dueChapterId', 'targetId',
+          'hookType', 'subject', 'description', 'intensity', 'chapterId', 'dueChapterId', 'targetId',
         ], '叙事钩子载荷');
         requireEnum(payload.hookType, HOOK_TYPES, '钩子类型');
         requireText(payload.description, '钩子描述');
+        requireText(payload.subject, '钩子主体');
         if (!Number.isInteger(payload.intensity) || payload.intensity < 1 || payload.intensity > 5) {
           throw new Error('钩子强度必须是 1 到 5 的整数');
         }
@@ -294,10 +317,11 @@ export class CreativeDecisionRepo {
       case 'narrative_debt': {
         const payload = draft.payload;
         assertOnlyKeys(payload as unknown as RawRow, [
-          'debtType', 'description', 'chapterId', 'promisedByChapter', 'targetId',
+          'debtType', 'subject', 'description', 'chapterId', 'promisedByChapter', 'targetId',
         ], '叙事债务载荷');
         requireEnum(payload.debtType, DEBT_TYPES, '债务类型');
         requireText(payload.description, '债务描述');
+        requireText(payload.subject, '债务主体');
         if (payload.promisedByChapter != null
           && (!Number.isInteger(payload.promisedByChapter) || payload.promisedByChapter < 1)) {
           throw new Error('承诺章节必须是正整数');
@@ -327,9 +351,12 @@ export class CreativeDecisionRepo {
   private requireOptionalTarget(projectId: string, table: TargetTable, targetId?: string | null): void {
     if (targetId == null) return;
     if (typeof targetId !== 'string' || !targetId.trim()) throw new Error('修订目标 ID 无效');
-    const row = this.db.prepare(`SELECT 1 FROM ${table} WHERE id = ? AND project_id = ?`)
-      .get(targetId, projectId);
+    const row = this.db.prepare(`SELECT status FROM ${table} WHERE id = ? AND project_id = ?`)
+      .get(targetId, projectId) as { status: string } | undefined;
     if (!row) throw new Error('修订目标不存在或不属于当前项目');
+    const active = table === 'narrative_hooks' ? ['open', 'partially_resolved']
+      : table === 'narrative_debts' ? ['unpaid', 'overdue'] : ['active'];
+    if (!active.includes(row.status)) throw new Error('只能修订活跃目标');
   }
 
   private applyNewDecision(decision: CreativeDecision): CreativeDecisionEffect[] {
@@ -364,24 +391,24 @@ export class CreativeDecisionRepo {
         this.db.prepare(`
           INSERT INTO narrative_hooks (
             id, project_id, chapter_id, hook_type, description, intensity, status,
-            due_chapter_id, source_decision_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+            due_chapter_id, source_decision_id, created_at, updated_at, subject
+          ) VALUES (?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)
         `).run(
           id, decision.projectId, decision.payload.chapterId ?? null, decision.payload.hookType,
           decision.payload.description, decision.payload.intensity,
-          decision.payload.dueChapterId ?? null, decision.id, now, now,
+          decision.payload.dueChapterId ?? null, decision.id, now, now, decision.payload.subject,
         );
         break;
       case 'narrative_debt':
         this.db.prepare(`
           INSERT INTO narrative_debts (
             id, project_id, chapter_id, description, debt_type, promised_by_chapter,
-            status, source_decision_id, created_at, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?)
+            status, source_decision_id, created_at, updated_at, subject
+          ) VALUES (?, ?, ?, ?, ?, ?, 'unpaid', ?, ?, ?, ?)
         `).run(
           id, decision.projectId, decision.payload.chapterId ?? null,
           decision.payload.description, decision.payload.debtType,
-          decision.payload.promisedByChapter ?? null, decision.id, now, now,
+          decision.payload.promisedByChapter ?? null, decision.id, now, now, decision.payload.subject,
         );
     }
     return [this.insertEffect(
@@ -451,23 +478,23 @@ export class CreativeDecisionRepo {
       this.db.prepare(`
         UPDATE narrative_hooks
         SET chapter_id = ?, hook_type = ?, description = ?, intensity = ?,
-          due_chapter_id = ?, source_decision_id = ?, updated_at = ?
+          due_chapter_id = ?, source_decision_id = ?, updated_at = ?, subject = ?
         WHERE id = ? AND project_id = ?
       `).run(
         decision.payload.chapterId ?? null, decision.payload.hookType,
         decision.payload.description, decision.payload.intensity,
-        decision.payload.dueChapterId ?? null, decision.id, now, targetId, decision.projectId,
+        decision.payload.dueChapterId ?? null, decision.id, now, decision.payload.subject, targetId, decision.projectId,
       );
     } else {
       this.db.prepare(`
         UPDATE narrative_debts
         SET chapter_id = ?, description = ?, debt_type = ?, promised_by_chapter = ?,
-          source_decision_id = ?, updated_at = ?
+          source_decision_id = ?, updated_at = ?, subject = ?
         WHERE id = ? AND project_id = ?
       `).run(
         decision.payload.chapterId ?? null, decision.payload.description,
         decision.payload.debtType, decision.payload.promisedByChapter ?? null,
-        decision.id, now, targetId, decision.projectId,
+        decision.id, now, decision.payload.subject, targetId, decision.projectId,
       );
     }
 
@@ -532,6 +559,9 @@ function rowToDecision(row: RawRow): CreativeDecision {
   const type = row.decision_type as DecisionType;
   if (!DECISION_TYPES.has(type)) throw new Error('账本包含不支持的决策类型');
   const payload = JSON.parse(String(row.payload_json)) as CreativeDecisionDraft['payload'];
+  if (type === 'narrative_hook' || type === 'narrative_debt') {
+    (payload as { subject: string }).subject ??= '';
+  }
   return {
     id: String(row.id),
     projectId: String(row.project_id),

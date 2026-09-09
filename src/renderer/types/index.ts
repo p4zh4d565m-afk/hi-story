@@ -390,6 +390,7 @@ export interface KnowledgeDecisionPayload {
 }
 
 export interface HookDecisionPayload {
+  subject: string;
   hookType: 'cliffhanger' | 'foreshadowing' | 'promise' | 'mystery' | 'emotional_hook';
   description: string;
   intensity: number;
@@ -399,6 +400,7 @@ export interface HookDecisionPayload {
 }
 
 export interface DebtDecisionPayload {
+  subject: string;
   debtType: 'reveal' | 'payoff' | 'character_return' | 'mystery_answer' | 'power_up';
   description: string;
   chapterId?: string | null;

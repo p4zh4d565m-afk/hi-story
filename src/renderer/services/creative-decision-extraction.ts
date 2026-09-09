@@ -15,8 +15,8 @@ const EXTRACTION_SYSTEM_PROMPT = `你负责把一条 AI 创作回复整理成等
 每项必须包含 type、title、rationale、payload。
 - story_fact.payload：factType、subject、predicate、object、description，可选 chapterId。
 - character_knowledge.payload：characterName、factDescription、source，可选 characterId、learnedAtChapterId。
-- narrative_hook.payload：hookType、description、intensity（1-5 整数），可选 chapterId、dueChapterId。
-- narrative_debt.payload：debtType、description，可选 chapterId、promisedByChapter（正整数）。
+- narrative_hook.payload：hookType、subject（非空主体）、description、intensity（1-5 整数），可选 chapterId、dueChapterId。
+- narrative_debt.payload：debtType、subject（非空主体）、description，可选 chapterId、promisedByChapter（正整数）。
 
 只能提取回复中明确提出且适合作者确认的内容。不能把猜测、可能性、备选方案或未发生事件写成已经发生的事实。`;
 
@@ -81,10 +81,11 @@ function validateDraft(value: unknown, index: number): CreativeDecisionDraft {
       return value as unknown as CreativeDecisionDraft;
     case 'narrative_hook':
       assertOnlyKeys(value.payload, [
-        'hookType', 'description', 'intensity', 'chapterId', 'dueChapterId', 'targetId',
+        'hookType', 'subject', 'description', 'intensity', 'chapterId', 'dueChapterId', 'targetId',
       ], '叙事钩子载荷');
       requireEnum(value.payload.hookType, HOOK_TYPES, '钩子类型');
       requireText(value.payload.description, '钩子描述');
+      requireText(value.payload.subject, '钩子主体');
       if (!Number.isInteger(value.payload.intensity)
         || Number(value.payload.intensity) < 1
         || Number(value.payload.intensity) > 5) {
@@ -96,10 +97,11 @@ function validateDraft(value: unknown, index: number): CreativeDecisionDraft {
       return value as unknown as CreativeDecisionDraft;
     case 'narrative_debt':
       assertOnlyKeys(value.payload, [
-        'debtType', 'description', 'chapterId', 'promisedByChapter', 'targetId',
+        'debtType', 'subject', 'description', 'chapterId', 'promisedByChapter', 'targetId',
       ], '叙事债务载荷');
       requireEnum(value.payload.debtType, DEBT_TYPES, '债务类型');
       requireText(value.payload.description, '债务描述');
+      requireText(value.payload.subject, '债务主体');
       if (value.payload.promisedByChapter != null
         && (!Number.isInteger(value.payload.promisedByChapter)
           || Number(value.payload.promisedByChapter) < 1)) {

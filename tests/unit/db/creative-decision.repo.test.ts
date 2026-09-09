@@ -34,7 +34,7 @@ const fourDrafts: CreativeDecisionDraft[] = [
     title: '带血车票',
     rationale: '后续需要回收失踪者线索',
     payload: {
-      hookType: 'foreshadowing', description: '旧车站留下带血车票', intensity: 4,
+      subject: '旧车站', hookType: 'foreshadowing', description: '旧车站留下带血车票', intensity: 4,
       chapterId: 'chapter-a', dueChapterId: 'chapter-b',
     },
   },
@@ -43,7 +43,7 @@ const fourDrafts: CreativeDecisionDraft[] = [
     title: '揭晓站长身份',
     rationale: '已经向读者作出承诺',
     payload: {
-      debtType: 'reveal', description: '揭晓旧站长的真实身份',
+      subject: '旧车站', debtType: 'reveal', description: '揭晓旧站长的真实身份',
       chapterId: 'chapter-a', promisedByChapter: 8,
     },
   },
@@ -95,6 +95,60 @@ describe('CreativeDecisionRepo', () => {
   });
 
   afterEach(() => db.close());
+
+  it.each([0, 1, 2, 3])('无父修订按 targetId 投影并可继续修订：类型 %i', index => {
+    const original = createProposals([fourDrafts[index]]).data![0];
+    const first = repo.confirmMany({ projectId: 'project-a', decisionIds: [original.id] }).data!;
+    const target = first.effects[0];
+    const proposal = createProposals([fourDrafts[index]]).data![0];
+    const draft = { ...fourDrafts[index], payload: { ...fourDrafts[index].payload, targetId: target.targetId } } as CreativeDecisionDraft;
+    expect(repo.updateProposal({ projectId: 'project-a', decisionId: proposal.id, draft }).success).toBe(true);
+    const result = repo.confirmMany({ projectId: 'project-a', decisionIds: [proposal.id] });
+    expect(result.success).toBe(true);
+    expect(result.data?.effects.some(effect => effect.operation === (index < 2 ? 'supersede' : 'update'))).toBe(true);
+    expect(result.data?.decisions[0].parentDecisionId).toBeNull();
+    expect(repo.findByProject('project-a').data?.find(d => d.id === original.id)?.status).toBe('confirmed');
+    expect(repo.createRevision({ projectId: 'project-a', parentDecisionId: proposal.id, draft: fourDrafts[index] }).success).toBe(true);
+  });
+
+  it.each([null, undefined, '', 'other'])('有父修订不能清空或修改目标 %s', targetId => {
+    const parent = createProposals([fourDrafts[0]]).data![0];
+    repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] });
+    const revision = repo.createRevision({ projectId: 'project-a', parentDecisionId: parent.id, draft: fourDrafts[0] }).data!;
+    const draft = { ...fourDrafts[0], payload: { ...fourDrafts[0].payload, targetId } } as CreativeDecisionDraft;
+    expect(repo.updateProposal({ projectId: 'project-a', decisionId: revision.id, draft }).success).toBe(false);
+    db.prepare('UPDATE creative_decisions SET payload_json=? WHERE id=?').run(JSON.stringify(draft.payload), revision.id);
+    expect(repo.confirmMany({ projectId: 'project-a', decisionIds: [revision.id] }).success).toBe(false);
+  });
+
+  it('父类型从数据库校验，不能改为别的决策类型', () => {
+    const parent = createProposals([fourDrafts[0]]).data![0];
+    repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] });
+    const revision = repo.createRevision({ projectId: 'project-a', parentDecisionId: parent.id, draft: fourDrafts[0] }).data!;
+    expect(repo.updateProposal({ projectId: 'project-a', decisionId: revision.id, draft: fourDrafts[1] }).success).toBe(false);
+  });
+
+  it('同目标无父 pending 阻止有父修订和其他提议改指该目标', () => {
+    const parent = createProposals([fourDrafts[0]]).data![0];
+    const targetId = repo.confirmMany({ projectId: 'project-a', decisionIds: [parent.id] }).data!.effects[0].targetId;
+    const [a, b] = createProposals([fourDrafts[0], fourDrafts[0]]).data!;
+    const draft = { ...fourDrafts[0], payload: { ...fourDrafts[0].payload, targetId } } as CreativeDecisionDraft;
+    expect(repo.updateProposal({ projectId: 'project-a', decisionId: a.id, draft }).success).toBe(true);
+    expect(repo.updateProposal({ projectId: 'project-a', decisionId: b.id, draft }).success).toBe(false);
+    expect(repo.createRevision({ projectId: 'project-a', parentDecisionId: parent.id, draft: fourDrafts[0] }).success).toBe(false);
+    db.prepare('UPDATE creative_decisions SET payload_json=? WHERE id=?').run(JSON.stringify(draft.payload), b.id);
+    expect(repo.confirmMany({ projectId: 'project-a', decisionIds: [a.id] }).success).toBe(false);
+    expect(repo.confirmMany({ projectId: 'project-a', decisionIds: [a.id, b.id] }).success).toBe(false);
+  });
+
+  it('旧 hook 载荷兼容空主体，新增提议和修订必须补主体', () => {
+    const old = createProposals([fourDrafts[2]]).data![0];
+    const legacy = { ...fourDrafts[2].payload } as any;
+    delete legacy.subject;
+    db.prepare('UPDATE creative_decisions SET payload_json=? WHERE id=?').run(JSON.stringify(legacy), old.id);
+    expect(repo.findByProject('project-a').data?.find(d => d.id === old.id)?.payload).toMatchObject({ subject: '' });
+    expect(createProposals([{ ...fourDrafts[2], payload: legacy } as CreativeDecisionDraft]).success).toBe(false);
+  });
 
   function createProposals(drafts: CreativeDecisionDraft[] = fourDrafts) {
     return repo.createProposals({
@@ -153,7 +207,7 @@ describe('CreativeDecisionRepo', () => {
   it('批量确认中任一载荷失效时全部回滚', () => {
     const proposals = createProposals([fourDrafts[0], fourDrafts[2]]).data!;
     db.prepare('UPDATE creative_decisions SET payload_json = ? WHERE id = ?')
-      .run(JSON.stringify({ hookType: 'foreshadowing', description: '非法强度', intensity: 9 }), proposals[1].id);
+      .run(JSON.stringify({ subject: '旧车站', hookType: 'foreshadowing', description: '非法强度', intensity: 9 }), proposals[1].id);
 
     const result = repo.confirmMany({
       projectId: 'project-a', decisionIds: proposals.map(item => item.id),
@@ -259,7 +313,7 @@ describe('CreativeDecisionRepo', () => {
       draft: {
         type: 'narrative_hook', title: '车票指向站长', rationale: '线索已推进',
         payload: {
-          hookType: 'mystery', description: '带血车票背面写着旧站长姓名', intensity: 5,
+          subject: '旧车站', hookType: 'mystery', description: '带血车票背面写着旧站长姓名', intensity: 5,
           chapterId: 'chapter-b', dueChapterId: 'chapter-b',
         },
       },
@@ -269,7 +323,7 @@ describe('CreativeDecisionRepo', () => {
       draft: {
         type: 'narrative_debt', title: '提前揭晓站长身份', rationale: '节奏加快',
         payload: {
-          debtType: 'mystery_answer', description: '下一章揭晓旧站长身份',
+          subject: '旧车站', debtType: 'mystery_answer', description: '下一章揭晓旧站长身份',
           chapterId: 'chapter-b', promisedByChapter: 3,
         },
       },
@@ -302,7 +356,7 @@ describe('CreativeDecisionRepo', () => {
     const revisionDraft: CreativeDecisionDraft = {
       type: 'narrative_hook', title: '车票线索推进', rationale: '第一版修订',
       payload: {
-        hookType: 'mystery', description: '车票背面出现站长姓名', intensity: 5,
+        subject: '旧车站', hookType: 'mystery', description: '车票背面出现站长姓名', intensity: 5,
         chapterId: 'chapter-b', dueChapterId: 'chapter-b',
       },
     };
@@ -316,7 +370,7 @@ describe('CreativeDecisionRepo', () => {
     });
 
     expect(first.success).toBe(true);
-    expect(second).toMatchObject({ success: false, error: '该决策已有待确认修订' });
+    expect(second).toMatchObject({ success: false, error: '该目标已有待确认修订' });
     expect(db.prepare(`
       SELECT COUNT(*) AS count FROM creative_decisions
       WHERE parent_decision_id = ? AND status = 'proposed'
@@ -331,7 +385,7 @@ describe('CreativeDecisionRepo', () => {
       draft: {
         type: 'narrative_hook', title: '第一版修订', rationale: '推进线索',
         payload: {
-          hookType: 'mystery', description: '车票背面出现站长姓名', intensity: 5,
+          subject: '旧车站', hookType: 'mystery', description: '车票背面出现站长姓名', intensity: 5,
           chapterId: 'chapter-b', dueChapterId: 'chapter-b',
         },
       },
@@ -350,7 +404,7 @@ describe('CreativeDecisionRepo', () => {
       projectId: 'project-a', decisionIds: [revision.id, 'sibling-revision'],
     });
 
-    expect(result).toMatchObject({ success: false, error: '同一决策不能同时确认多个修订' });
+    expect(result).toMatchObject({ success: false, error: '同一目标不能同时确认多个修订' });
     expect(db.prepare('SELECT description FROM narrative_hooks').get())
       .toEqual({ description: '旧车站留下带血车票' });
     expect(db.prepare(`

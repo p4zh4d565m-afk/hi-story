@@ -5,6 +5,12 @@ import {
 } from '../../../src/renderer/services/creative-decision-extraction';
 
 describe('创作决策 AI 提取器', () => {
+  it.each(['narrative_hook', 'narrative_debt'])('新提议必须有非空主体 %s', type => {
+    const payload = type === 'narrative_hook'
+      ? { hookType: 'mystery', description: '谜团', intensity: 3 }
+      : { debtType: 'reveal', description: '谜底' };
+    expect(() => parseDecisionDrafts(JSON.stringify([{ type, title: '标题', rationale: '理由', payload }]))).toThrow('主体');
+  });
   it('解析纯 JSON 的事实提议', () => {
     const text = JSON.stringify([{
       type: 'story_fact',
@@ -28,13 +34,14 @@ describe('创作决策 AI 提取器', () => {
   });
 
   it('去除唯一一层 Markdown JSON 围栏', () => {
-    const fencedHook = '```json\n[{"type":"narrative_hook","title":"失踪者线索","rationale":"后续需要回收","payload":{"hookType":"foreshadowing","description":"旧车站留下带血车票","intensity":4}}]\n```';
+    const fencedHook = '```json\n[{"type":"narrative_hook","title":"失踪者线索","rationale":"后续需要回收","payload":{"subject":"车票","hookType":"foreshadowing","description":"旧车站留下带血车票","intensity":4}}]\n```';
     expect(parseDecisionDrafts(fencedHook)).toEqual([{
       type: 'narrative_hook',
       title: '失踪者线索',
       rationale: '后续需要回收',
       payload: {
         hookType: 'foreshadowing',
+        subject: '车票',
         description: '旧车站留下带血车票',
         intensity: 4,
       },
@@ -52,12 +59,12 @@ describe('创作决策 AI 提取器', () => {
     }]))).toThrow('决策载荷无效');
     expect(() => parseDecisionDrafts(JSON.stringify([{
       type: 'narrative_hook', title: '越界强度', rationale: '测试',
-      payload: { hookType: 'mystery', description: '谜团', intensity: 6 },
+      payload: { subject: '车票', hookType: 'mystery', description: '谜团', intensity: 6 },
     }]))).toThrow('钩子强度必须是 1 到 5 的整数');
     expect(() => parseDecisionDrafts(JSON.stringify([
       {
         type: 'narrative_debt', title: '合法项', rationale: '需要兑现',
-        payload: { debtType: 'payoff', description: '回收车票' },
+        payload: { subject: '车票', debtType: 'payoff', description: '回收车票' },
       },
       { type: 'sql' },
     ]))).toThrow('不支持的决策类型');

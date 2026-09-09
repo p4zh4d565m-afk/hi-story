@@ -160,14 +160,14 @@ describe('确认钩子和债务的有界 AI 上下文', () => {
       {
         type: 'narrative_hook', title: '车票钩子', rationale: '后续回收',
         payload: {
-          hookType: 'foreshadowing', description: '确认过的带血车票钩子', intensity: 5,
+          subject: '旧车站', hookType: 'foreshadowing', description: '确认过的带血车票钩子', intensity: 5,
           chapterId: 'chapter-1', dueChapterId: 'chapter-3',
         },
       },
       {
         type: 'narrative_debt', title: '站长身份', rationale: '兑现读者承诺',
         payload: {
-          debtType: 'reveal', description: '确认过的站长身份债务',
+          subject: '旧车站', debtType: 'reveal', description: '确认过的站长身份债务',
           chapterId: 'chapter-1', promisedByChapter: 3,
         },
       },
