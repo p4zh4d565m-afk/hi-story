@@ -3,7 +3,18 @@ import type { ChatMessage } from '../../main/ai/provider';
 import { aiService, type ChatOptions } from '../services/ai.service';
 import { encrypt, decrypt } from '../services/crypto';
 import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
-import type { ConversationMessage, ConversationSnapshot, ConversationThread, IpcResult } from '../types';
+import { createCreativeDecisionLoader } from '../services/creative-decision-loader';
+import { buildDecisionExtractionMessages, parseDecisionDrafts } from '../services/creative-decision-extraction';
+import CreativeDecisionPanel from './CreativeDecisionPanel';
+import type {
+  ConversationMessage,
+  ConversationSnapshot,
+  ConversationThread,
+  CreateCreativeDecisionProposalsInput,
+  CreativeDecision,
+  CreativeDecisionEffect,
+  IpcResult,
+} from '../types';
 
 // Provider preset definitions (mirrors main process but available in renderer)
 interface ProviderPreset {
@@ -283,10 +294,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [creativeDecisions, setCreativeDecisions] = useState<CreativeDecision[]>([]);
+  const [showDecisionPanel, setShowDecisionPanel] = useState(false);
+  const [extractingMessageId, setExtractingMessageId] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const initialScrollDoneRef = useRef(false);
   const projectIdRef = useRef(projectId);
   const activeThreadIdRef = useRef(activeThreadId);
+  const decisionOperationGenerationRef = useRef(0);
   projectIdRef.current = projectId;
   activeThreadIdRef.current = activeThreadId;
 
@@ -313,6 +328,19 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     },
     onLoadingChange: (requestProjectId, loading) => {
       if (projectIdRef.current === requestProjectId) setConversationLoading(loading);
+    },
+  }), []);
+
+  const creativeDecisionLoader = useMemo(() => createCreativeDecisionLoader({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    getCurrentProjectId: () => projectIdRef.current ?? null,
+    onApply: (requestProjectId, decisions) => {
+      if (projectIdRef.current === requestProjectId) setCreativeDecisions(decisions);
+    },
+    onError: (requestProjectId, loadError) => {
+      if (projectIdRef.current === requestProjectId) {
+        setError(`决策账本加载失败：${loadError.message}`);
+      }
     },
   }), []);
 
@@ -383,6 +411,15 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setConversationLoading(true);
     void conversationLoader.load(projectId);
   }, [conversationLoader, projectId]);
+
+  useEffect(() => {
+    decisionOperationGenerationRef.current += 1;
+    creativeDecisionLoader.invalidate();
+    setCreativeDecisions([]);
+    setShowDecisionPanel(false);
+    setExtractingMessageId(null);
+    if (projectId) void creativeDecisionLoader.load(projectId);
+  }, [creativeDecisionLoader, projectId]);
 
   // Load messages when active thread or its SQLite snapshot changes
   useEffect(() => {
@@ -634,6 +671,80 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     await performConversationTurn(text, 'chat');
   };
 
+  const reloadCreativeDecisions = async () => {
+    const requestProjectId = projectIdRef.current;
+    if (requestProjectId) await creativeDecisionLoader.load(requestProjectId);
+  };
+
+  const handleExtractDecisions = async (message: ChatEntry) => {
+    const requestProjectId = projectId;
+    const requestThreadId = activeThreadId;
+    const requestConfig = activeConfig;
+    if (!requestProjectId || !requestThreadId || loadedProjectId !== requestProjectId) {
+      setError('会话尚未加载完成，请稍后重试');
+      return;
+    }
+    if (!requestConfig) {
+      setError('请先添加一个 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
+      return;
+    }
+
+    const requestGeneration = ++decisionOperationGenerationRef.current;
+    setExtractingMessageId(message.id);
+    setError(null);
+    try {
+      let extractedText = '';
+      for await (const text of aiService.chatStream(
+        buildDecisionExtractionMessages(message.content),
+        { model: requestConfig.model, maxTokens: 2048, temperature: 0.1 },
+      )) {
+        extractedText = text;
+      }
+      const drafts = parseDecisionDrafts(extractedText);
+      if (drafts.length === 0) throw new Error('这条回复中没有可确认的结构化决策');
+      if (
+        projectIdRef.current !== requestProjectId
+        || decisionOperationGenerationRef.current !== requestGeneration
+      ) return;
+
+      const input: CreateCreativeDecisionProposalsInput = {
+        projectId: requestProjectId,
+        sourceThreadId: requestThreadId,
+        sourceMessageId: message.id,
+        drafts,
+      };
+      const response = await window.electronAPI.invoke(
+        'db:creativeDecisions:createProposals', input,
+      ) as IpcResult<CreativeDecision[]>;
+      if (
+        projectIdRef.current !== requestProjectId
+        || decisionOperationGenerationRef.current !== requestGeneration
+      ) return;
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '决策提议保存失败');
+      }
+      setCreativeDecisions(current => {
+        const createdIds = new Set(response.data!.map(item => item.id));
+        return [...current.filter(item => !createdIds.has(item.id)), ...response.data!];
+      });
+      setShowDecisionPanel(true);
+    } catch (extractionError) {
+      if (
+        projectIdRef.current === requestProjectId
+        && decisionOperationGenerationRef.current === requestGeneration
+      ) {
+        setError(extractionError instanceof Error ? extractionError.message : String(extractionError));
+      }
+    } finally {
+      if (
+        projectIdRef.current === requestProjectId
+        && decisionOperationGenerationRef.current === requestGeneration
+      ) {
+        setExtractingMessageId(null);
+      }
+    }
+  };
+
   // 编辑器“继续写”请求复用同一持久化边界，并记录独立上下文类型。
   useEffect(() => {
     const continueReq = localStorage.getItem('hi-story-pending-ai-continue');
@@ -672,6 +783,17 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       <div className="px-4 py-3 border-b border-aichat-700 bg-aichat-800 flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-gray-300 flex-shrink-0">AI 对话</h3>
         <div className="flex items-center gap-1">
+          {projectId && (
+            <button
+              onClick={() => setShowDecisionPanel(true)}
+              className="text-gray-400 hover:text-white transition-colors text-xs"
+              title="打开创作决策账本"
+            >
+              决策{creativeDecisions.filter(item => item.status === 'proposed').length > 0
+                ? `(${creativeDecisions.filter(item => item.status === 'proposed').length})`
+                : ''}
+            </button>
+          )}
           <button
             onClick={() => setShowNewThread(!showNewThread)}
             className="text-gray-400 hover:text-white transition-colors text-xs"
@@ -1122,6 +1244,15 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
               <div className={`text-[10px] mt-1 ${msg.role === 'user' ? 'text-white/60' : 'text-gray-600'}`}>
                 {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
               </div>
+              {msg.role === 'assistant' && (
+                <button
+                  onClick={() => void handleExtractDecisions(msg)}
+                  disabled={extractingMessageId !== null}
+                  className="mt-2 text-[10px] text-accent hover:text-accent-hover disabled:opacity-50"
+                >
+                  {extractingMessageId === msg.id ? '整理中…' : '整理为决策'}
+                </button>
+              )}
             </div>
           </div>
         ))}
@@ -1180,6 +1311,16 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           </button>
         </div>
       </div>
+
+      {showDecisionPanel && projectId && (
+        <CreativeDecisionPanel
+          projectId={projectId}
+          decisions={creativeDecisions.filter(item => item.status === 'proposed')}
+          onClose={() => setShowDecisionPanel(false)}
+          onChanged={reloadCreativeDecisions}
+          onCommitted={(_effects: CreativeDecisionEffect[]) => { setError(null); }}
+        />
+      )}
     </div>
   );
 };

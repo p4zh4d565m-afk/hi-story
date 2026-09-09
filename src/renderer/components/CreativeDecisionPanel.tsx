@@ -1,0 +1,341 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import type {
+  ConfirmCreativeDecisionsInput,
+  CreativeDecision,
+  CreativeDecisionDraft,
+  CreativeDecisionEffect,
+  IpcResult,
+  UpdateCreativeDecisionProposalInput,
+} from '../types';
+
+interface CreativeDecisionPanelProps {
+  projectId: string;
+  decisions: CreativeDecision[];
+  onClose: () => void;
+  onChanged: () => void | Promise<void>;
+  onCommitted: (effects: CreativeDecisionEffect[]) => void;
+}
+
+const TYPE_LABELS: Record<CreativeDecision['type'], string> = {
+  story_fact: '故事事实',
+  character_knowledge: '人物知识',
+  narrative_hook: '叙事钩子',
+  narrative_debt: '叙事债务',
+};
+
+const FACT_TYPE_OPTIONS = [
+  ['location', '位置'], ['possession', '持有物'], ['relationship', '关系'],
+  ['knowledge', '已知事实'], ['event', '事件'], ['emotional_state', '情绪状态'],
+] as const;
+const HOOK_TYPE_OPTIONS = [
+  ['cliffhanger', '断章钩子'], ['foreshadowing', '伏笔'], ['promise', '读者承诺'],
+  ['mystery', '悬念'], ['emotional_hook', '情感钩子'],
+] as const;
+const DEBT_TYPE_OPTIONS = [
+  ['reveal', '真相揭示'], ['payoff', '伏笔回收'], ['character_return', '角色回归'],
+  ['mystery_answer', '谜底揭晓'], ['power_up', '能力升级'],
+] as const;
+
+const CreativeDecisionPanel: React.FC<CreativeDecisionPanelProps> = ({
+  projectId,
+  decisions,
+  onClose,
+  onChanged,
+  onCommitted,
+}) => {
+  const [drafts, setDrafts] = useState<Record<string, CreativeDecisionDraft>>({});
+  const [dirtyIds, setDirtyIds] = useState<Set<string>>(new Set());
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setDrafts(Object.fromEntries(decisions.map(item => [item.id, toDraft(item)])));
+    setDirtyIds(new Set());
+  }, [decisions]);
+
+  const proposed = useMemo(
+    () => decisions.filter(item => item.status === 'proposed'),
+    [decisions],
+  );
+
+  const changeDraft = (decisionId: string, updater: (draft: CreativeDecisionDraft) => CreativeDecisionDraft) => {
+    setDrafts(current => ({ ...current, [decisionId]: updater(current[decisionId]) }));
+    setDirtyIds(current => new Set(current).add(decisionId));
+    setError(null);
+  };
+
+  const updateCommon = (
+    decisionId: string,
+    field: 'title' | 'rationale',
+    value: string,
+  ) => changeDraft(decisionId, draft => ({ ...draft, [field]: value }));
+
+  const updatePayload = (
+    decisionId: string,
+    field: string,
+    value: string | number | null,
+  ) => changeDraft(decisionId, draft => ({
+    ...draft,
+    payload: { ...draft.payload, [field]: value },
+  } as CreativeDecisionDraft));
+
+  const save = async (decisionId: string): Promise<boolean> => {
+    const draft = drafts[decisionId];
+    if (!draft) return false;
+    setBusyId(decisionId);
+    setError(null);
+    try {
+      const input: UpdateCreativeDecisionProposalInput = { projectId, decisionId, draft };
+      const response = await window.electronAPI.invoke(
+        'db:creativeDecisions:updateProposal', input,
+      ) as IpcResult<CreativeDecision>;
+      if (!response.success || !response.data) throw new Error(response.error || '保存修改失败');
+      setDrafts(current => ({ ...current, [decisionId]: toDraft(response.data!) }));
+      setDirtyIds(current => {
+        const next = new Set(current);
+        next.delete(decisionId);
+        return next;
+      });
+      await onChanged();
+      return true;
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : String(saveError));
+      return false;
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const reject = async (decisionId: string) => {
+    setBusyId(decisionId);
+    setError(null);
+    try {
+      const response = await window.electronAPI.invoke(
+        'db:creativeDecisions:reject', projectId, decisionId,
+      ) as IpcResult<CreativeDecision>;
+      if (!response.success) throw new Error(response.error || '拒绝决策失败');
+      await onChanged();
+    } catch (rejectError) {
+      setError(rejectError instanceof Error ? rejectError.message : String(rejectError));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const confirm = async (decisionIds: string[]) => {
+    if (decisionIds.some(id => dirtyIds.has(id))) {
+      setError('请先保存修改，再确认写入');
+      return;
+    }
+    setBusyId(decisionIds.length === 1 ? decisionIds[0] : 'all');
+    setError(null);
+    try {
+      const input: ConfirmCreativeDecisionsInput = { projectId, decisionIds };
+      const response = await window.electronAPI.invoke(
+        'db:creativeDecisions:confirmMany', input,
+      ) as IpcResult<{ decisions: CreativeDecision[]; effects: CreativeDecisionEffect[] }>;
+      if (!response.success || !response.data) {
+        throw new Error(response.error || '确认写入失败');
+      }
+      onCommitted(response.data.effects);
+      await onChanged();
+    } catch (confirmError) {
+      const message = confirmError instanceof Error ? confirmError.message : String(confirmError);
+      setError(`写入失败，可重试：${message}`);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-6">
+      <div className="w-full max-w-3xl max-h-[90vh] bg-aichat-900 border border-aichat-700 rounded-xl shadow-2xl flex flex-col">
+        <div className="px-5 py-4 border-b border-aichat-700 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-semibold text-white">创作决策确认</h3>
+            <p className="text-xs text-gray-500 mt-1">只有确认成功的项目才会写入小说运行时状态</p>
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-white" aria-label="关闭决策面板">✕</button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {proposed.length === 0 && (
+            <div className="text-center text-sm text-gray-500 py-12">当前没有待确认决策</div>
+          )}
+          {proposed.map(decision => {
+            const draft = drafts[decision.id] ?? toDraft(decision);
+            const isBusy = busyId === decision.id || busyId === 'all';
+            return (
+              <section key={decision.id} className="border border-aichat-700 rounded-lg p-4 space-y-3 bg-aichat-800/50">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs px-2 py-1 rounded bg-accent/20 text-accent">
+                    {TYPE_LABELS[draft.type]}
+                  </span>
+                  {dirtyIds.has(decision.id) && <span className="text-xs text-amber-400">有未保存修改</span>}
+                </div>
+
+                <label className="block text-xs text-gray-400">
+                  标题
+                  <input
+                    aria-label="决策标题"
+                    value={draft.title}
+                    onChange={event => updateCommon(decision.id, 'title', event.target.value)}
+                    className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white"
+                  />
+                </label>
+                <label className="block text-xs text-gray-400">
+                  确认理由
+                  <textarea
+                    aria-label="决策理由"
+                    value={draft.rationale}
+                    onChange={event => updateCommon(decision.id, 'rationale', event.target.value)}
+                    rows={2}
+                    className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white resize-y"
+                  />
+                </label>
+
+                <DecisionPayloadFields
+                  decisionId={decision.id}
+                  draft={draft}
+                  updatePayload={updatePayload}
+                />
+
+                <div className="flex items-center justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => void reject(decision.id)}
+                    disabled={isBusy}
+                    className="px-3 py-1.5 text-xs text-red-300 border border-red-900 rounded disabled:opacity-50"
+                  >
+                    拒绝
+                  </button>
+                  <button
+                    onClick={() => void save(decision.id)}
+                    disabled={isBusy || !dirtyIds.has(decision.id)}
+                    className="px-3 py-1.5 text-xs text-gray-200 border border-aichat-600 rounded disabled:opacity-50"
+                  >
+                    保存修改
+                  </button>
+                  <button
+                    onClick={() => void confirm([decision.id])}
+                    disabled={isBusy || dirtyIds.has(decision.id)}
+                    className="px-3 py-1.5 text-xs text-white bg-accent rounded disabled:opacity-50"
+                  >
+                    确认此项
+                  </button>
+                </div>
+              </section>
+            );
+          })}
+        </div>
+
+        <div className="px-5 py-3 border-t border-aichat-700 flex items-center justify-between gap-4">
+          <div className="text-xs text-red-400">{error}</div>
+          <button
+            onClick={() => void confirm(proposed.map(item => item.id))}
+            disabled={proposed.length === 0 || busyId !== null || dirtyIds.size > 0}
+            className="px-4 py-2 text-xs bg-accent text-white rounded disabled:opacity-50"
+          >
+            全部确认
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface DecisionPayloadFieldsProps {
+  decisionId: string;
+  draft: CreativeDecisionDraft;
+  updatePayload: (decisionId: string, field: string, value: string | number | null) => void;
+}
+
+const DecisionPayloadFields: React.FC<DecisionPayloadFieldsProps> = ({
+  decisionId,
+  draft,
+  updatePayload,
+}) => {
+  const inputClass = 'mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white';
+  if (draft.type === 'story_fact') {
+    return <div className="grid grid-cols-2 gap-3">
+      <SelectField label="事实类型" value={draft.payload.factType} options={FACT_TYPE_OPTIONS}
+        onChange={value => updatePayload(decisionId, 'factType', value)} />
+      <TextField label="主体" value={draft.payload.subject} onChange={value => updatePayload(decisionId, 'subject', value)} />
+      <TextField label="关系/动作" value={draft.payload.predicate} onChange={value => updatePayload(decisionId, 'predicate', value)} />
+      <TextField label="对象/结果" value={draft.payload.object} onChange={value => updatePayload(decisionId, 'object', value)} />
+      <label className="col-span-2 text-xs text-gray-400">事实描述
+        <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+      </label>
+    </div>;
+  }
+  if (draft.type === 'character_knowledge') {
+    return <div className="grid grid-cols-2 gap-3">
+      <TextField label="人物姓名" value={draft.payload.characterName} onChange={value => updatePayload(decisionId, 'characterName', value)} />
+      <TextField label="知识来源" value={draft.payload.source} onChange={value => updatePayload(decisionId, 'source', value)} />
+      <label className="col-span-2 text-xs text-gray-400">知道的事实
+        <textarea value={draft.payload.factDescription} onChange={event => updatePayload(decisionId, 'factDescription', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+      </label>
+    </div>;
+  }
+  if (draft.type === 'narrative_hook') {
+    return <div className="grid grid-cols-2 gap-3">
+      <SelectField label="钩子类型" value={draft.payload.hookType} options={HOOK_TYPE_OPTIONS}
+        onChange={value => updatePayload(decisionId, 'hookType', value)} />
+      <label className="text-xs text-gray-400">强度（1-5）
+        <input type="number" min={1} max={5} value={draft.payload.intensity}
+          onChange={event => updatePayload(decisionId, 'intensity', Number(event.target.value))}
+          className={inputClass} />
+      </label>
+      <label className="col-span-2 text-xs text-gray-400">钩子描述
+        <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+      </label>
+    </div>;
+  }
+  return <div className="grid grid-cols-2 gap-3">
+    <SelectField label="债务类型" value={draft.payload.debtType} options={DEBT_TYPE_OPTIONS}
+      onChange={value => updatePayload(decisionId, 'debtType', value)} />
+    <label className="text-xs text-gray-400">承诺章节
+      <input type="number" min={1} value={draft.payload.promisedByChapter ?? ''}
+        onChange={event => updatePayload(
+          decisionId,
+          'promisedByChapter',
+          event.target.value ? Number(event.target.value) : null,
+        )}
+        className={inputClass} />
+    </label>
+    <label className="col-span-2 text-xs text-gray-400">债务描述
+      <textarea value={draft.payload.description} onChange={event => updatePayload(decisionId, 'description', event.target.value)} rows={2} className={`${inputClass} resize-y`} />
+    </label>
+  </div>;
+};
+
+const TextField: React.FC<{ label: string; value: string; onChange: (value: string) => void }> = ({
+  label, value, onChange,
+}) => <label className="text-xs text-gray-400">{label}
+  <input value={value} onChange={event => onChange(event.target.value)}
+    className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white" />
+</label>;
+
+const SelectField: React.FC<{
+  label: string;
+  value: string;
+  options: ReadonlyArray<readonly [string, string]>;
+  onChange: (value: string) => void;
+}> = ({ label, value, options, onChange }) => <label className="text-xs text-gray-400">{label}
+  <select value={value} onChange={event => onChange(event.target.value)}
+    className="mt-1 w-full rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white">
+    {options.map(([optionValue, optionLabel]) => (
+      <option key={optionValue} value={optionValue}>{optionLabel}</option>
+    ))}
+  </select>
+</label>;
+
+function toDraft(decision: CreativeDecision): CreativeDecisionDraft {
+  return {
+    type: decision.type,
+    title: decision.title,
+    rationale: decision.rationale,
+    payload: { ...decision.payload },
+  } as CreativeDecisionDraft;
+}
+
+export default CreativeDecisionPanel;
