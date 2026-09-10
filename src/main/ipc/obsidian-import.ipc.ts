@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { createHash } from 'crypto';
 import { getDb } from '../db/connection';
 import { ObsidianImportRepo } from '../db/repositories/obsidian-import.repo';
+import { validateObsidianCommitInput } from '../obsidian/import-validator';
 import type { IpcResult, ObsidianCommitInput, ObsidianImportReparseInput } from '../../renderer/types';
 
 /** 有界稳定序列化：递归排序对象键、保留数组顺序，遇到循环/超预算返回 null。 */
@@ -106,11 +107,15 @@ export function registerObsidianImportIpc(): void {
 
   ipcMain.handle('obsidian:commitPlanningImport', async (_event, input: ObsidianCommitInput): Promise<IpcResult<unknown>> => {
     try {
-      const fingerprint = hashCanonicalCommitInput(input);
+      // 运行时 DTO 校验必须先于 canonical hash 与幂等注册，明确区分参数错误与业务错误。
+      const validated = validateObsidianCommitInput(input);
+      if (!validated.valid) return { success: false, error: validated.error };
+
+      const fingerprint = hashCanonicalCommitInput(validated.value);
       if (fingerprint === INVALID_INPUT_FINGERPRINT) {
         return { success: false, error: '导入参数无效' };
       }
-      return await registry.execute(input.projectId, input.operationId, fingerprint, () => new ObsidianImportRepo(getDb()).commit(input));
+      return await registry.execute(input.projectId, input.operationId, fingerprint, () => new ObsidianImportRepo(getDb()).commit(validated.value));
     } catch (e) {
       return { success: false, error: (e as Error).message || '导入参数无效' };
     }

@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { scanImportCandidates, resolveInsideRoot, sha256 } from '../../obsidian/import-candidates';
 import { parseMarkdown } from '../../obsidian/markdown-vault';
 import { parseCandidateDrafts } from '../../obsidian/import-parser';
+import { validateObsidianCommitInput } from '../../obsidian/import-validator';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
@@ -71,6 +72,10 @@ export class ObsidianImportRepo {
 
   async commit(input: ObsidianCommitInput): Promise<IpcResult<ObsidianImportSummary>> {
     try {
+      // 防御直接调用（绕过 IPC）：非法输入必须明确报参数错误，而非在后续循环抛 TypeError。
+      const validated = validateObsidianCommitInput(input);
+      if (!validated.valid) throw new Error(validated.error);
+
       const { obsidianPath } = this.requireProject(input.projectId);
       // —— 事务外：重新扫描，校验 selection 路径 + hash，主进程重建 drafts ——
       const scan = await scanImportCandidates(obsidianPath);

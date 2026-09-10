@@ -26,11 +26,20 @@ describe('Obsidian 导入仓储：运行时 DTO / blocking / 名称冲突 / 卷�
     worldOverrides: overrides.worldOverrides ?? [],
   });
 
-  it('运行时 DTO：selections 非数组 / 缺 projectId 被拒绝', async () => {
+  it('运行时 DTO：selections=undefined 明确报 selections 参数错误（projectId 合法）', async () => {
     const repo = new ObsidianImportRepo(db);
     setPath();
-    const bad = await repo.commit({ projectId: '', operationId: 'op', selections: undefined as any, layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } } });
+    const bad = await repo.commit({ projectId: 'p1', operationId: 'op', selections: undefined as any, layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } } });
     expect(bad.success).toBe(false);
+    expect(bad.error).toContain('selections');
+  });
+
+  it('运行时 DTO：缺 projectId 明确报 projectId 参数错误（其余字段合法）', async () => {
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const bad = await repo.commit({ projectId: '', operationId: 'op', selections: [], layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } } });
+    expect(bad.success).toBe(false);
+    expect(bad.error).toContain('projectId');
   });
 
   it('blocking issue：无卷归属章纲在 commit 被拒绝', async () => {
