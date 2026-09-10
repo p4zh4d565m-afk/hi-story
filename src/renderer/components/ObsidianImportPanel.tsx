@@ -4,6 +4,7 @@ import type {
   ObsidianImportSlot, ImportLayerChoices, StoryOption, ImportCharacterOverride, ImportWorldOverride,
 } from '../types';
 import { createObsidianImportGuard } from '../services/obsidian-import-guard';
+import { computeFinalVolumes } from '../../main/obsidian/final-volumes';
 
 interface ObsidianImportPanelProps {
   project: Project | null;
@@ -116,14 +117,23 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   // 最终卷列表 = 数据库已有卷（keep/fill 保留时） + 本次来源卷，用于章纲卷归属下拉。
   // replace/clear 时数据库卷被替换/清空，不再进入最终列表。
   const finalVolumes = (() => {
-    const action = layerChoices.volumes.action;
     const dbVolumes = prepareResult?.target.existingVolumes ?? [];
     const sourceVolumes = candidates.filter(c => selectedSet.has(c.relativePath)).flatMap(c => c.drafts.volumes);
-    if (action === 'replace' || action === 'clear') return sourceVolumes;
-    if (action === 'fill') return dbVolumes.length ? dbVolumes : sourceVolumes;
-    // keep：保留数据库卷；若数据库为空则用来源卷
-    return dbVolumes.length ? dbVolumes : sourceVolumes;
+    return computeFinalVolumes(layerChoices.volumes.action, dbVolumes, sourceVolumes);
   })();
+
+  // R3：最终卷列表变化后，越界的卷归属自动清空（要求用户重选）
+  const finalVolumeCount = finalVolumes.length;
+  useEffect(() => {
+    setVolumeAssign(prev => {
+      let changed = false;
+      const next = { ...prev };
+      for (const key of Object.keys(next)) {
+        if (next[key] !== null && next[key]! >= finalVolumeCount) { next[key] = null; changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [finalVolumeCount]);
 
   // 汇总统计
   const stats = useMemo(() => {

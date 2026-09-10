@@ -7,6 +7,7 @@ import { parseMarkdown } from '../../obsidian/markdown-vault';
 import { parseCandidateDrafts } from '../../obsidian/import-parser';
 import { validateObsidianCommitInput } from '../../obsidian/import-validator';
 import { simulateFinalEntityNames, characterIncoming, worldIncoming } from '../../obsidian/entity-name-simulator';
+import { computeFinalVolumes } from '../../obsidian/final-volumes';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
@@ -258,9 +259,21 @@ export class ObsidianImportRepo {
     const finalVolumes = applyAction(lc.volumes.action, lc.volumes.unlockLocked, target.layers.volumes.exists, volumes.length > 0, target.layers.volumes.status === 'locked');
     const finalChapters = applyAction(lc.chapters.action, lc.chapters.unlockLocked, target.layers.chapters.exists, chapters.length > 0, target.layers.chapters.status === 'locked');
 
+    // 最终卷列表（与 UI 共用同一纯函数），用于校验章纲 volumeIndex 边界
+    const finalVolumeList = computeFinalVolumes(lc.volumes.action, target.existingVolumes, volumes);
+
     // 最终状态不变量
     if (finalVolumes && !finalMaster) throw new Error('存在分卷纲但缺少全书总纲');
     if (finalChapters && (!finalMaster || !finalVolumes)) throw new Error('存在章纲但缺少全书总纲或分卷纲');
+
+    // 章纲 volumeIndex 越界校验：最终章纲会被写入时，volumeIndex 必须 < 最终卷数量
+    if (finalChapters) {
+      for (const ch of chapters) {
+        if ((ch.volumeIndex as number) >= finalVolumeList.length) {
+          throw new Error(`章节「${ch.sourceHeading}」卷归属越界：卷下标 ${ch.volumeIndex}，最终仅 ${finalVolumeList.length} 卷`);
+        }
+      }
+    }
 
     // 上下游动作约束：替换/清空上游，下游必须也替换/清空（若下游最终存在）
     if ((lc.master.action === 'replace' || lc.master.action === 'clear') && finalVolumes && !['replace', 'clear'].includes(lc.volumes.action)) {
