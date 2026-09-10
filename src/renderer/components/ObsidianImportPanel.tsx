@@ -5,6 +5,7 @@ import type {
 } from '../types';
 import { createObsidianImportGuard } from '../services/obsidian-import-guard';
 import { computeFinalVolumes } from '../../main/obsidian/final-volumes';
+import { mergeCharacterOverrides, mergeWorldOverrides } from '../../main/obsidian/override-merge';
 
 interface ObsidianImportPanelProps {
   project: Project | null;
@@ -44,6 +45,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     chapters: { action: 'keep', unlockLocked: false },
   });
   const [storyOptionDraft, setStoryOptionDraft] = useState<StoryOption | null>(null);
+  // reparse pending 的响应式版本号：发起/结束时递增，驱动 canCommit 重算
+  const [reparseTick, setReparseTick] = useState(0);
 
   // 让 useRef 里创建的 onApply 闭包始终读到最新项目名，避免首次渲染闭包陷阱
   const projectNameRef = useRef(project?.name ?? '');
@@ -178,7 +181,11 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     if (lockedReplace('chapters')) blockReasons.push('章纲已锁定，替换/清空需确认解锁');
   }
 
-  const canCommit = !loading && !committing && !!prepareResult && blockReasons.length === 0;
+  // 任一已选候选仍有最新一代 reparse 未返回 → 提交禁用
+  const anyReparsing = candidates.some(c => selectedSet.has(c.relativePath) && guardRef.current.isReparsing(project?.id ?? '', c.relativePath));
+  void reparseTick; // 引用 tick，确保 pending 变化触发重渲染
+
+  const canCommit = !loading && !committing && !!prepareResult && !anyReparsing && blockReasons.length === 0;
 
   const generateOperationId = () => {
     const id = crypto.randomUUID();
@@ -235,6 +242,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   const setSlot = (candidate: ObsidianImportCandidate, slot: ObsidianImportSlot, enabled: boolean) => {
     const nextSlots = enabled ? [...new Set([...candidate.slots, slot])] : candidate.slots.filter(s => s !== slot);
     markEdited();
+    setReparseTick(t => t + 1); // 进入 pending
     guardRef.current.reparse({
       projectId: project!.id, relativePath: candidate.relativePath, hash: candidate.hash,
       slots: nextSlots as ObsidianImportSlot[], defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null,
@@ -244,30 +252,23 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
           ...prev,
           candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, slots: nextSlots as ObsidianImportSlot[], drafts: result.drafts, issues: result.issues } : c),
         } : prev);
-        // 槽位变化后按 sourceName 合并旧 override：仍存在的 sourceName 保留作者编辑，新 sourceName 用默认
+        // 槽位变化后按归一化 source key 合并旧 override：仍存在的保留作者编辑，新出现用默认
         setCharOverrides(prev => {
           const oldList = prev[candidate.relativePath] ?? [];
-          const merged = result.drafts.characters.map(ch => {
-            const old = oldList.find(o => o.sourceName === ch.sourceName);
-            return old ? { ...old, name: old.name, overwrite: old.overwrite } : { sourceName: ch.sourceName, name: ch.name, overwrite: false };
-          });
-          return { ...prev, [candidate.relativePath]: merged };
+          return { ...prev, [candidate.relativePath]: mergeCharacterOverrides(oldList, result.drafts.characters) };
         });
         setWorldOverrides(prev => {
           const oldList = prev[candidate.relativePath] ?? [];
-          const merged = result.drafts.worlds.map(w => {
-            const old = oldList.find(o => o.sourceName === w.sourceName);
-            return old ? { ...old, name: old.name, category: old.category, overwrite: old.overwrite } : { sourceName: w.sourceName, name: w.name, category: w.category as any, overwrite: false };
-          });
-          return { ...prev, [candidate.relativePath]: merged };
+          return { ...prev, [candidate.relativePath]: mergeWorldOverrides(oldList, result.drafts.worlds) };
         });
       }
-    });
+    }).finally(() => setReparseTick(t => t + 1)); // 退出 pending
   };
 
   const setVolumeFor = (candidate: ObsidianImportCandidate, index: number | null) => {
     setVolumeAssign(prev => ({ ...prev, [candidate.relativePath]: index }));
     markEdited();
+    setReparseTick(t => t + 1); // 进入 pending
     guardRef.current.reparse({
       projectId: project!.id, relativePath: candidate.relativePath, hash: candidate.hash,
       slots: candidate.slots, defaultVolumeIndex: index,
@@ -278,7 +279,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
           candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, drafts: result.drafts, issues: result.issues } : c),
         } : prev);
       }
-    });
+    }).finally(() => setReparseTick(t => t + 1)); // 退出 pending
   };
 
   const renderFields = (candidate: ObsidianImportCandidate) => {
