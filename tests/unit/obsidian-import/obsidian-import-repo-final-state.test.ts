@@ -143,4 +143,75 @@ describe('Obsidian 导入仓储：锁定语义与最终状态', () => {
     expect(JSON.parse(row.master_outline).premise).not.toBe('伪造内容');
     expect(JSON.parse(row.master_outline).ending).toBe('开放式结局');
   });
+
+  it('空名称（人物/世界观）被拒绝', async () => {
+    await write('人物/沈屿.md', '# 沈屿\n## 性格层次\n- 表面：高智商。');
+    await write('世界观/主要场景.md', '# 主要场景\n## 星海\n- 开场。');
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const charCand = prep.data!.candidates.find((c: any) => c.slots.includes('character'))!;
+    const worldCand = prep.data!.candidates.find((c: any) => c.slots.includes('world'))!;
+    const sel = [
+      { relativePath: charCand.relativePath, hash: charCand.hash, slots: charCand.slots, defaultVolumeIndex: null, characterOverrides: [{ sourceName: '沈屿', name: '  ', overwrite: false }], worldOverrides: [] },
+      { relativePath: worldCand.relativePath, hash: worldCand.hash, slots: worldCand.slots, defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [{ sourceName: '主要场景', name: '', category: 'place', overwrite: false }] },
+    ];
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op', selections: sel,
+      layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('不能为空');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM characters').get()).toEqual({ n: 0 });
+  });
+
+  it('override sourceName 不存在于重建草稿时被拒绝', async () => {
+    await write('人物/沈屿.md', '# 沈屿\n## 性格层次\n- 表面：高智商。');
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const charCand = prep.data!.candidates.find((c: any) => c.slots.includes('character'))!;
+    const sel = [{ relativePath: charCand.relativePath, hash: charCand.hash, slots: charCand.slots, defaultVolumeIndex: null, characterOverrides: [{ sourceName: '不存在的人', name: '张三', overwrite: false }], worldOverrides: [] }];
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op', selections: sel,
+      layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('不存在');
+  });
+
+  it('覆盖世界观保留 parentId', async () => {
+    db.prepare("INSERT INTO world_entries (id, project_id, parent_id, category, name, description, sort_order, created_at, updated_at) VALUES ('w1','p1',NULL,'place','主要场景','旧',0,'t','t')").run();
+    await write('世界观/主要场景.md', '# 主要场景\n## 星海\n- 开场。');
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const worldCand = prep.data!.candidates.find((c: any) => c.slots.includes('world'))!;
+    const sel = [{ relativePath: worldCand.relativePath, hash: worldCand.hash, slots: worldCand.slots, defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [{ sourceName: '主要场景', name: '主要场景', category: 'place', overwrite: true }] }];
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op', selections: sel,
+      layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(true);
+    const row = db.prepare("SELECT * FROM world_entries WHERE name = '主要场景'").get() as any;
+    expect(row.id).toBe('w1');
+    expect(row.parent_id).toBeNull();
+    expect(row.description).toContain('星海');
+  });
+
+  it('keep/fill 保留 locked 状态与值（分卷纲锁定）', async () => {
+    db.prepare(`INSERT INTO planning_ideas (id, project_id, generated_options, selected_option, status, master_outline, outline_status, volume_outlines, volume_status, chapter_outlines, chapter_outline_status)
+      VALUES ('pl1','p1','[{"title":"旧","logline":"","targetReader":"","corePromise":"","protagonist":"","centralConflict":"","differentiator":"","endingDirection":""}]',0,'confirmed','{"premise":"旧"}','locked','[{"title":"旧卷"}]','locked','[]','empty')`).run();
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    // 无来源，keep 分卷纲（锁定）
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op', selections: [],
+      layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(true);
+    const row = db.prepare('SELECT * FROM planning_ideas WHERE id = ?').get('pl1') as any;
+    expect(row.volume_status).toBe('locked');
+    expect(JSON.parse(row.volume_outlines)[0].title).toBe('旧卷');
+  });
 });

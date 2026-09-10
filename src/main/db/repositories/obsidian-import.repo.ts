@@ -175,6 +175,14 @@ export class ObsidianImportRepo {
       if (!WORLD_CATS.has(w.category as string)) throw new Error(`世界观「${w.name}」需先选择合法分类`);
     }
 
+    // 名称非空校验：人物与世界观导入名（作者可改的 override）不得为空
+    for (const c of characters) {
+      if (!c.name.trim()) throw new Error('人物导入名不能为空');
+    }
+    for (const w of worlds) {
+      if (!w.name.trim()) throw new Error('世界观导入名不能为空');
+    }
+
     // 重复校验：卷标识、实体名、章节 (volumeIndex, chapterNumber)
     const volumeKeys = new Map<string, string>();
     for (const v of volumes) {
