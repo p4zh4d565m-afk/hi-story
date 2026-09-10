@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createOperationRegistry, hashCanonicalCommitInput } from '../../../src/main/ipc/obsidian-import.ipc';
+import { createOperationRegistry, hashCanonicalCommitInput, INVALID_INPUT_FINGERPRINT } from '../../../src/main/ipc/obsidian-import.ipc';
 
 describe('operationId 进程内幂等', () => {
   it('相同 operationId + 同指纹并发只执行一次并返回同一结果', async () => {
@@ -48,6 +48,11 @@ describe('hashCanonicalCommitInput', () => {
   it('非法输入返回 invalid_input', () => {
     const circular: any = {};
     circular.self = circular;
-    expect(hashCanonicalCommitInput(circular)).toBe('invalid_input');
+    expect(hashCanonicalCommitInput(circular)).toBe(INVALID_INPUT_FINGERPRINT);
+  });
+  it('超预算输入返回 invalid_input', () => {
+    // 单个字段超过 64 MiB 预算
+    const huge: any = { selections: [{ relativePath: 'a.md', hash: 'h', slots: ['master'], defaultVolumeIndex: null, characterOverrides: [{ sourceName: 'x'.repeat(70 * 1024 * 1024), name: 'x', overwrite: false }], worldOverrides: [] }] };
+    expect(hashCanonicalCommitInput(huge)).toBe(INVALID_INPUT_FINGERPRINT);
   });
 });

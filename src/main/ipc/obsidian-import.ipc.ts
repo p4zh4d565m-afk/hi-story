@@ -33,15 +33,17 @@ function canonicalize(value: unknown, budget: number): string | null {
 }
 
 /** 对 commit 输入做稳定指纹；超预算（64 MiB）、循环引用等返回 'invalid_input'。 */
+export const INVALID_INPUT_FINGERPRINT = 'invalid_input';
+
 export function hashCanonicalCommitInput(input: ObsidianCommitInput): string {
   try {
     const canonical = canonicalize(input, 10000);
-    if (canonical === null) return 'invalid_input';
+    if (canonical === null) return INVALID_INPUT_FINGERPRINT;
     const bytes = Buffer.byteLength(canonical, 'utf8');
-    if (bytes > 64 * 1024 * 1024) return 'invalid_input';
+    if (bytes > 64 * 1024 * 1024) return INVALID_INPUT_FINGERPRINT;
     return createHash('sha256').update(canonical).digest('hex');
   } catch {
-    return 'invalid_input';
+    return INVALID_INPUT_FINGERPRINT;
   }
 }
 
@@ -105,6 +107,9 @@ export function registerObsidianImportIpc(): void {
   ipcMain.handle('obsidian:commitPlanningImport', async (_event, input: ObsidianCommitInput): Promise<IpcResult<unknown>> => {
     try {
       const fingerprint = hashCanonicalCommitInput(input);
+      if (fingerprint === INVALID_INPUT_FINGERPRINT) {
+        return { success: false, error: '导入参数无效' };
+      }
       return await registry.execute(input.projectId, input.operationId, fingerprint, () => new ObsidianImportRepo(getDb()).commit(input));
     } catch (e) {
       return { success: false, error: (e as Error).message || '导入参数无效' };
