@@ -23,6 +23,7 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       // 准备真实临时 Obsidian 目录
       vault = fs.mkdtempSync(path.join(os.tmpdir(), 'obsidian-import-ui-'));
       fs.mkdirSync(path.join(vault, '人物'), { recursive: true });
+      fs.mkdirSync(path.join(vault, '世界观'), { recursive: true });
       fs.writeFileSync(path.join(vault, '完整大纲.md'), [
         '# 完整大纲',
         '## 一、作品定位',
@@ -31,10 +32,31 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
         '## 二、三卷大纲索引',
         '1. [卷 1 陆昭线（第 1-50 章）](卷1.md)',
       ].join('\n'));
+      fs.writeFileSync(path.join(vault, '大纲_卷1.md'), [
+        '# 卷 1 陆昭线（第 1-50 章）',
+        '## 核心冲突',
+        '沈屿伪装沈悦接近陆昭。',
+        '## 阶段拆解',
+        '- 第 1-15 章：黄金三章',
+      ].join('\n'));
+      fs.writeFileSync(path.join(vault, '章节细纲.md'), [
+        '## 卷 1（第 1-50 章）',
+        '| 章 | 标题 | 核心事件 |',
+        '|---|---|---|',
+        '| 1 | 初见 | 游轮宴会。 |',
+      ].join('\n'));
       fs.writeFileSync(path.join(vault, '人物', '沈屿.md'), [
         '# 沈屿',
         '## 性格层次',
         '- 表面：高智商。',
+      ].join('\n'));
+      fs.writeFileSync(path.join(vault, '世界观', '主要场景.md'), [
+        '---',
+        'category: place',
+        '---',
+        '# 主要场景',
+        '## 星海游轮',
+        '- 第一卷开场地点。',
       ].join('\n'));
       db.prepare('UPDATE projects SET obsidian_path = ? WHERE id = ?').run(vault, 'project-a');
 

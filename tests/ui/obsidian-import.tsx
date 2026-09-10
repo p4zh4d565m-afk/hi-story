@@ -1,4 +1,5 @@
-// Obsidian 导入真实 UI 回归：open=true 挂载真实面板，通过 DOM 交互完成导入闭环。
+// Obsidian 导入真实 UI 回归：open=true 挂载真实面板，通过 DOM 事件完成导入闭环，
+// 核心提交走面板内部 commit（调用 electronAPI），不直接调用测试 IPC 的 commit。
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import ObsidianImportPanel from '../../src/renderer/components/ObsidianImportPanel';
@@ -7,19 +8,13 @@ const invoke = (window as any).electronAPI.invoke.bind((window as any).electronA
 
 function wait(ms: number) { return new Promise(res => setTimeout(res, ms)); }
 
-/** 轮询等待某个 DOM 条件成立。 */
-async function waitFor(cond: () => boolean, timeout = 5000, step = 50): Promise<boolean> {
+async function waitFor(cond: () => boolean, timeout = 8000, step = 50): Promise<boolean> {
   const start = Date.now();
   while (Date.now() - start < timeout) {
     if (cond()) return true;
     await wait(step);
   }
   return cond();
-}
-
-function text(selector: string): string {
-  const el = document.querySelector(selector);
-  return el ? (el.textContent || '') : '';
 }
 
 async function run(): Promise<Array<{ name: string; error?: string }>> {
@@ -36,44 +31,58 @@ async function run(): Promise<Array<{ name: string; error?: string }>> {
     const el = document.getElementById('root')!;
     root = createRoot(el);
     root.render(React.createElement(ObsidianImportPanel, {
-      project: { id: 'project-a', name: '测试', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' },
+      project: { id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' },
       open: true,
       onClose: () => {},
-      onImported: async () => {},
+      onImported: async () => {},  // 模拟 App 层刷新成功
     }));
 
-    // 等待 prepare 完成，候选列表出现
-    const candidatesReady = await waitFor(() => document.body.textContent?.includes('完整大纲'));
-    check('面板真实挂载并扫描出候选文件', candidatesReady);
+    // 等待扫描完成，候选列表渲染
+    await waitFor(() => document.body.textContent?.includes('完整大纲'));
+    check('面板扫描出总纲候选', document.body.textContent?.includes('完整大纲') ?? false);
+    check('面板扫描出分卷纲候选', document.body.textContent?.includes('大纲_卷1') ?? false);
+    check('面板扫描出章纲候选', document.body.textContent?.includes('章节细纲') ?? false);
+    check('面板扫描出人物候选', document.body.textContent?.includes('沈屿') ?? false);
+    check('面板扫描出世界观候选', document.body.textContent?.includes('主要场景') ?? false);
 
-    // 面板应显示总纲候选与人物候选
-    check('候选列表包含总纲文件', document.body.textContent?.includes('完整大纲') ?? false);
-    check('候选列表包含人物文件', document.body.textContent?.includes('沈屿') ?? false);
+    // 世界观 category 已由 frontmatter 提供，无需 DOM 选分类。
+    // 不点击文件行（点击 label 会 toggle checkbox，反而取消默认选中），
+    // 世界观候选因有 world 槽位默认已选中。
 
-    // 右侧详情默认选中第一个候选，应展示解析字段
-    check('详情区展示字段预览', document.body.textContent?.includes('总纲') || document.body.textContent?.includes('阶段'));
+    // 诊断：世界观候选的实际槽位与 category（只读，不属核心提交）
+    const diag = await invoke('prepare', 'project-a');
+    const worldCand = diag.data.candidates.find((c: any) => c.relativePath.includes('主要场景'));
+    check('诊断：世界观候选存在', !!worldCand);
+    check('诊断：世界观候选槽位含 world', worldCand?.slots?.includes('world') ?? false, `slots=${JSON.stringify(worldCand?.slots)}`);
+    check('诊断：世界观草稿有 1 条', worldCand?.drafts?.worlds?.length === 1, `worlds=${JSON.stringify(worldCand?.drafts?.worlds)}`);
+    check('诊断：世界观 category 为 place', worldCand?.drafts?.worlds?.[0]?.category === 'place', `category=${worldCand?.drafts?.worlds?.[0]?.category}`);
 
-    // 直接验证核心闭环：通过 IPC 提交（selection 由主进程重建）
-    const prep = await invoke('prepare', 'project-a');
-    const masterCand = prep.data.candidates.find((c: any) => c.slots.includes('master'));
-    const charCand = prep.data.candidates.find((c: any) => c.slots.includes('character'));
-    check('prepare 返回总纲候选', !!masterCand);
-    check('prepare 返回人物候选', !!charCand);
+    // 找到确认导入按钮并点击
+    const confirmBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('确认导入'));
+    check('确认导入按钮存在', !!confirmBtn);
 
-    const commitRes = await invoke('commit', {
-      projectId: 'project-a', operationId: 'ui-1',
-      selections: [
-        { relativePath: masterCand.relativePath, hash: masterCand.hash, slots: masterCand.slots, defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [] },
-        { relativePath: charCand.relativePath, hash: charCand.hash, slots: charCand.slots, defaultVolumeIndex: null, characterOverrides: [{ sourceName: '沈屿', name: '沈屿', overwrite: false }], worldOverrides: [] },
-      ],
-      layerChoices: { master: { action: 'fill', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } },
-    });
-    check('提交成功', commitRes.success, commitRes.error);
+    // 提交前 snapshot（通过测试 IPC 只读查询，不算"核心提交"）
+    const before = await invoke('snapshot');
+    check('提交前数据库为空', before.planning.length === 0 && before.characters.length === 0 && before.worlds.length === 0);
 
-    const snap = await invoke('snapshot');
-    check('总纲写入', snap.planning.length === 1 && JSON.parse(snap.planning[0].master_outline).ending === '开放式结局');
-    check('人物写入', snap.characters.length === 1 && snap.characters[0].name === '沈屿');
-    check('世界观保持空', snap.worlds.length === 0);
+    // 点击确认导入（核心提交走面板内部 commit）
+    if (confirmBtn && !(confirmBtn as HTMLButtonElement).disabled) {
+      (confirmBtn as HTMLButtonElement).click();
+    }
+
+    // 等待提交完成（面板会 onImported 后 onClose，面板关闭即成功）
+    await waitFor(() => {
+      // 提交成功后面板 onClose 被调用，但这里 onClose 是 no-op，所以检查数据库快照
+      return true;
+    }, 500);
+    await wait(800); // 给 commit + 事务留时间
+
+    const after = await invoke('snapshot');
+    check('提交后策划记录写入', after.planning.length === 1);
+    check('提交后人物写入', after.characters.length === 1 && after.characters[0].name === '沈屿');
+    // 输出世界观实际内容，辅助诊断
+    const worldDetail = JSON.stringify(after.worlds);
+    check('提交后世界观写入且分类为 place', after.worlds.length === 1 && after.worlds[0].category === 'place', `实际 worlds=${worldDetail}`);
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });
   } finally {

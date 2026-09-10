@@ -183,12 +183,16 @@ export class ObsidianImportRepo {
       if (!w.name.trim()) throw new Error('世界观导入名不能为空');
     }
 
-    // 重复校验：卷标识、实体名、章节 (volumeIndex, chapterNumber)
-    const volumeKeys = new Map<string, string>();
+    // 重复校验：卷标识（标题与 chapterRange 两个维度独立去重）、实体名、章节 (volumeIndex, chapterNumber)
+    const volumeTitleKeys = new Set<string>();
+    const volumeRangeKeys = new Set<string>();
     for (const v of volumes) {
-      const key = normalizeName(v.title) || (v.chapterRange ? normalizeName(v.chapterRange) : '');
-      if (key && volumeKeys.has(key)) throw new Error(`重复卷「${v.title}」`);
-      if (key) volumeKeys.set(key, v.title);
+      const titleKey = normalizeName(v.title);
+      const rangeKey = v.chapterRange ? normalizeName(v.chapterRange) : '';
+      if (titleKey && volumeTitleKeys.has(titleKey)) throw new Error(`重复卷标题「${v.title}」`);
+      if (rangeKey && volumeRangeKeys.has(rangeKey)) throw new Error(`重复卷章节范围「${v.chapterRange}」`);
+      if (titleKey) volumeTitleKeys.add(titleKey);
+      if (rangeKey) volumeRangeKeys.add(rangeKey);
     }
     const charKeys = new Map<string, string>();
     for (const c of characters) {
@@ -207,6 +211,22 @@ export class ObsidianImportRepo {
       const key = `${ch.volumeIndex}:${ch.chapterNumber}`;
       if (chapterKeys.has(key)) throw new Error(`重复章节 卷${ch.volumeIndex} 第${ch.chapterNumber}章`);
       chapterKeys.add(key);
+    }
+
+    // 最终名称冲突：新建实体（sourceName 未命中现有记录）的最终 name 不得与现有记录重名
+    const existingCharNames = new Set(target.characters.map(c => c.normalizedName));
+    const existingWorldNames = new Set(target.worlds.map(w => w.normalizedName));
+    for (const c of characters) {
+      const sourceKey = normalizeName(c.sourceName);
+      const nameKey = normalizeName(c.name);
+      const isOverwrite = existingCharNames.has(sourceKey);
+      if (!isOverwrite && existingCharNames.has(nameKey)) throw new Error(`人物「${c.name}」与现有记录重名`);
+    }
+    for (const w of worlds) {
+      const sourceKey = normalizeName(w.sourceName);
+      const nameKey = normalizeName(w.name);
+      const isOverwrite = existingWorldNames.has(sourceKey);
+      if (!isOverwrite && existingWorldNames.has(nameKey)) throw new Error(`世界观「${w.name}」与现有记录重名`);
     }
 
     // 单层动作与锁定语义

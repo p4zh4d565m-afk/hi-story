@@ -44,6 +44,10 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   });
   const [storyOptionDraft, setStoryOptionDraft] = useState<StoryOption | null>(null);
 
+  // 让 useRef 里创建的 onApply 闭包始终读到最新项目名，避免首次渲染闭包陷阱
+  const projectNameRef = useRef(project?.name ?? '');
+  projectNameRef.current = project?.name ?? '';
+
   const guardRef = useRef(createObsidianImportGuard({
     invoke: (channel, ...args) => (window as any).electronAPI.invoke(channel, ...args),
     onApply: (_pid, result) => {
@@ -70,7 +74,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
       if (!result.target.hasConfirmedStoryOption && result.candidates.some(c => c.slots.includes('master'))) {
         const master = result.candidates.find(c => c.slots.includes('master'))?.drafts.master;
         setStoryOptionDraft({
-          title: project?.name ?? '', logline: master?.premise ?? '', targetReader: '',
+          title: projectNameRef.current, logline: master?.premise ?? '', targetReader: '',
           corePromise: master?.storyPromises?.[0] ?? '', protagonist: '', centralConflict: master?.centralConflict ?? '',
           differentiator: '', endingDirection: master?.ending ?? '',
         });
@@ -109,6 +113,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   const candidates: ObsidianImportCandidate[] = prepareResult?.candidates ?? [];
   const selectedCandidate: ObsidianImportCandidate | null = candidates.find(c => c.relativePath === selectedPath) ?? candidates[0] ?? null;
+  // 跨文件聚合所有已选候选的分卷纲，用于章纲卷归属下拉（章纲文件可能不含卷，卷在另一个文件）
+  const allVolumes = candidates.filter(c => selectedSet.has(c.relativePath)).flatMap(c => c.drafts.volumes);
 
   // 汇总统计
   const stats = useMemo(() => {
@@ -161,8 +167,14 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     return id;
   };
 
-  const editStory = (field: keyof StoryOption, value: string) => {
+  // 编辑任一输入后，同时作废 guard 内部 operationId 与 React state，保证下次提交生成新 ID
+  const markEdited = () => {
     guardRef.current.markEdited();
+    setOperationId(null);
+  };
+
+  const editStory = (field: keyof StoryOption, value: string) => {
+    markEdited();
     setStoryOptionDraft(prev => prev ? { ...prev, [field]: value } : prev);
   };
 
@@ -203,7 +215,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   const setSlot = (candidate: ObsidianImportCandidate, slot: ObsidianImportSlot, enabled: boolean) => {
     const nextSlots = enabled ? [...new Set([...candidate.slots, slot])] : candidate.slots.filter(s => s !== slot);
-    guardRef.current.markEdited();
+    markEdited();
     guardRef.current.reparse({
       projectId: project!.id, relativePath: candidate.relativePath, hash: candidate.hash,
       slots: nextSlots as ObsidianImportSlot[], defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null,
@@ -213,13 +225,16 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
           ...prev,
           candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, slots: nextSlots as ObsidianImportSlot[], drafts: result.drafts, issues: result.issues } : c),
         } : prev);
+        // 槽位变化后按新 drafts 重建该候选的 override（避免人物/世界观 override 与新草稿脱节）
+        setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: result.drafts.characters.map(ch => ({ sourceName: ch.sourceName, name: ch.name, overwrite: false })) }));
+        setWorldOverrides(prev => ({ ...prev, [candidate.relativePath]: result.drafts.worlds.map(w => ({ sourceName: w.sourceName, name: w.name, category: w.category as any, overwrite: false })) }));
       }
     });
   };
 
   const setVolumeFor = (candidate: ObsidianImportCandidate, index: number | null) => {
     setVolumeAssign(prev => ({ ...prev, [candidate.relativePath]: index }));
-    guardRef.current.markEdited();
+    markEdited();
     guardRef.current.reparse({
       projectId: project!.id, relativePath: candidate.relativePath, hash: candidate.hash,
       slots: candidate.slots, defaultVolumeIndex: index,
@@ -280,16 +295,16 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
               const matched = prepareResult?.target.characters.some(t => t.normalizedName === ch.sourceName.normalize('NFKC').trim().toLowerCase());
               return (
                 <div key={i} className="mb-2 flex items-center gap-2">
-                  <input value={ov?.name ?? ch.name} onChange={e => {
-                    guardRef.current.markEdited();
+                  <input value={ov?.name ?? ch.name} disabled={committing} onChange={e => {
+                    markEdited();
                     const arr = [...(charOverrides[candidate.relativePath] ?? [])];
                     arr[i] = { ...arr[i], name: e.target.value };
                     setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
                   }} className="flex-1 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" />
                   {matched && (
                     <label className="flex items-center gap-1 text-[11px] text-gray-400">
-                      <input type="checkbox" checked={ov?.overwrite ?? false} onChange={e => {
-                        guardRef.current.markEdited();
+                      <input type="checkbox" checked={ov?.overwrite ?? false} disabled={committing} onChange={e => {
+                        markEdited();
                         const arr = [...(charOverrides[candidate.relativePath] ?? [])];
                         arr[i] = { ...arr[i], overwrite: e.target.checked };
                         setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
@@ -310,15 +325,15 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
               const matched = prepareResult?.target.worlds.some(t => t.normalizedName === w.sourceName.normalize('NFKC').trim().toLowerCase());
               return (
                 <div key={i} className="mb-2 space-y-1">
-                  <input value={ov?.name ?? w.name} onChange={e => {
-                    guardRef.current.markEdited();
+                  <input value={ov?.name ?? w.name} disabled={committing} onChange={e => {
+                    markEdited();
                     const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
                     arr[i] = { ...arr[i], name: e.target.value };
                     setWorldOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
                   }} className="w-full px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" />
                   <div className="flex items-center gap-2">
-                    <select value={ov?.category ?? ''} onChange={e => {
-                      guardRef.current.markEdited();
+                    <select value={ov?.category ?? ''} disabled={committing} onChange={e => {
+                      markEdited();
                       const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
                       arr[i] = { ...arr[i], category: e.target.value as any };
                       setWorldOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
@@ -328,8 +343,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                     </select>
                     {matched && (
                       <label className="flex items-center gap-1 text-[11px] text-gray-400">
-                        <input type="checkbox" checked={ov?.overwrite ?? false} onChange={e => {
-                          guardRef.current.markEdited();
+                        <input type="checkbox" checked={ov?.overwrite ?? false} disabled={committing} onChange={e => {
+                          markEdited();
                           const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
                           arr[i] = { ...arr[i], overwrite: e.target.checked };
                           setWorldOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
@@ -370,7 +385,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                   <div key={c.relativePath} className={`border-l-2 ${selectedCandidate?.relativePath === c.relativePath ? 'border-accent bg-float-700' : 'border-transparent hover:bg-float-800'}`}>
                     <label className="flex items-start gap-2 px-3 py-2 cursor-pointer" onClick={() => setSelectedPath(c.relativePath)}>
                       <input type="checkbox" checked={selectedSet.has(c.relativePath)} disabled={committing}
-                        onChange={e => { guardRef.current.markEdited(); setSelectedSet(prev => { const next = new Set(prev); e.target.checked ? next.add(c.relativePath) : next.delete(c.relativePath); return next; }); }} />
+                        onChange={e => { markEdited(); setSelectedSet(prev => { const next = new Set(prev); e.target.checked ? next.add(c.relativePath) : next.delete(c.relativePath); return next; }); }} />
                       <span className="flex-1 min-w-0">
                         <span className="block text-xs font-medium text-gray-200 truncate">{c.name}</span>
                         <span className="block text-[10px] text-gray-500">{c.kind} · {c.slots.map(s => SLOT_LABELS[s]).join('、') || '未分类'}</span>
@@ -415,11 +430,11 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                         onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
                         className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
                         <option value="">选择卷…</option>
-                        {(() => {
-                          const vols = selectedCandidate.drafts.volumes;
-                          if (vols.length === 0) return <option value="" disabled>本次无分卷纲</option>;
-                          return vols.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷</option>);
-                        })()}
+                        {allVolumes.length === 0 ? (
+                          <option value="" disabled>本次无分卷纲</option>
+                        ) : (
+                          allVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
+                        )}
                       </select>
                     </div>
                   )}
@@ -438,12 +453,12 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             <div className="rounded border border-float-700 p-3">
               <p className="text-xs font-semibold text-gray-200 mb-2">Obsidian 导入方案（自动构造故事方向）</p>
               <div className="grid grid-cols-2 gap-2">
-                <label className="text-[11px] text-gray-400">标题<input value={storyOptionDraft.title} onChange={e => editStory('title', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">一句话<input value={storyOptionDraft.logline} onChange={e => editStory('logline', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">核心体验<input value={storyOptionDraft.corePromise} onChange={e => editStory('corePromise', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">主要冲突<input value={storyOptionDraft.centralConflict} onChange={e => editStory('centralConflict', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">结局方向<input value={storyOptionDraft.endingDirection} onChange={e => editStory('endingDirection', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">主角（可空）<input value={storyOptionDraft.protagonist} onChange={e => editStory('protagonist', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">标题<input value={storyOptionDraft.title} disabled={committing} onChange={e => editStory('title', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">一句话<input value={storyOptionDraft.logline} disabled={committing} onChange={e => editStory('logline', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">核心体验<input value={storyOptionDraft.corePromise} disabled={committing} onChange={e => editStory('corePromise', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">主要冲突<input value={storyOptionDraft.centralConflict} disabled={committing} onChange={e => editStory('centralConflict', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">结局方向<input value={storyOptionDraft.endingDirection} disabled={committing} onChange={e => editStory('endingDirection', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">主角（可空）<input value={storyOptionDraft.protagonist} disabled={committing} onChange={e => editStory('protagonist', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
               </div>
             </div>
           )}
@@ -452,7 +467,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             {(Object.keys(LAYER_LABELS) as Array<keyof ImportLayerChoices>).map(layer => (
               <label key={layer} className="flex items-center gap-1">
                 <select value={layerChoices[layer].action} disabled={committing}
-                  onChange={e => { guardRef.current.markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], action: e.target.value as any } })); }}
+                  onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], action: e.target.value as any } })); }}
                   className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
                   <option value="keep">{LAYER_LABELS[layer]}：保留</option>
                   <option value="fill">{LAYER_LABELS[layer]}：填空</option>
@@ -461,7 +476,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                 </select>
                 {(target?.layers[layer === 'master' ? 'master' : layer === 'volumes' ? 'volumes' : 'chapters'].status === 'locked') && (layerChoices[layer].action === 'replace' || layerChoices[layer].action === 'clear') && (
                   <span className="flex items-center gap-1 text-[11px] text-amber-300">
-                    <input type="checkbox" checked={layerChoices[layer].unlockLocked} onChange={e => { guardRef.current.markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
+                    <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={committing} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
                     解锁
                   </span>
                 )}
