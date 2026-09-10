@@ -61,4 +61,29 @@ describe('Obsidian 导入 guard 竞态', () => {
     const fresh = await r2;
     expect((fresh as any).drafts.master.premise).toBe('新');
   });
+
+  it('A→B→A：旧 A reparse 晚于新 A 返回时被全局 epoch 拒绝', async () => {
+    const pending = new Map<number, (v: any) => void>();
+    let n = 0;
+    const invoke = vi.fn((_ch: string, _input: any) => new Promise(res => pending.set(++n, res)));
+    const guard = createObsidianImportGuard({ invoke, onApply: vi.fn(), onError: vi.fn() });
+
+    // 第一次切到 A，发起 reparse（旧 A 回执会迟到），序号 1
+    const oldA = guard.reparse({ projectId: 'A', relativePath: 'a.md', hash: 'h', slots: ['master'] });
+    // 切到 B，invalidate
+    guard.invalidate();
+    // 切回 A，发起新 A 同路径 reparse，序号 2
+    const newA = guard.reparse({ projectId: 'A', relativePath: 'a.md', hash: 'h', slots: ['master'] });
+
+    // 新 A（序号 2）先返回
+    pending.get(2)!({ success: true, data: { drafts: { master: { premise: '新A' }, volumes: [], chapters: [], characters: [], worlds: [] }, issues: [] } });
+    const newResult = await newA;
+    expect(newResult).not.toBeNull();
+    expect((newResult as any).drafts.master.premise).toBe('新A');
+
+    // 旧 A（序号 1）迟到返回，必须被拒绝
+    pending.get(1)!({ success: true, data: { drafts: { master: { premise: '旧A' }, volumes: [], chapters: [], characters: [], worlds: [] }, issues: [] } });
+    const oldResult = await oldA;
+    expect(oldResult).toBeNull();
+  });
 });

@@ -10,7 +10,7 @@ import type {
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
   MasterOutline, VolumeOutline, ChapterOutline, StoryOption,
   ObsidianImportSelection, ObsidianImportDrafts, ImportCharacterInput, ImportWorldInput,
-  ObsidianImportSlot, ImportChapterDraft,
+  ObsidianImportSlot, ImportChapterDraft, ObsidianImportIssue,
 } from '../../../renderer/types';
 
 function normalizeName(value: unknown): string {
@@ -39,6 +39,7 @@ export class ObsidianImportRepo {
         volumes: { exists: planning ? (() => { try { return JSON.parse(String(planning.volume_outlines || '[]')).length > 0; } catch { return false; } })() : false, status: (planning?.volume_status || 'empty') as ObsidianImportTargetState['layers']['volumes']['status'] },
         chapters: { exists: planning ? (() => { try { return JSON.parse(String(planning.chapter_outlines || '[]')).length > 0; } catch { return false; } })() : false, status: (planning?.chapter_outline_status || 'empty') as ObsidianImportTargetState['layers']['chapters']['status'] },
       },
+      existingVolumes: planning ? (() => { try { return JSON.parse(String(planning.volume_outlines || '[]')) as VolumeOutline[]; } catch { return []; } })() : [],
       characters: charRows.map(c => ({ name: c.name, normalizedName: normalizeName(c.name) })),
       worlds: worldRows.map(w => ({ name: w.name, normalizedName: normalizeName(w.name), category: w.category })),
     };
@@ -101,8 +102,8 @@ export class ObsidianImportRepo {
   }
 
   /** 主进程按文件真实内容 + slots + defaultVolumeIndex 重建 drafts，再合并白名单 override。 */
-  private async rebuildSelections(projectId: string, obsidianPath: string, selections: ObsidianImportSelection[]): Promise<Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }>> {
-    const result: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }> = [];
+  private async rebuildSelections(projectId: string, obsidianPath: string, selections: ObsidianImportSelection[]): Promise<Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts; issues: ObsidianImportIssue[] }>> {
+    const result: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts; issues: ObsidianImportIssue[] }> = [];
 
     for (const sel of selections) {
       const realPath = await resolveInsideRoot(obsidianPath, sel.relativePath);
@@ -114,6 +115,7 @@ export class ObsidianImportRepo {
       const name = typeof parsed.frontmatter.name === 'string' ? parsed.frontmatter.name.trim() : path.basename(sel.relativePath, path.extname(sel.relativePath));
       const parsedDrafts = parseCandidateDrafts(parsed.content, parsed.frontmatter, sel.slots, name, sel.defaultVolumeIndex ?? null);
       const drafts = parsedDrafts.drafts;
+      const issues = parsedDrafts.issues;
 
       // 合并人物 override：按 sourceName 定位重建草稿，只改 name/overwrite
       if (sel.characterOverrides.length) {
@@ -139,15 +141,23 @@ export class ObsidianImportRepo {
         }
       }
 
-      result.push({ relativePath: sel.relativePath, hash: sel.hash, slots: sel.slots, drafts });
+      result.push({ relativePath: sel.relativePath, hash: sel.hash, slots: sel.slots, drafts, issues });
     }
     return result;
   }
 
   /** 计算最终三层存在性与动作，校验锁定语义、来源有无内容、最终状态不变量、重复项。 */
-  private validateFinalState(projectId: string, input: ObsidianCommitInput, rebuilt: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }>): void {
+  private validateFinalState(projectId: string, input: ObsidianCommitInput, rebuilt: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts; issues: ObsidianImportIssue[] }>): void {
     const target = this.buildTargetState(projectId);
     const lc = input.layerChoices;
+
+    // 重建阶段的 blocking issue 必须拦截 commit（不能因重建 drafts 丢弃 issues 而通过）
+    for (const r of rebuilt) {
+      const blocking = r.issues.filter(i => i.severity === 'blocking');
+      if (blocking.length) {
+        throw new Error(`${r.relativePath}：${blocking.map(i => i.message).join('；')}`);
+      }
+    }
 
     // 聚合来源草稿
     let master: MasterOutline | null = null;
@@ -270,7 +280,7 @@ export class ObsidianImportRepo {
   }
 
 
-  private applyImport(projectId: string, input: ObsidianCommitInput, rebuilt: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }>): ObsidianImportSummary {
+  private applyImport(projectId: string, input: ObsidianCommitInput, rebuilt: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts; issues: ObsidianImportIssue[] }>): ObsidianImportSummary {
     const summary: ObsidianImportSummary = {
       planning: { master: 'kept', volumes: 'kept', chapters: 'kept' },
       characters: { created: 0, updated: 0, skipped: 0 },

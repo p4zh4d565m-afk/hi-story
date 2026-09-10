@@ -619,6 +619,8 @@ export interface ObsidianImportTargetState {
     volumes: { exists: boolean; status: PlanningIdea['volumeStatus'] };
     chapters: { exists: boolean; status: PlanningIdea['chapterOutlineStatus'] };
   };
+  /** 数据库已有的分卷纲（用于跨文件章纲卷归属的最终卷列表） */
+  existingVolumes: VolumeOutline[];
   characters: { name: string; normalizedName: string }[];
   worlds: { name: string; normalizedName: string; category: WorldEntry['category'] }[];
 }

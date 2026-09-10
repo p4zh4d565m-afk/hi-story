@@ -113,8 +113,17 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   const candidates: ObsidianImportCandidate[] = prepareResult?.candidates ?? [];
   const selectedCandidate: ObsidianImportCandidate | null = candidates.find(c => c.relativePath === selectedPath) ?? candidates[0] ?? null;
-  // 跨文件聚合所有已选候选的分卷纲，用于章纲卷归属下拉（章纲文件可能不含卷，卷在另一个文件）
-  const allVolumes = candidates.filter(c => selectedSet.has(c.relativePath)).flatMap(c => c.drafts.volumes);
+  // 最终卷列表 = 数据库已有卷（keep/fill 保留时） + 本次来源卷，用于章纲卷归属下拉。
+  // replace/clear 时数据库卷被替换/清空，不再进入最终列表。
+  const finalVolumes = (() => {
+    const action = layerChoices.volumes.action;
+    const dbVolumes = prepareResult?.target.existingVolumes ?? [];
+    const sourceVolumes = candidates.filter(c => selectedSet.has(c.relativePath)).flatMap(c => c.drafts.volumes);
+    if (action === 'replace' || action === 'clear') return sourceVolumes;
+    if (action === 'fill') return dbVolumes.length ? dbVolumes : sourceVolumes;
+    // keep：保留数据库卷；若数据库为空则用来源卷
+    return dbVolumes.length ? dbVolumes : sourceVolumes;
+  })();
 
   // 汇总统计
   const stats = useMemo(() => {
@@ -225,9 +234,23 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
           ...prev,
           candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, slots: nextSlots as ObsidianImportSlot[], drafts: result.drafts, issues: result.issues } : c),
         } : prev);
-        // 槽位变化后按新 drafts 重建该候选的 override（避免人物/世界观 override 与新草稿脱节）
-        setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: result.drafts.characters.map(ch => ({ sourceName: ch.sourceName, name: ch.name, overwrite: false })) }));
-        setWorldOverrides(prev => ({ ...prev, [candidate.relativePath]: result.drafts.worlds.map(w => ({ sourceName: w.sourceName, name: w.name, category: w.category as any, overwrite: false })) }));
+        // 槽位变化后按 sourceName 合并旧 override：仍存在的 sourceName 保留作者编辑，新 sourceName 用默认
+        setCharOverrides(prev => {
+          const oldList = prev[candidate.relativePath] ?? [];
+          const merged = result.drafts.characters.map(ch => {
+            const old = oldList.find(o => o.sourceName === ch.sourceName);
+            return old ? { ...old, name: old.name, overwrite: old.overwrite } : { sourceName: ch.sourceName, name: ch.name, overwrite: false };
+          });
+          return { ...prev, [candidate.relativePath]: merged };
+        });
+        setWorldOverrides(prev => {
+          const oldList = prev[candidate.relativePath] ?? [];
+          const merged = result.drafts.worlds.map(w => {
+            const old = oldList.find(o => o.sourceName === w.sourceName);
+            return old ? { ...old, name: old.name, category: old.category, overwrite: old.overwrite } : { sourceName: w.sourceName, name: w.name, category: w.category as any, overwrite: false };
+          });
+          return { ...prev, [candidate.relativePath]: merged };
+        });
       }
     });
   };
@@ -430,10 +453,10 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                         onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
                         className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
                         <option value="">选择卷…</option>
-                        {allVolumes.length === 0 ? (
+                        {finalVolumes.length === 0 ? (
                           <option value="" disabled>本次无分卷纲</option>
                         ) : (
-                          allVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
+                          finalVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
                         )}
                       </select>
                     </div>

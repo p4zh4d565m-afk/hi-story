@@ -82,4 +82,30 @@ describe('Obsidian 导入仓储：运行时 DTO / blocking / 名称冲突 / 卷�
     expect(res.success).toBe(false);
     expect(res.error).toContain('重复卷');
   });
+
+  it('blocking issue：含非法章号行的文件，commit 整体失败而非只导入合法行', async () => {
+    // 先备好总纲 + 分卷，让依赖校验通过，专门暴露 blocking issue 拦截
+    await write('完整大纲.md', '# 完整大纲\n## 一、作品定位\n- 类型：BL');
+    await write('大纲_卷1.md', '# 卷 1 开端（第 1-10 章）\n## 本卷目标\n开端');
+    // 章纲表格：第 1 章合法，第 2 行章号为「甲」（非法），产生 missing_assignment blocking issue
+    await write('章节细纲.md', '## 卷 1（第 1-10 章）\n\n| 章 | 标题 | 核心事件 |\n|---|---|---|\n| 1 | 起点 | 开场。 |\n| 甲 | 坏行 | 应被拦截。 |');
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const cand = prep.data!.candidates.find((c: any) => c.slots.includes('chapter'))!;
+    const masterCand = prep.data!.candidates.find((c: any) => c.slots.includes('master'))!;
+    const volumeCand = prep.data!.candidates.find((c: any) => c.slots.includes('volume'))!;
+    // 解析时第 1 章应进了 drafts，非法行只留 issue
+    expect(cand.drafts.chapters.length).toBeGreaterThanOrEqual(1);
+    expect(cand.issues.some((i: any) => i.severity === 'blocking')).toBe(true);
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op',
+      selections: [selOf(masterCand), selOf(volumeCand), selOf(cand)],
+      layerChoices: { master: { action: 'fill', unlockLocked: false }, volumes: { action: 'fill', unlockLocked: false }, chapters: { action: 'fill', unlockLocked: false } },
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('章节号');
+    // 整体失败：不得只写入合法行
+    expect(db.prepare('SELECT COUNT(*) AS n FROM planning_ideas').get()).toEqual({ n: 0 });
+  });
 });
