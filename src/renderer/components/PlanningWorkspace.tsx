@@ -327,6 +327,12 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
 
   if (!project) return <div className="h-full flex items-center justify-center text-gray-500">请先选择或创建一本小说</div>;
 
+  // 兼容导入数据：已有总纲/分卷/章纲时，即使上游未锁定也允许查看与编辑；生成下一层仍要求上一层锁定。
+  const hasImportedOutline = !!(masterOutline || volumeOutlines.length || chapterOutlines.length);
+  const showMaster = status === 'confirmed' && (selectedOption !== null || hasImportedOutline);
+  const showVolumes = !!masterOutline && (outlineStatus === 'locked' || volumeOutlines.length > 0 || chapterOutlines.length > 0);
+  const showChapters = !!masterOutline && volumeOutlines.length > 0 && (volumeStatus === 'locked' || chapterOutlines.length > 0);
+
   return (
     <div className="h-full overflow-y-auto bg-editor-900 p-6">
       <div className="max-w-6xl mx-auto">
@@ -396,12 +402,12 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
               </div>
             )}
 
-            {status === 'confirmed' && selectedOption !== null && (
+            {showMaster && (
               <div className="bg-editor-800 border border-editor-700 rounded-lg p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <div><p className="text-xs text-accent">策划工作台 · 第二步</p><h2 className="text-lg text-gray-100 mt-1">全书总纲</h2></div>
                   <div className="flex gap-2">
-                    <button onClick={generateMasterOutline} disabled={outlineLoading}
+                    <button onClick={generateMasterOutline} disabled={outlineLoading || selectedOption === null}
                       className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600 disabled:opacity-40">
                       {outlineLoading ? '正在生成全书总纲…' : masterOutline ? '重新生成' : '生成全书总纲'}
                     </button>
@@ -409,7 +415,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
                     {masterOutline && <button onClick={() => saveOutline(true)} disabled={saving} className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">锁定总纲</button>}
                   </div>
                 </div>
-                {!masterOutline && <p className="text-sm text-gray-500">将根据已确认的“{options[selectedOption].title}”生成 4—6 个全书阶段。</p>}
+                {!masterOutline && selectedOption !== null && <p className="text-sm text-gray-500">将根据已确认的“{options[selectedOption].title}”生成 4—6 个全书阶段。</p>}
                 {masterOutline && <div className="space-y-4">
                   {([
                     ['premise', '故事核心前提'], ['centralConflict', '贯穿全书的冲突'], ['protagonistArc', '主角变化'],
@@ -429,12 +435,12 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
               </div>
             )}
 
-            {outlineStatus === 'locked' && masterOutline && (
+            {showVolumes && (
               <div className="bg-editor-800 border border-editor-700 rounded-lg p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <div><p className="text-xs text-accent">策划工作台 · 第三步</p><h2 className="text-lg text-gray-100 mt-1">分卷纲</h2></div>
                   <div className="flex gap-2">
-                    <button onClick={generateVolumes} disabled={volumeLoading} className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600 disabled:opacity-40">{volumeLoading ? '正在拆分卷纲…' : volumeOutlines.length ? '重新生成' : '生成分卷纲'}</button>
+                    <button onClick={generateVolumes} disabled={volumeLoading || outlineStatus !== 'locked'} className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600 disabled:opacity-40">{volumeLoading ? '正在拆分卷纲…' : volumeOutlines.length ? '重新生成' : '生成分卷纲'}</button>
                     {!!volumeOutlines.length && <button onClick={() => saveVolumes(false)} disabled={saving} className="px-4 py-2 rounded bg-editor-700 text-xs text-gray-200 hover:bg-editor-600">保存修改</button>}
                     {!!volumeOutlines.length && <button onClick={() => saveVolumes(true)} disabled={saving} className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">锁定分卷纲</button>}
                   </div>
@@ -449,7 +455,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
               </div>
             )}
 
-            {volumeStatus === 'locked' && masterOutline && volumeOutlines.length > 0 && (
+            {showChapters && (
               <div className="bg-editor-800 border border-editor-700 rounded-lg p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
                   <div><p className="text-xs text-accent">策划工作台 · 第四步</p><h2 className="text-lg text-gray-100 mt-1">逐章章纲</h2></div>
