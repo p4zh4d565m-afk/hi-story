@@ -32,16 +32,25 @@ hi-story 是面向长篇小说创作的本地 Electron 工作台。当前核心�
 - Obsidian 导入策划已完成（A1+B1+C1+D1+E1 定案）：主进程新增 markdown 块/表格解析、五类纯规则解析、限流候选扫描、事务导入仓储、operationId 幂等 IPC；渲染端新增预览面板与守卫，策划页三级展示 gate 兼容导入数据。真实样本来自作者 `d:\obsidian\我的基础库\02 项目\我有一个妹妹`（无 frontmatter、表格章纲、wiki 链接）。详见 `docs/obsidian.md` 与下方本次验证。
 - 详细维护发现见 `docs/maintenance-review-2026-09-07.md`。
 
-## 本次验证（2026-09-10）
+## 本次验证（2026-09-10，收尾修订）
 
-- `npm run test`：29 个测试文件、154 项测试通过（新增 32 项 obsidian-import 专项，基线为 92 项）。
-- 真实 UI：`node tests/ui/run-obsidian-import.cjs` 12/12；`node tests/ui/run-writing-workspace.cjs` 10/10；`node tests/ui/run-creative-decision-ledger.cjs` 16/16 通过。obsidian 导入回归覆盖真实临时 Obsidian 目录 → 主进程 prepare → commit 事务 → 内存 SQLite 的完整闭环，验证总纲/人物导入、策划状态与重复提交。
+- `npm run test`：30 个测试文件、162 项测试通过（新增 8 项锁定语义/最终状态/候选级代次专项）。
+- 真实 UI：`node tests/ui/run-obsidian-import.cjs` 10/10；`node tests/ui/run-writing-workspace.cjs` 10/10；`node tests/ui/run-creative-decision-ledger.cjs` 16/16 通过。obsidian 导入回归已改为 `open=true` 真实挂载面板，扫描渲染候选列表与字段预览后再验证 IPC 闭环。
 - `npm run build:main`、`npx vite build`、`npm run build`、`git diff --check` 通过；保留现有 Vite CJS 和大 chunk 提示。
 - 决策 UI 的内存数据库使用编译后的主进程仓储；修改仓储后须先执行 `npm run build:main` 再运行 UI 脚本。测试仅访问独立临时窗口与内存数据。
+
+## 本次收尾修订（针对 2026-09-10-obsidian-import-completion-design.md）
+
+- commit DTO 收紧：`ObsidianImportSelection` 不再携带 `drafts`，改为 `characterOverrides` / `worldOverrides` 白名单 + `defaultVolumeIndex`；主进程按文件真实内容重建 drafts 后合并 override，杜绝渲染端伪造草稿。
+- 锁定语义修正：`unlockLocked` 现被仓储执行；`clear` 补上 lock 检查；`replace`/`clear` 未确认解锁均拒绝，确认后成功。
+- 最终状态不变量：主进程分别计算三层最终存在性，`!finalVolumesExist || finalMasterExists` 与 `!finalChaptersExist || (finalMasterExists && finalVolumesExist)` 均在事务前校验；替换/清空上游强制处理下游。
+- reparse guard 改为「projectId + relativePath」候选级代次，不同候选并发互不干扰，同一候选乱序只保留最后一次。
+- 面板补齐：候选选择、完整字段预览、章纲卷归属、世界观分类、同名覆盖、故事方向表单、跨项目状态重置、提交生命周期（committing 期间禁用关闭与控件）。
 
 ## 已知限制与后续优先项
 
 1. 真实外部 AI 提取未使用用户 API Key 做烟测；当前由解析单测和隐藏 Electron 内存 AI 流回归覆盖。
 2. 疑似相关项仅做确定性规则匹配，不提供语义判断或自动合并；人物知识及空主体兜底列表最多20条。
 3. Obsidian 导入为有损映射：章纲表格部分列（视角/开场处境/人物变化）无对应字段，导入后留空待补；策划层无来源身份，无法识别文件移动/改名；operationId 幂等仅进程内，跨崩溃不覆盖。
-4. 全部改动保留在本地 `feature/skill-engine`，未推送。用户在 App.tsx 的 obsidianResult 修改仍未提交；本地 .claude/.codex 配置未纳入提交。
+4. 作者真实目录副本烟测尚未执行（spec 8.4 要求）；当前仅由真实格式 fixture + 隐藏 Electron 面板回归覆盖。
+5. 全部改动保留在本地 `feature/skill-engine`，未推送。用户在 App.tsx 的 obsidianResult 修改仍未提交；本地 .claude/.codex 配置未纳入提交。
