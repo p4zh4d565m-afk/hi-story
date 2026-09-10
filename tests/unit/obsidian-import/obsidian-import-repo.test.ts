@@ -22,7 +22,12 @@ describe('Obsidian 导入事务', () => {
 
   const selectFrom = (repo: ObsidianImportRepo, prep: any, slot: string) => {
     const cand = prep.candidates.find((c: any) => c.slots.includes(slot))!;
-    return { relativePath: cand.relativePath, hash: cand.hash, slots: cand.slots, drafts: cand.drafts };
+    return {
+      relativePath: cand.relativePath, hash: cand.hash, slots: cand.slots,
+      defaultVolumeIndex: null,
+      characterOverrides: cand.drafts.characters.map((c: any) => ({ sourceName: c.sourceName, name: c.name, overwrite: c.overwrite })),
+      worldOverrides: cand.drafts.worlds.map((w: any) => ({ sourceName: w.sourceName, name: w.name, category: w.category, overwrite: w.overwrite })),
+    };
   };
 
   it('导入总纲创建 Obsidian 导入方案，三处同步写', async () => {
@@ -74,7 +79,7 @@ describe('Obsidian 导入事务', () => {
     setPath();
     const prep = await repo.prepare('p1');
     const sel = selectFrom(repo, prep.data, 'character');
-    sel.drafts.characters[0].overwrite = true;
+    sel.characterOverrides[0].overwrite = true;
     const commitRes = await repo.commit({
       projectId: 'p1', operationId: 'op-3', selections: [sel],
       layerChoices: {

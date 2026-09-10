@@ -680,11 +680,26 @@ export interface ImportLayerChoices {
   chapters: ImportLayerDecision;
 }
 
+export interface ImportCharacterOverride {
+  sourceName: string;         // 身份键，主进程据此定位重建草稿，作者不可改
+  name: string;               // 作者可改的导入名
+  overwrite: boolean;
+}
+
+export interface ImportWorldOverride {
+  sourceName: string;
+  name: string;
+  category: WorldEntry['category'];  // 作者必选六类之一
+  overwrite: boolean;
+}
+
 export interface ObsidianImportSelection {
   relativePath: string;
   hash: string;
   slots: ObsidianImportSlot[];
-  drafts: ObsidianImportDrafts;
+  defaultVolumeIndex?: number | null;  // 未分配章纲的默认卷归属
+  characterOverrides: ImportCharacterOverride[];
+  worldOverrides: ImportWorldOverride[];
 }
 
 export interface ObsidianCommitInput {

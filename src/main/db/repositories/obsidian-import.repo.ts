@@ -3,10 +3,14 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
 import { scanImportCandidates, resolveInsideRoot, sha256 } from '../../obsidian/import-candidates';
+import { parseMarkdown } from '../../obsidian/markdown-vault';
+import { parseCandidateDrafts } from '../../obsidian/import-parser';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
   MasterOutline, VolumeOutline, ChapterOutline, StoryOption,
+  ObsidianImportSelection, ObsidianImportDrafts, ImportCharacterInput, ImportWorldInput,
+  ObsidianImportSlot, ImportChapterDraft,
 } from '../../../renderer/types';
 
 function normalizeName(value: unknown): string {
@@ -57,8 +61,6 @@ export class ObsidianImportRepo {
       const bytes = await fs.readFile(realPath);
       if (sha256(bytes) !== input.hash) throw new Error('文件已变化，请重新扫描');
       // 重解析：复用解析器，按新槽位与卷归属
-      const { parseMarkdown } = require('../../obsidian/markdown-vault');
-      const { parseCandidateDrafts } = require('../../obsidian/import-parser');
       const parsed = parseMarkdown(bytes.toString('utf8'));
       const name = typeof parsed.frontmatter.name === 'string' ? parsed.frontmatter.name.trim() : path.basename(input.relativePath, path.extname(input.relativePath));
       const result = parseCandidateDrafts(parsed.content, parsed.frontmatter, input.slots, name, input.defaultVolumeIndex ?? null);
@@ -69,56 +71,178 @@ export class ObsidianImportRepo {
   async commit(input: ObsidianCommitInput): Promise<IpcResult<ObsidianImportSummary>> {
     try {
       const { obsidianPath } = this.requireProject(input.projectId);
-      // —— 事务外校验：重新扫描，校验每个 selection 的路径 + hash ——
+      // —— 事务外：重新扫描，校验 selection 路径 + hash，主进程重建 drafts ——
       const scan = await scanImportCandidates(obsidianPath);
       const byPath = new Map(scan.candidates.map(c => [c.relativePath, c]));
+
+      // 重复 relativePath 校验
+      const seenPaths = new Set<string>();
       for (const sel of input.selections) {
+        if (seenPaths.has(sel.relativePath)) throw new Error(`重复选择文件：${sel.relativePath}`);
+        seenPaths.add(sel.relativePath);
         const cand = byPath.get(sel.relativePath);
         if (!cand) throw new Error(`文件不在候选范围：${sel.relativePath}`);
         if (cand.hash !== sel.hash) throw new Error(`文件已变化，请重新扫描：${sel.relativePath}`);
       }
 
-      // —— 聚合与校验（纯数据，事务外）——
-      const hasMaster = input.selections.some(s => s.slots.includes('master') && s.drafts.master);
-      const hasVolumes = input.selections.some(s => s.slots.includes('volume') && s.drafts.volumes.length);
-      const hasChapters = input.selections.some(s => s.slots.includes('chapter') && s.drafts.chapters.length);
-      const hasCharacter = input.selections.some(s => s.slots.includes('character') && s.drafts.characters.length);
-      const hasWorld = input.selections.some(s => s.slots.includes('world') && s.drafts.worlds.length);
+      // —— 主进程重建 drafts（不信任渲染端），并合并白名单 overrides ——
+      const rebuilt = await this.rebuildSelections(input.projectId, obsidianPath, input.selections);
 
-      // 依赖矩阵：最终某层是否存在，由「数据库现状 + 本次选择 + 是否导入」共同决定
-      const target = this.buildTargetState(input.projectId);
-      const finalExists = (action: string, hasIncoming: boolean, currentExists: boolean): boolean => {
-        if (action === 'clear') return false;
-        if (action === 'replace') return hasIncoming;
-        if (action === 'fill') return currentExists || hasIncoming;
-        return currentExists; // keep
-      };
-      const finalMaster = finalExists(input.layerChoices.master.action, hasMaster, target.layers.master.exists);
-      const finalVolumes = finalExists(input.layerChoices.volumes.action, hasVolumes, target.layers.volumes.exists);
-
-      if (hasVolumes && !finalMaster) throw new Error('分卷纲需要全书总纲');
-      if (hasChapters) {
-        if (!finalVolumes) throw new Error('章纲需要分卷纲');
-        if (!finalMaster) throw new Error('章纲需要全书总纲');
-      }
-
-      // 世界观 category 为空则阻塞
-      for (const sel of input.selections) {
-        for (const w of sel.drafts.worlds) {
-          if (w.category === null) throw new Error(`世界观「${w.name}」需先选择分类`);
-        }
-      }
+      // —— 事务外校验 ——
+      this.validateFinalState(input.projectId, input, rebuilt);
 
       // —— 短事务写库 ——
       const write = this.db.transaction(() => {
-        return this.applyImport(input.projectId, input, { hasMaster, hasVolumes, hasChapters, hasCharacter, hasWorld });
+        return this.applyImport(input.projectId, input, rebuilt);
       });
       const summary = write();
       return { success: true, data: summary };
     } catch (e) { return { success: false, error: (e as Error).message }; }
   }
 
-  private applyImport(projectId: string, input: ObsidianCommitInput, flags: { hasMaster: boolean; hasVolumes: boolean; hasChapters: boolean; hasCharacter: boolean; hasWorld: boolean }): ObsidianImportSummary {
+  /** 主进程按文件真实内容 + slots + defaultVolumeIndex 重建 drafts，再合并白名单 override。 */
+  private async rebuildSelections(projectId: string, obsidianPath: string, selections: ObsidianImportSelection[]): Promise<Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }>> {
+    const result: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }> = [];
+
+    for (const sel of selections) {
+      const realPath = await resolveInsideRoot(obsidianPath, sel.relativePath);
+      if (!realPath) throw new Error(`路径非法或超出 Obsidian 目录：${sel.relativePath}`);
+      const bytes = await fs.readFile(realPath);
+      if (sha256(bytes) !== sel.hash) throw new Error(`文件已变化，请重新扫描：${sel.relativePath}`);
+
+      const parsed = parseMarkdown(bytes.toString('utf8'));
+      const name = typeof parsed.frontmatter.name === 'string' ? parsed.frontmatter.name.trim() : path.basename(sel.relativePath, path.extname(sel.relativePath));
+      const parsedDrafts = parseCandidateDrafts(parsed.content, parsed.frontmatter, sel.slots, name, sel.defaultVolumeIndex ?? null);
+      const drafts = parsedDrafts.drafts;
+
+      // 合并人物 override：按 sourceName 定位重建草稿，只改 name/overwrite
+      if (sel.characterOverrides.length) {
+        const map = new Map(drafts.characters.map(c => [normalizeName(c.sourceName), c]));
+        for (const ov of sel.characterOverrides) {
+          const key = normalizeName(ov.sourceName);
+          const target = map.get(key);
+          if (!target) throw new Error(`人物来源「${ov.sourceName}」不存在于文件 ${sel.relativePath}`);
+          target.name = ov.name;
+          target.overwrite = ov.overwrite;
+        }
+      }
+      // 合并世界观 override
+      if (sel.worldOverrides.length) {
+        const map = new Map(drafts.worlds.map(w => [normalizeName(w.sourceName), w]));
+        for (const ov of sel.worldOverrides) {
+          const key = normalizeName(ov.sourceName);
+          const target = map.get(key);
+          if (!target) throw new Error(`世界观来源「${ov.sourceName}」不存在于文件 ${sel.relativePath}`);
+          target.name = ov.name;
+          target.category = ov.category;
+          target.overwrite = ov.overwrite;
+        }
+      }
+
+      result.push({ relativePath: sel.relativePath, hash: sel.hash, slots: sel.slots, drafts });
+    }
+    return result;
+  }
+
+  /** 计算最终三层存在性与动作，校验锁定语义、来源有无内容、最终状态不变量、重复项。 */
+  private validateFinalState(projectId: string, input: ObsidianCommitInput, rebuilt: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }>): void {
+    const target = this.buildTargetState(projectId);
+    const lc = input.layerChoices;
+
+    // 聚合来源草稿
+    let master: MasterOutline | null = null;
+    const volumes: VolumeOutline[] = [];
+    const chapters: ImportChapterDraft[] = [];
+    const characters: ImportCharacterInput[] = [];
+    const worlds: ImportWorldInput[] = [];
+    for (const r of rebuilt) {
+      if (r.drafts.master) master = r.drafts.master;
+      if (r.drafts.volumes.length) volumes.push(...r.drafts.volumes);
+      if (r.drafts.chapters.length) chapters.push(...r.drafts.chapters);
+      if (r.drafts.characters.length) characters.push(...r.drafts.characters);
+      if (r.drafts.worlds.length) worlds.push(...r.drafts.worlds);
+    }
+
+    // 章节号/卷归属必须为非空正整数；收窄成 ChapterOutline 在 applyImport 做
+    for (const ch of chapters) {
+      if (ch.chapterNumber === null || !Number.isInteger(ch.chapterNumber) || ch.chapterNumber <= 0) throw new Error(`章节「${ch.sourceHeading}」章节号非法`);
+      if (ch.volumeIndex === null || !Number.isInteger(ch.volumeIndex) || ch.volumeIndex < 0) throw new Error(`章节「${ch.sourceHeading}」卷归属非法`);
+    }
+
+    // 世界观 category 非法枚举则阻塞
+    const WORLD_CATS = new Set(['place', 'faction', 'race', 'law', 'history', 'culture']);
+    for (const w of worlds) {
+      if (!WORLD_CATS.has(w.category as string)) throw new Error(`世界观「${w.name}」需先选择合法分类`);
+    }
+
+    // 重复校验：卷标识、实体名、章节 (volumeIndex, chapterNumber)
+    const volumeKeys = new Map<string, string>();
+    for (const v of volumes) {
+      const key = normalizeName(v.title) || (v.chapterRange ? normalizeName(v.chapterRange) : '');
+      if (key && volumeKeys.has(key)) throw new Error(`重复卷「${v.title}」`);
+      if (key) volumeKeys.set(key, v.title);
+    }
+    const charKeys = new Map<string, string>();
+    for (const c of characters) {
+      const key = normalizeName(c.sourceName);
+      if (charKeys.has(key)) throw new Error(`重复人物名「${c.name}」`);
+      charKeys.set(key, c.name);
+    }
+    const worldKeys = new Map<string, string>();
+    for (const w of worlds) {
+      const key = normalizeName(w.sourceName);
+      if (worldKeys.has(key)) throw new Error(`重复世界观名「${w.name}」`);
+      worldKeys.set(key, w.name);
+    }
+    const chapterKeys = new Set<string>();
+    for (const ch of chapters) {
+      const key = `${ch.volumeIndex}:${ch.chapterNumber}`;
+      if (chapterKeys.has(key)) throw new Error(`重复章节 卷${ch.volumeIndex} 第${ch.chapterNumber}章`);
+      chapterKeys.add(key);
+    }
+
+    // 单层动作与锁定语义
+    const applyAction = (action: string, unlock: boolean, currentExists: boolean, hasIncoming: boolean, locked: boolean): boolean => {
+      // 返回该层最终是否存在
+      if (action === 'clear') {
+        if (locked && !unlock) throw new Error('目标层级已锁定，需明确解锁后清空');
+        return false;
+      }
+      if (action === 'replace') {
+        if (locked && !unlock) throw new Error('目标层级已锁定，需明确解锁后替换');
+        if (!hasIncoming) throw new Error('没有可替换的来源内容');
+        return true;
+      }
+      if (action === 'fill') {
+        if (!currentExists && !hasIncoming) throw new Error('没有可填入内容');
+        return currentExists || hasIncoming;
+      }
+      return currentExists; // keep
+    };
+
+    const finalMaster = applyAction(lc.master.action, lc.master.unlockLocked, target.layers.master.exists, !!master, target.layers.master.status === 'locked');
+    const finalVolumes = applyAction(lc.volumes.action, lc.volumes.unlockLocked, target.layers.volumes.exists, volumes.length > 0, target.layers.volumes.status === 'locked');
+    const finalChapters = applyAction(lc.chapters.action, lc.chapters.unlockLocked, target.layers.chapters.exists, chapters.length > 0, target.layers.chapters.status === 'locked');
+
+    // 最终状态不变量
+    if (finalVolumes && !finalMaster) throw new Error('存在分卷纲但缺少全书总纲');
+    if (finalChapters && (!finalMaster || !finalVolumes)) throw new Error('存在章纲但缺少全书总纲或分卷纲');
+
+    // 上下游动作约束：替换/清空上游，下游必须也替换/清空（若下游最终存在）
+    if ((lc.master.action === 'replace' || lc.master.action === 'clear') && finalVolumes && !['replace', 'clear'].includes(lc.volumes.action)) {
+      throw new Error('替换或清空总纲时，分卷纲需同步替换或清空');
+    }
+    if ((lc.volumes.action === 'replace' || lc.volumes.action === 'clear') && finalChapters && !['replace', 'clear'].includes(lc.chapters.action)) {
+      throw new Error('替换或清空分卷纲时，章纲需同步替换或清空');
+    }
+
+    // A1：仅当本次涉及策划层时检查多条策划记录
+    const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || ['replace', 'clear', 'fill'].includes(lc.master.action) || ['replace', 'clear', 'fill'].includes(lc.volumes.action) || ['replace', 'clear', 'fill'].includes(lc.chapters.action);
+    if (touchesPlanning && target.planningRecordCount > 1) throw new Error('项目存在多条策划记录，请先整理后再导入');
+  }
+
+
+  private applyImport(projectId: string, input: ObsidianCommitInput, rebuilt: Array<{ relativePath: string; hash: string; slots: ObsidianImportSlot[]; drafts: ObsidianImportDrafts }>): ObsidianImportSummary {
     const summary: ObsidianImportSummary = {
       planning: { master: 'kept', volumes: 'kept', chapters: 'kept' },
       characters: { created: 0, updated: 0, skipped: 0 },
@@ -129,28 +253,29 @@ export class ObsidianImportRepo {
     let master: MasterOutline | null = null;
     const volumes: VolumeOutline[] = [];
     const chapters: ChapterOutline[] = [];
-    const characters: ObsidianCommitInput['selections'][number]['drafts']['characters'] = [];
-    const worlds: ObsidianCommitInput['selections'][number]['drafts']['worlds'] = [];
-    for (const sel of input.selections) {
-      if (sel.drafts.master) master = sel.drafts.master;
-      if (sel.drafts.volumes.length) volumes.push(...sel.drafts.volumes);
-      for (const ch of sel.drafts.chapters) {
-        if (ch.chapterNumber === null || ch.volumeIndex === null) throw new Error(`章节「${ch.sourceHeading}」缺少章节号或卷归属`);
-        chapters.push({ volumeIndex: ch.volumeIndex, chapterNumber: ch.chapterNumber, title: ch.title, pov: ch.pov, chapterGoal: ch.chapterGoal, openingSituation: ch.openingSituation, centralConflict: ch.centralConflict, keyBeats: ch.keyBeats, reveal: ch.reveal, characterChange: ch.characterChange, emotionalBeat: ch.emotionalBeat, payoff: ch.payoff, endingHook: ch.endingHook });
+    const characters: ImportCharacterInput[] = [];
+    const worlds: ImportWorldInput[] = [];
+    for (const r of rebuilt) {
+      if (r.drafts.master) master = r.drafts.master;
+      if (r.drafts.volumes.length) volumes.push(...r.drafts.volumes);
+      for (const ch of r.drafts.chapters) {
+        // 收窄 ImportChapterDraft → ChapterOutline（validateFinalState 已保证 number 非空）
+        chapters.push({ volumeIndex: ch.volumeIndex as number, chapterNumber: ch.chapterNumber as number, title: ch.title, pov: ch.pov, chapterGoal: ch.chapterGoal, openingSituation: ch.openingSituation, centralConflict: ch.centralConflict, keyBeats: ch.keyBeats, reveal: ch.reveal, characterChange: ch.characterChange, emotionalBeat: ch.emotionalBeat, payoff: ch.payoff, endingHook: ch.endingHook });
       }
-      characters.push(...sel.drafts.characters);
-      worlds.push(...sel.drafts.worlds);
+      characters.push(...r.drafts.characters);
+      worlds.push(...r.drafts.worlds);
     }
 
-    // 策划层
-    if (flags.hasMaster || flags.hasVolumes || flags.hasChapters) {
+    // 策划层（仅当涉及策划时）
+    const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || input.layerChoices.master.action !== 'keep' || input.layerChoices.volumes.action !== 'keep' || input.layerChoices.chapters.action !== 'keep';
+    if (touchesPlanning) {
       summary.planning = this.applyPlanning(projectId, input, master, volumes, chapters);
     }
 
     // 人物
-    if (flags.hasCharacter) summary.characters = this.applyCharacters(projectId, characters);
+    if (characters.length) summary.characters = this.applyCharacters(projectId, characters);
     // 世界观
-    if (flags.hasWorld) summary.worlds = this.applyWorlds(projectId, worlds);
+    if (worlds.length) summary.worlds = this.applyWorlds(projectId, worlds);
 
     return summary;
   }
@@ -162,10 +287,13 @@ export class ObsidianImportRepo {
     const now = new Date().toISOString();
 
     const lc = input.layerChoices;
-    const decide = (action: 'keep' | 'fill' | 'replace' | 'clear', current: string, incoming: string, exists: boolean, locked: boolean, currentStatus: string): { value: string; status: string; outcome: 'kept' | 'filled' | 'replaced' | 'cleared' } => {
-      if (action === 'clear') return { value: '', status: 'empty', outcome: 'cleared' };
+    const decide = (action: 'keep' | 'fill' | 'replace' | 'clear', unlock: boolean, current: string, incoming: string, exists: boolean, locked: boolean, currentStatus: string): { value: string; status: string; outcome: 'kept' | 'filled' | 'replaced' | 'cleared' } => {
+      if (action === 'clear') {
+        if (locked && !unlock) throw new Error('目标层级已锁定，需明确解锁后清空');
+        return { value: '', status: 'empty', outcome: 'cleared' };
+      }
       if (action === 'replace') {
-        if (locked) throw new Error('目标层级已锁定，需明确解锁后替换');
+        if (locked && !unlock) throw new Error('目标层级已锁定，需明确解锁后替换');
         return { value: incoming, status: 'generated', outcome: 'replaced' };
       }
       if (action === 'fill') {
@@ -186,13 +314,9 @@ export class ObsidianImportRepo {
     const volumesStatus = (existing?.volume_status || 'empty') as string;
     const chaptersStatus = (existing?.chapter_outline_status || 'empty') as string;
 
-    const masterDecision = decide(lc.master.action, masterCurrent, master ? JSON.stringify(master) : '', masterExists, masterStatus === 'locked', masterStatus);
-    const volumesDecision = decide(lc.volumes.action, volumesCurrent, JSON.stringify(volumes), volumesExists, volumesStatus === 'locked', volumesStatus);
-    const chaptersDecision = decide(lc.chapters.action, chaptersCurrent, JSON.stringify(chapters), chaptersExists, chaptersStatus === 'locked', chaptersStatus);
-
-    // 替换上游必须处理下游
-    if (lc.master.action === 'replace' && !['replace', 'clear'].includes(lc.volumes.action)) throw new Error('替换总纲时，分卷纲需同步替换或清空');
-    if (lc.volumes.action === 'replace' && !['replace', 'clear'].includes(lc.chapters.action)) throw new Error('替换分卷纲时，章纲需同步替换或清空');
+    const masterDecision = decide(lc.master.action, lc.master.unlockLocked, masterCurrent, master ? JSON.stringify(master) : '', masterExists, masterStatus === 'locked', masterStatus);
+    const volumesDecision = decide(lc.volumes.action, lc.volumes.unlockLocked, volumesCurrent, JSON.stringify(volumes), volumesExists, volumesStatus === 'locked', volumesStatus);
+    const chaptersDecision = decide(lc.chapters.action, lc.chapters.unlockLocked, chaptersCurrent, JSON.stringify(chapters), chaptersExists, chaptersStatus === 'locked', chaptersStatus);
 
     // 无已确认方向时构造导入方案
     let generatedOptions = existing ? JSON.parse(String(existing.generated_options || '[]')) as StoryOption[] : [];
@@ -240,7 +364,7 @@ export class ObsidianImportRepo {
     return { master: masterDecision.outcome, volumes: volumesDecision.outcome, chapters: chaptersDecision.outcome };
   }
 
-  private applyCharacters(projectId: string, characters: ObsidianCommitInput['selections'][number]['drafts']['characters']): ObsidianImportSummary['characters'] {
+  private applyCharacters(projectId: string, characters: ImportCharacterInput[]): ObsidianImportSummary['characters'] {
     const result = { created: 0, updated: 0, skipped: 0 };
     const existing = this.db.prepare('SELECT * FROM characters WHERE project_id = ?').all(projectId) as Record<string, unknown>[];
     const now = new Date().toISOString();
@@ -266,7 +390,7 @@ export class ObsidianImportRepo {
     return result;
   }
 
-  private applyWorlds(projectId: string, worlds: ObsidianCommitInput['selections'][number]['drafts']['worlds']): ObsidianImportSummary['worlds'] {
+  private applyWorlds(projectId: string, worlds: ImportWorldInput[]): ObsidianImportSummary['worlds'] {
     const result = { created: 0, updated: 0, skipped: 0 };
     const existing = this.db.prepare('SELECT * FROM world_entries WHERE project_id = ?').all(projectId) as Record<string, unknown>[];
     const now = new Date().toISOString();
