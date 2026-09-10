@@ -48,9 +48,10 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
         worlds: db.prepare('SELECT * FROM world_entries ORDER BY id').all(),
       };
     }
-    if (channel === 'prepare') return repo.prepare(args[0]);
-    if (channel === 'commit') return repo.commit(args[0]);
-    if (channel === 'reparse') return repo.reparse(args[0]);
+    // 兼容真实 IPC 通道名（面板实际调用）与测试便捷名
+    if (channel === 'obsidian:preparePlanningImport' || channel === 'prepare') return repo.prepare(args[0]);
+    if (channel === 'obsidian:commitPlanningImport' || channel === 'commit') return repo.commit(args[0]);
+    if (channel === 'obsidian:reparsePlanningImport' || channel === 'reparse') return repo.reparse(args[0]);
     throw new Error('未知测试请求: ' + channel);
   });
 };
