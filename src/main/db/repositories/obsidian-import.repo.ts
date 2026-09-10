@@ -6,6 +6,7 @@ import { scanImportCandidates, resolveInsideRoot, sha256 } from '../../obsidian/
 import { parseMarkdown } from '../../obsidian/markdown-vault';
 import { parseCandidateDrafts } from '../../obsidian/import-parser';
 import { validateObsidianCommitInput } from '../../obsidian/import-validator';
+import { simulateFinalEntityNames, characterIncoming, worldIncoming } from '../../obsidian/entity-name-simulator';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
@@ -228,21 +229,11 @@ export class ObsidianImportRepo {
       chapterKeys.add(key);
     }
 
-    // 最终名称冲突：新建实体（sourceName 未命中现有记录）的最终 name 不得与现有记录重名
-    const existingCharNames = new Set(target.characters.map(c => c.normalizedName));
-    const existingWorldNames = new Set(target.worlds.map(w => w.normalizedName));
-    for (const c of characters) {
-      const sourceKey = normalizeName(c.sourceName);
-      const nameKey = normalizeName(c.name);
-      const isOverwrite = existingCharNames.has(sourceKey);
-      if (!isOverwrite && existingCharNames.has(nameKey)) throw new Error(`人物「${c.name}」与现有记录重名`);
-    }
-    for (const w of worlds) {
-      const sourceKey = normalizeName(w.sourceName);
-      const nameKey = normalizeName(w.name);
-      const isOverwrite = existingWorldNames.has(sourceKey);
-      if (!isOverwrite && existingWorldNames.has(nameKey)) throw new Error(`世界观「${w.name}」与现有记录重名`);
-    }
+    // 最终实体名称模拟：对人物与世界观分别执行 R2 同一算法。
+    const charSim = simulateFinalEntityNames('人物', target.characters.map(c => ({ id: '', name: c.name })), characterIncoming(characters));
+    if (charSim.error) throw new Error(charSim.error);
+    const worldSim = simulateFinalEntityNames('世界观', target.worlds.map(w => ({ id: '', name: w.name })), worldIncoming(worlds));
+    if (worldSim.error) throw new Error(worldSim.error);
 
     // 单层动作与锁定语义
     const applyAction = (action: string, unlock: boolean, currentExists: boolean, hasIncoming: boolean, locked: boolean): boolean => {
