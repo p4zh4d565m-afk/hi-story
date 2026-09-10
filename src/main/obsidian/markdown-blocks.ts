@@ -5,7 +5,7 @@ export type MarkdownBlock =
   | { type: 'boldLabel'; label: string; value: string };
 
 const HEADING_RE = /^(#{1,6})\s+(.*)$/;
-const LIST_RE = /^(\s*)[-*+]\s+(.*)$/;
+const LIST_RE = /^(\s*)(?:[-*+]|\d+[.、])\s+(.*)$/;
 const BOLD_LABEL_RE = /^\*\*(.+?)\*\*\s*[:：]\s*(.*)$/;
 
 /** 把去除 frontmatter 后的 markdown 正文切成顺序块。空行是分隔符。 */
