@@ -24,6 +24,7 @@ const DIRECTORY_KINDS: Record<string, ObsidianDocumentKind> = {
   settings: 'world',
   '大纲': 'outline',
   '长期大纲': 'outline',
+  '分卷大纲': 'outline',
   outlines: 'outline',
   outline: 'outline',
 };
@@ -48,7 +49,7 @@ interface ParsedMarkdown {
   content: string;
 }
 
-function parseMarkdown(source: string): ParsedMarkdown {
+export function parseMarkdown(source: string): ParsedMarkdown {
   const normalized = source.replace(/^\uFEFF/, '').replace(/\r\n/g, '\n');
   if (!normalized.startsWith('---\n')) {
     return { frontmatter: {}, content: normalized.trim() };
@@ -68,7 +69,7 @@ function parseMarkdown(source: string): ParsedMarkdown {
   };
 }
 
-function getKind(relativePath: string, frontmatter: Record<string, unknown>): ObsidianDocumentKind | null {
+export function getKind(relativePath: string, frontmatter: Record<string, unknown>): ObsidianDocumentKind | null {
   const declaredType = typeof frontmatter.type === 'string' ? frontmatter.type.trim().toLowerCase() : '';
   if (declaredType && TYPE_KINDS[declaredType]) return TYPE_KINDS[declaredType];
 
@@ -76,7 +77,7 @@ function getKind(relativePath: string, frontmatter: Record<string, unknown>): Ob
   return DIRECTORY_KINDS[firstDirectory] ?? null;
 }
 
-function shouldIgnoreDirectory(name: string): boolean {
+export function shouldIgnoreDirectory(name: string): boolean {
   return name.startsWith('.') || IGNORED_DIRECTORIES.has(name.toLowerCase());
 }
 
