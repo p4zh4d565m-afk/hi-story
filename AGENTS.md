@@ -148,6 +148,7 @@ resources/
 - **内容安全红线** — `WRITE_SYSTEM_PROMPT` 内置「内容安全红线」段：禁止性行为/性器官/性暗示隐喻描写，亲密戏用含蓄留白+蒙太奇转场，确保生成内容通过番茄等网文平台审核
 - **全书文风统计** — 审稿面板「📊 全书文风统计」Tab：纯本地正则零 LLM 统计全书句式 tic（章均频率/口头禅/跨章重复句/章末形态同构/开篇时间词率），发现单章看不出的固化 AI 味。参考 voocel/ainovel-cli 的 stylestat 设计，核心在 `runStyleStats`
 - **组合式起名** — 起名助手离线兜底从「整词硬编码」升级为「姓×名用字组合式生成」（移植自 TulanCN/vibe-noveling 的 novel-name skill）。固定姓氏永远能出名字、离线大量不重复、防尬名（过滤霸天/弑神等）、含稀有度。核心在 `name-data.ts` + `name-generator.ts`，覆盖人物/势力/地点/装备/功法/怪兽 6 类
+- **Obsidian 导入策划** — 策划页「从 Obsidian 导入」把 Obsidian 里的总纲/分卷纲/章纲/人物/世界观单向导入策划工作台与原生列表（零 AI、只读不回写）。纯规则解析适配作者真实格式（无 frontmatter、表格章纲、`[[wiki链接]]`、有序列表）；核心在 `markdown-blocks.ts` + `import-parser.ts` + `import-candidates.ts` + `obsidian-import.repo.ts`。方案 A1+B1+C1+D1+E1 定案：不新增迁移、先导入后补字段、固定资源上限（2MiB/500/50MiB）、进程内 operationId 幂等、`obsidian:*` IPC。覆盖策略 keep/fill/replace/clear，锁定层默认保护，覆盖人物保留 `profileOutline`、世界观保留 `parentId`
 - **Stop Hook** — 每次会话结束自动执行 `npx vite build` + 提示音
 
 ## Git 远程仓库

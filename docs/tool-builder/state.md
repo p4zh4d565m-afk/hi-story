@@ -29,12 +29,13 @@ hi-story 是面向长篇小说创作的本地 Electron 工作台。当前核心�
 - 确认成功后，普通 AI 对话立即刷新活跃事实、人物知识、未解决钩子和未偿债务；四类状态原子加载并使用项目 ID + 请求代次隔离。账本保留未保存候选草稿，展示本次写入目标和确认/拒绝/取代历史，并忽略项目切换后的旧操作回执。
 - 未解决钩子和未偿债务按逾期债务、高强度钩子、临近到期、其他的顺序，在独立 800 token 预算内进入普通对话、写章与审稿。
 - `npm run test` 已改用 Electron Node 模式跨平台运行 Vitest，保留应用使用的 better-sqlite3 ABI。
+- Obsidian 导入策划已完成（A1+B1+C1+D1+E1 定案）：主进程新增 markdown 块/表格解析、五类纯规则解析、限流候选扫描、事务导入仓储、operationId 幂等 IPC；渲染端新增预览面板与守卫，策划页三级展示 gate 兼容导入数据。真实样本来自作者 `d:\obsidian\我的基础库\02 项目\我有一个妹妹`（无 frontmatter、表格章纲、wiki 链接）。详见 `docs/obsidian.md` 与下方本次验证。
 - 详细维护发现见 `docs/maintenance-review-2026-09-07.md`。
 
 ## 本次验证（2026-09-10）
 
-- `npm run test`：22 个测试文件、122 项测试通过（基线为92项）。
-- 真实 UI：`node tests/ui/run-writing-workspace.cjs` 10/10，`node tests/ui/run-creative-decision-ledger.cjs` 16/16 通过。决策回归包含真实 React→IPC→内存 SQLite 四类修订、effect故障回滚重试及同目标交错创建，并覆盖空主体、批量选择保存失败和项目往返。提交阶段禁用关闭，防止已落库回执因面板卸载而跳过上下文刷新。
+- `npm run test`：29 个测试文件、154 项测试通过（新增 32 项 obsidian-import 专项，基线为 92 项）。
+- 真实 UI：`node tests/ui/run-obsidian-import.cjs` 12/12；`node tests/ui/run-writing-workspace.cjs` 10/10；`node tests/ui/run-creative-decision-ledger.cjs` 16/16 通过。obsidian 导入回归覆盖真实临时 Obsidian 目录 → 主进程 prepare → commit 事务 → 内存 SQLite 的完整闭环，验证总纲/人物导入、策划状态与重复提交。
 - `npm run build:main`、`npx vite build`、`npm run build`、`git diff --check` 通过；保留现有 Vite CJS 和大 chunk 提示。
 - 决策 UI 的内存数据库使用编译后的主进程仓储；修改仓储后须先执行 `npm run build:main` 再运行 UI 脚本。测试仅访问独立临时窗口与内存数据。
 
@@ -42,4 +43,5 @@ hi-story 是面向长篇小说创作的本地 Electron 工作台。当前核心�
 
 1. 真实外部 AI 提取未使用用户 API Key 做烟测；当前由解析单测和隐藏 Electron 内存 AI 流回归覆盖。
 2. 疑似相关项仅做确定性规则匹配，不提供语义判断或自动合并；人物知识及空主体兜底列表最多20条。
-3. 全部改动保留在本地 `feature/skill-engine`，未推送。用户在 App.tsx 的 obsidianResult 修改仍未提交；本地 .claude/.codex 配置未纳入提交。
+3. Obsidian 导入为有损映射：章纲表格部分列（视角/开场处境/人物变化）无对应字段，导入后留空待补；策划层无来源身份，无法识别文件移动/改名；operationId 幂等仅进程内，跨崩溃不覆盖。
+4. 全部改动保留在本地 `feature/skill-engine`，未推送。用户在 App.tsx 的 obsidianResult 修改仍未提交；本地 .claude/.codex 配置未纳入提交。
