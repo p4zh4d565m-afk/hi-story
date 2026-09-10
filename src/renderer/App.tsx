@@ -545,6 +545,23 @@ const App: React.FC = () => {
     setPanelState(previous => ({ ...previous, aiWriteOpen: true }));
   }, [activeProject, chapters, outlineNodes]);
 
+  // Obsidian 导入后，只刷新人物与世界观（不重载章节/大纲，避免覆盖未保存正文）。
+  const refreshImportedEntities = useCallback(async (projectId: string): Promise<boolean> => {
+    try {
+      const [charRes, worldRes] = await Promise.all([
+        window.electronAPI.invoke('db:character:findByProject', projectId) as any,
+        window.electronAPI.invoke('db:worldEntry:findByProject', projectId) as any,
+      ]);
+      if (!isActiveProject(projectId)) return false;
+      if (!charRes?.success || !worldRes?.success) return false;
+      setCharacters(charRes.data);
+      setWorldEntries(worldRes.data);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [isActiveProject]);
+
   const handleDeleteOutlineNode = useCallback(async (id: string) => {
     const node = outlineNodes.find(n => n.id === id);
     if (!node) return;
@@ -1200,7 +1217,7 @@ const App: React.FC = () => {
             }}
           />
         }
-        planningArea={<PlanningWorkspace project={activeProject} onStartChapter={handleStartPlannedChapter} />}
+        planningArea={<PlanningWorkspace project={activeProject} onStartChapter={handleStartPlannedChapter} onRefreshImportedEntities={refreshImportedEntities} />}
         aiChat={
           <AIChatPanel
             contextMessages={contextMessages}

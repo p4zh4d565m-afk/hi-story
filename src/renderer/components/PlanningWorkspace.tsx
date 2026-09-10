@@ -1,13 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import type { ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, WritingSkill, WritingSkillSummary } from '../types';
+import type { ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, WritingSkill, WritingSkillSummary, ObsidianImportSummary } from '../types';
 import { decrypt } from '../services/crypto';
 import { aiService } from '../services/ai.service';
 import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
 import { createProjectSelectionGuard } from '../services/project-data-loader';
+import ObsidianImportPanel from './ObsidianImportPanel';
 
 interface PlanningWorkspaceProps {
   project: Project | null;
   onStartChapter?: (outline: ChapterOutline, mode: 'self' | 'ai') => Promise<void>;
+  onRefreshImportedEntities?: (projectId: string) => Promise<boolean>;
 }
 
 interface SavedConfig {
@@ -44,7 +46,7 @@ async function configureFirstAi(): Promise<SavedConfig> {
   return { ...selected, apiKey };
 }
 
-const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartChapter }) => {
+const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartChapter, onRefreshImportedEntities }) => {
   const [idea, setIdea] = useState('');
   const [requirements, setRequirements] = useState('');
   const [options, setOptions] = useState<StoryOption[]>([]);
@@ -64,20 +66,15 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const [chapterOutlineStatus, setChapterOutlineStatus] = useState<PlanningIdea['chapterOutlineStatus']>('empty');
   const [chapterLoadingVolume, setChapterLoadingVolume] = useState<number | null>(null);
   const [activeVolume, setActiveVolume] = useState(0);
+  const [importOpen, setImportOpen] = useState(false);
   const projectLoadGuardRef = useRef(createProjectSelectionGuard());
   const currentProjectIdRef = useRef(project?.id ?? null);
   currentProjectIdRef.current = project?.id ?? null;
 
-  useEffect(() => {
-    setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft');
-    setMasterOutline(null); setOutlineStatus('empty'); setError('');
-    setVolumeOutlines([]); setVolumeStatus('empty');
-    setChapterOutlines([]); setChapterOutlineStatus('empty'); setActiveVolume(0);
-    const ticket = projectLoadGuardRef.current.select(project?.id ?? null);
-    if (!project) return;
-    let disposed = false;
-    window.electronAPI.invoke('db:planning:findByProject', project.id).then((res: any) => {
-      if (!disposed && currentProjectIdRef.current === project.id && projectLoadGuardRef.current.isCurrent(ticket) && res?.success && res.data) {
+  const loadPlanning = (projectId: string, ticket = projectLoadGuardRef.current.select(projectId)) => {
+    window.electronAPI.invoke('db:planning:findByProject', projectId).then((res: any) => {
+      if (currentProjectIdRef.current !== projectId || !projectLoadGuardRef.current.isCurrent(ticket)) return;
+      if (res?.success && res.data) {
         const data = res.data as PlanningIdea;
         setIdea(data.idea);
         setRequirements(data.requirements);
@@ -92,11 +89,20 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         setChapterOutlineStatus(data.chapterOutlineStatus || 'empty');
       }
     }).catch((loadError: unknown) => {
-      if (!disposed && currentProjectIdRef.current === project.id && projectLoadGuardRef.current.isCurrent(ticket)) {
+      if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket)) {
         setError((loadError as Error).message || '策划数据加载失败');
       }
     });
-    return () => { disposed = true; };
+  };
+
+  useEffect(() => {
+    setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft');
+    setMasterOutline(null); setOutlineStatus('empty'); setError('');
+    setVolumeOutlines([]); setVolumeStatus('empty');
+    setChapterOutlines([]); setChapterOutlineStatus('empty'); setActiveVolume(0);
+    const ticket = projectLoadGuardRef.current.select(project?.id ?? null);
+    if (!project) return;
+    loadPlanning(project.id, ticket);
   }, [project?.id]);
 
   useEffect(() => {
@@ -324,11 +330,27 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   return (
     <div className="h-full overflow-y-auto bg-editor-900 p-6">
       <div className="max-w-6xl mx-auto">
-        <div className="mb-6">
-          <p className="text-xs text-accent mb-1">策划工作台 · 第一步</p>
-          <h1 className="text-xl font-semibold text-gray-100">把一个想法发展成可写的故事方向</h1>
-          <p className="text-sm text-gray-500 mt-2">先比较三个方向，确认后再生成总纲。这里不会代写正文。</p>
+        <div className="mb-6 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs text-accent mb-1">策划工作台 · 第一步</p>
+            <h1 className="text-xl font-semibold text-gray-100">把一个想法发展成可写的故事方向</h1>
+            <p className="text-sm text-gray-500 mt-2">先比较三个方向，确认后再生成总纲。这里不会代写正文。</p>
+          </div>
+          <button onClick={() => setImportOpen(true)} disabled={!project}
+            className="px-4 py-2 rounded bg-editor-700 text-sm text-gray-200 hover:bg-editor-600 disabled:opacity-40 whitespace-nowrap">
+            从 Obsidian 导入
+          </button>
         </div>
+
+        <ObsidianImportPanel
+          project={project}
+          open={importOpen}
+          onClose={() => setImportOpen(false)}
+          onImported={async (summary) => {
+            loadPlanning(project!.id);
+            if (onRefreshImportedEntities) await onRefreshImportedEntities(project!.id);
+          }}
+        />
 
         <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_280px] gap-5">
           <section className="space-y-4">
