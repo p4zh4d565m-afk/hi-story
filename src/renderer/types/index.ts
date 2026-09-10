@@ -578,3 +578,125 @@ export interface MasterOutline {
   subplots: string[];
   storyPromises: string[];
 }
+
+// ===== Obsidian 导入策划 =====
+export const OBSIDIAN_IMPORT_SLOTS = ['master', 'volume', 'chapter', 'character', 'world'] as const;
+export type ObsidianImportSlot = typeof OBSIDIAN_IMPORT_SLOTS[number];
+
+export interface ObsidianImportIssue {
+  code: 'unclassified' | 'missing_field' | 'conflict' | 'chapter_gap' | 'missing_assignment'
+    | 'invalid_input' | 'stale_file' | 'oversize' | 'bad_file' | 'dependency';
+  severity: 'warning' | 'blocking';
+  message: string;
+  relativePath?: string;
+  fieldPath?: string;
+}
+
+export interface ObsidianImportCandidate {
+  relativePath: string;
+  hash: string;               // 原始文件字节的 SHA-256 hex
+  name: string;
+  kind: ObsidianDocumentKind | 'unclassified';
+  slots: ObsidianImportSlot[];
+  drafts: ObsidianImportDrafts;
+  issues: ObsidianImportIssue[];
+}
+
+export interface ObsidianImportPrepareResult {
+  status: 'unconfigured' | 'missing' | 'ready';
+  rootPath: string;
+  target: ObsidianImportTargetState;
+  candidates: ObsidianImportCandidate[];
+  issues: ObsidianImportIssue[];
+  message?: string;
+}
+
+export interface ObsidianImportTargetState {
+  planningRecordCount: number;
+  hasConfirmedStoryOption: boolean;
+  layers: {
+    master: { exists: boolean; status: PlanningIdea['outlineStatus'] };
+    volumes: { exists: boolean; status: PlanningIdea['volumeStatus'] };
+    chapters: { exists: boolean; status: PlanningIdea['chapterOutlineStatus'] };
+  };
+  characters: { name: string; normalizedName: string }[];
+  worlds: { name: string; normalizedName: string; category: WorldEntry['category'] }[];
+}
+
+export interface ImportChapterDraft extends Omit<ChapterOutline, 'chapterNumber' | 'volumeIndex'> {
+  chapterNumber: number | null;
+  volumeIndex: number | null;
+  sourceHeading: string;
+}
+
+export interface ImportCharacterInput {
+  sourceName: string;         // 覆盖身份键 = 扫描解析出的原始 name
+  name: string;               // 作者可能修正后的 name
+  aliases: string;
+  appearance: string;
+  personality: string;
+  background: string;
+  arc: string;
+  overwrite: boolean;
+}
+
+export interface ImportWorldInput {
+  sourceName: string;
+  name: string;
+  category: WorldEntry['category'] | null;  // null = 待作者选择，禁止导入
+  description: string;
+  overwrite: boolean;
+}
+
+export interface ObsidianImportDrafts {
+  master: MasterOutline | null;
+  volumes: VolumeOutline[];
+  chapters: ImportChapterDraft[];
+  characters: ImportCharacterInput[];
+  worlds: ImportWorldInput[];
+}
+
+export interface ImportLayerDecision {
+  action: 'keep' | 'fill' | 'replace' | 'clear';
+  unlockLocked: boolean;
+}
+
+export interface ObsidianImportReparseInput {
+  projectId: string;
+  relativePath: string;
+  hash: string;
+  slots: ObsidianImportSlot[];
+  defaultVolumeIndex?: number | null;
+}
+
+export interface ObsidianImportReparseResult {
+  drafts: ObsidianImportDrafts;
+  issues: ObsidianImportIssue[];
+}
+
+export interface ImportLayerChoices {
+  master: ImportLayerDecision;
+  volumes: ImportLayerDecision;
+  chapters: ImportLayerDecision;
+}
+
+export interface ObsidianImportSelection {
+  relativePath: string;
+  hash: string;
+  slots: ObsidianImportSlot[];
+  drafts: ObsidianImportDrafts;
+}
+
+export interface ObsidianCommitInput {
+  projectId: string;
+  operationId: string;
+  selections: ObsidianImportSelection[];
+  layerChoices: ImportLayerChoices;
+  storyOptionDraft?: StoryOption;
+}
+
+export interface ObsidianImportSummary {
+  planning: { master: 'kept' | 'filled' | 'replaced' | 'cleared'; volumes: 'kept' | 'filled' | 'replaced' | 'cleared'; chapters: 'kept' | 'filled' | 'replaced' | 'cleared' };
+  characters: { created: number; updated: number; skipped: number };
+  worlds: { created: number; updated: number; skipped: number };
+}
