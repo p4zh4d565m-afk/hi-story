@@ -7,14 +7,14 @@ import { parseMarkdown } from '../../obsidian/markdown-vault';
 import { parseCandidateDrafts } from '../../obsidian/import-parser';
 import { validateObsidianCommitInput } from '../../obsidian/import-validator';
 import { simulateFinalEntityNames, characterIncoming, worldIncoming } from '../../obsidian/entity-name-simulator';
-import { computeFinalVolumes } from '../../obsidian/final-volumes';
+import { computeFinalVolumes, overlayStages } from '../../obsidian/final-volumes';
 import { computeLayerFinalState } from '../../obsidian/layer-actions';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
   MasterOutline, VolumeOutline, ChapterOutline, StoryOption,
   ObsidianImportSelection, ObsidianImportDrafts, ImportCharacterInput, ImportWorldInput,
-  ObsidianImportSlot, ImportChapterDraft, ObsidianImportIssue,
+  ObsidianImportSlot, ImportChapterDraft, ImportStageDraft, ObsidianImportIssue,
 } from '../../../renderer/types';
 
 function normalizeName(value: unknown): string {
@@ -171,12 +171,14 @@ export class ObsidianImportRepo {
     let master: MasterOutline | null = null;
     const volumes: VolumeOutline[] = [];
     const chapters: ImportChapterDraft[] = [];
+    const stages: ImportStageDraft[] = [];
     const characters: ImportCharacterInput[] = [];
     const worlds: ImportWorldInput[] = [];
     for (const r of rebuilt) {
       if (r.drafts.master) master = r.drafts.master;
       if (r.drafts.volumes.length) volumes.push(...r.drafts.volumes);
       if (r.drafts.chapters.length) chapters.push(...r.drafts.chapters);
+      if (r.drafts.stages.length) stages.push(...r.drafts.stages);
       if (r.drafts.characters.length) characters.push(...r.drafts.characters);
       if (r.drafts.worlds.length) worlds.push(...r.drafts.worlds);
     }
@@ -264,8 +266,16 @@ export class ObsidianImportRepo {
       }
     }
 
+    // 阶段归堆校验：未归属 / 越界 / 最终卷为空 / 卷层 clear 冲突 / 锁定未解锁均拦截
+    if (stages.length) {
+      const stageOverlay = overlayStages(finalVolumeList, stages);
+      if (stageOverlay.error) throw new Error(stageOverlay.error);
+      if (lc.volumes.action === 'clear') throw new Error('清空分卷纲时不能同时导入阶段');
+      if (target.layers.volumes.status === 'locked' && !lc.volumes.unlockLocked) throw new Error('分卷纲已锁定，导入阶段需确认解锁');
+    }
+
     // A1：仅当本次涉及策划层时检查多条策划记录
-    const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || ['replace', 'clear', 'fill'].includes(lc.master.action) || ['replace', 'clear', 'fill'].includes(lc.volumes.action) || ['replace', 'clear', 'fill'].includes(lc.chapters.action);
+    const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || stages.length > 0 || ['replace', 'clear', 'fill'].includes(lc.master.action) || ['replace', 'clear', 'fill'].includes(lc.volumes.action) || ['replace', 'clear', 'fill'].includes(lc.chapters.action);
     if (touchesPlanning && target.planningRecordCount > 1) throw new Error('项目存在多条策划记录，请先整理后再导入');
   }
 
@@ -281,6 +291,7 @@ export class ObsidianImportRepo {
     let master: MasterOutline | null = null;
     const volumes: VolumeOutline[] = [];
     const chapters: ChapterOutline[] = [];
+    const stages: ImportStageDraft[] = [];
     const characters: ImportCharacterInput[] = [];
     const worlds: ImportWorldInput[] = [];
     for (const r of rebuilt) {
@@ -290,14 +301,15 @@ export class ObsidianImportRepo {
         // 收窄 ImportChapterDraft → ChapterOutline（validateFinalState 已保证 number 非空）
         chapters.push({ volumeIndex: ch.volumeIndex as number, chapterNumber: ch.chapterNumber as number, title: ch.title, pov: ch.pov, chapterGoal: ch.chapterGoal, openingSituation: ch.openingSituation, centralConflict: ch.centralConflict, keyBeats: ch.keyBeats, reveal: ch.reveal, characterChange: ch.characterChange, emotionalBeat: ch.emotionalBeat, payoff: ch.payoff, endingHook: ch.endingHook });
       }
+      if (r.drafts.stages.length) stages.push(...r.drafts.stages);
       characters.push(...r.drafts.characters);
       worlds.push(...r.drafts.worlds);
     }
 
     // 策划层（仅当涉及策划时）
-    const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || input.layerChoices.master.action !== 'keep' || input.layerChoices.volumes.action !== 'keep' || input.layerChoices.chapters.action !== 'keep';
+    const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || stages.length > 0 || input.layerChoices.master.action !== 'keep' || input.layerChoices.volumes.action !== 'keep' || input.layerChoices.chapters.action !== 'keep';
     if (touchesPlanning) {
-      summary.planning = this.applyPlanning(projectId, input, master, volumes, chapters);
+      summary.planning = this.applyPlanning(projectId, input, master, volumes, chapters, stages);
     }
 
     // 人物
@@ -308,7 +320,7 @@ export class ObsidianImportRepo {
     return summary;
   }
 
-  private applyPlanning(projectId: string, input: ObsidianCommitInput, master: MasterOutline | null, volumes: VolumeOutline[], chapters: ChapterOutline[]): ObsidianImportSummary['planning'] {
+  private applyPlanning(projectId: string, input: ObsidianCommitInput, master: MasterOutline | null, volumes: VolumeOutline[], chapters: ChapterOutline[], stages: ImportStageDraft[]): ObsidianImportSummary['planning'] {
     const rows = this.db.prepare('SELECT * FROM planning_ideas WHERE project_id = ?').all(projectId) as Record<string, unknown>[];
     if (rows.length > 1) throw new Error('项目存在多条策划记录，请先整理后再导入');
     const existing = rows[0];
@@ -346,6 +358,15 @@ export class ObsidianImportRepo {
     const volumesDecision = decide(lc.volumes.action, lc.volumes.unlockLocked, volumesCurrent, JSON.stringify(volumes), volumesExists, volumesStatus === 'locked', volumesStatus);
     const chaptersDecision = decide(lc.chapters.action, lc.chapters.unlockLocked, chaptersCurrent, JSON.stringify(chapters), chaptersExists, chaptersStatus === 'locked', chaptersStatus);
 
+    // 阶段 overlay：在最终卷列表上按 volumeIndex 归堆写 stages；卷字段保持 keep/fill/replace 决策，status 不变。
+    let volumesValue = volumesDecision.value;
+    if (stages.length) {
+      const finalVols = volumesValue ? (() => { try { return JSON.parse(volumesValue) as VolumeOutline[]; } catch { return []; } })() : [];
+      const ov = overlayStages(finalVols, stages);
+      if (ov.error) throw new Error(ov.error);
+      volumesValue = JSON.stringify(ov.volumes);
+    }
+
     // 无已确认方向时构造导入方案
     let generatedOptions = existing ? JSON.parse(String(existing.generated_options || '[]')) as StoryOption[] : [];
     let selectedOption = existing?.selected_option == null ? null : Number(existing.selected_option);
@@ -371,7 +392,7 @@ export class ObsidianImportRepo {
         WHERE id = ?
       `).run(
         masterDecision.value, masterDecision.status,
-        volumesDecision.value, volumesDecision.status,
+        volumesValue, volumesDecision.status,
         chaptersDecision.value, chaptersDecision.status,
         JSON.stringify(generatedOptions), selectedOption, status, now, existing.id,
       );
@@ -384,7 +405,7 @@ export class ObsidianImportRepo {
         VALUES (?, ?, '', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         id, projectId, JSON.stringify(generatedOptions), selectedOption, status,
-        masterDecision.value, masterDecision.status, volumesDecision.value, volumesDecision.status,
+        masterDecision.value, masterDecision.status, volumesValue, volumesDecision.status,
         chaptersDecision.value, chaptersDecision.status, now, now,
       );
     }
