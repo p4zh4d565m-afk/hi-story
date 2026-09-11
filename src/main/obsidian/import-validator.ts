@@ -60,6 +60,8 @@ export function validateObsidianCommitInput(value: unknown): ValidationResult<Ob
 
     if (!Array.isArray(sel.characterOverrides)) return fail(`参数错误：selections[${si}].characterOverrides 必须是数组`);
     if (!Array.isArray(sel.worldOverrides)) return fail(`参数错误：selections[${si}].worldOverrides 必须是数组`);
+    if (sel.characterOverrides.length > IMPORT_LIMITS.maxCandidates) return fail(`参数错误：selections[${si}].characterOverrides 数量超过上限 ${IMPORT_LIMITS.maxCandidates}`);
+    if (sel.worldOverrides.length > IMPORT_LIMITS.maxCandidates) return fail(`参数错误：selections[${si}].worldOverrides 数量超过上限 ${IMPORT_LIMITS.maxCandidates}`);
 
     for (const ov of sel.characterOverrides) {
       if (!isPlainObject(ov)) return fail(`参数错误：selections[${si}].characterOverrides 含非法元素`);

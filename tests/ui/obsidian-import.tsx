@@ -15,9 +15,9 @@ async function waitFor(cond: () => boolean | Promise<boolean>, timeout = 8000, s
 
 // React 受控组件 DOM 模拟：原生 value setter + 对应事件
 function setNativeValue(el: HTMLInputElement | HTMLSelectElement, value: string) {
-  const proto = Object.getPrototypeOf(el);
-  const desc = Object.getOwnPropertyDescriptor(proto, 'value')!;
-  desc.set!.call(el, value);
+  // 用原型 setter 绕过 React value tracker，使 React 检测到 DOM 变化并触发 onChange
+  const proto = el.tagName.toLowerCase() === 'select' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, value);
 }
 function fireInput(el: HTMLElement) { el.dispatchEvent(new Event('input', { bubbles: true })); }
 function fireChange(el: HTMLElement) { el.dispatchEvent(new Event('change', { bubbles: true })); }
@@ -81,6 +81,13 @@ async function run(): Promise<Result[]> {
     check('A15 章纲第1章核心冲突正确', after.chapterOutlines[0]?.[0]?.centralConflict === '游轮宴会。', JSON.stringify(after.chapterOutlines[0]?.[0]));
     check('A16 人物写入=1', after.characters.length === 1 && after.characters[0].name === '沈屿');
     check('A17 世界观写入=1 分类 place', after.worlds.length === 1 && after.worlds[0].category === 'place', JSON.stringify(after.worlds));
+    // 7.3 第4条：断言完整字段
+    const aMaster = after.masterOutlines[0];
+    const aVolume = after.volumeOutlines[0]?.[0];
+    const aChapter = after.chapterOutlines[0]?.[0];
+    check('A18 总纲 phase 全字段', Array.isArray(aMaster?.phases) && aMaster.phases[0]?.title?.includes('陆昭') && aMaster.phases[0]?.chapterRange === '第 1-50 章', JSON.stringify(aMaster?.phases));
+    check('A19 分卷 chapterRange/keyEvents', aVolume?.chapterRange === '第 1-50 章' && Array.isArray(aVolume?.keyEvents), JSON.stringify(aVolume));
+    check('A20 章纲 chapterNumber/volumeIndex/pov', aChapter?.chapterNumber === 1 && aChapter?.volumeIndex === 0 && 'pov' in aChapter, JSON.stringify(aChapter));
 
     // ============ 场景 B：取消世界观候选 ============
     await invoke('reset', 'basic');
@@ -132,14 +139,40 @@ async function run(): Promise<Result[]> {
     }
     const lockReason = document.body.textContent?.includes('锁定') ?? false;
     check('D1 锁定总纲 replace 显示解锁提示', lockReason);
+    // 未解锁时按钮应禁用
+    const dBtnBefore = findButton('确认导入');
+    check('D2 未解锁时按钮禁用', dBtnBefore ? (dBtnBefore as HTMLButtonElement).disabled : false);
     // 勾选解锁 checkbox
     const unlockCbs = findCheckboxes().filter(cb => {
       const span = cb.closest('span') || cb.parentElement;
       return span?.textContent?.includes('解锁');
     });
-    check('D2 解锁 checkbox 存在', unlockCbs.length > 0);
-    if (unlockCbs.length > 0) unlockCbs[0].click();
+    check('D3 解锁 checkbox 存在', unlockCbs.length > 0);
+    if (unlockCbs.length === 0) throw new Error('解锁 checkbox 不存在');
+    unlockCbs[0].click();
     await wait(100);
+    // 分卷纲（locked）需 clear 并解锁，避免「替换总纲但分卷 keep」的上下游约束
+    const volActionSelect = actionSelects[1];
+    if (volActionSelect) {
+      setNativeValue(volActionSelect as HTMLSelectElement, 'clear');
+      fireChange(volActionSelect);
+      await wait(200);
+    }
+    const volUnlockCbs = findCheckboxes().filter(cb => {
+      const span = cb.closest('span') || cb.parentElement;
+      return span?.textContent?.includes('解锁');
+    });
+    if (volUnlockCbs.length > 1) volUnlockCbs[1].click();
+    await wait(200);
+    const dBtnAfter = findButton('确认导入');
+    check('D4 解锁后可提交', dBtnAfter ? !(dBtnAfter as HTMLButtonElement).disabled : false);
+    if (dBtnAfter && !(dBtnAfter as HTMLButtonElement).disabled) (dBtnAfter as HTMLButtonElement).click();
+    await waitFor(async () => {
+      const s = await invoke('snapshot');
+      return s.masterOutlines[0]?.ending === '新结局';
+    }, 8000);
+    const dAfter = await invoke('snapshot');
+    check('D5 解锁后提交成功（总纲已替换）', dAfter.masterOutlines[0]?.ending === '新结局', JSON.stringify(dAfter.masterOutlines[0]));
 
     // ============ 场景 E：上下游非法组合 ============
     await invoke('reset', 'upstream-conflict');
@@ -192,12 +225,27 @@ async function run(): Promise<Result[]> {
     if (!charCb) throw new Error('人物覆盖 checkbox 不存在');
     if (!(charCb as HTMLInputElement).checked) (charCb as HTMLInputElement).click();
     await wait(100);
+    // R2/7.3：通过 DOM 编辑人物最终名称（改为「沈屿改」，覆盖后 id 应保留但 name 更新）
+    const charNameInput = Array.from(document.querySelectorAll('input')).find(i => !(i as HTMLInputElement).type || (i as HTMLInputElement).type === 'text' ? (i as HTMLInputElement).value === '沈屿' : false);
+    check('G1b 人物名称输入框存在', !!charNameInput);
+    if (charNameInput) {
+      setNativeValue(charNameInput as HTMLInputElement, '沈屿改');
+      fireInput(charNameInput);
+      await wait(150);
+    }
+    // 诊断：验证 input.value 是否已改变
+    const afterInput = Array.from(document.querySelectorAll('input')).find(i => ((i as HTMLInputElement).type === 'text' || !(i as HTMLInputElement).type) && (i as HTMLInputElement).value === '沈屿改');
     const gConfirm = findButton('确认导入');
-    if (gConfirm && !(gConfirm as HTMLButtonElement).disabled) (gConfirm as HTMLButtonElement).click();
-    await waitFor(async () => (await invoke('snapshot')).characters.length > 0, 8000);
+    const gBtnDisabled = gConfirm ? (gConfirm as HTMLButtonElement).disabled : true;
+    if (gConfirm && !gBtnDisabled) (gConfirm as HTMLButtonElement).click();
+    await waitFor(async () => {
+      const s = await invoke('snapshot');
+      return s.characters[0]?.name === '沈屿改';
+    }, 8000);
     const gAfter = await invoke('snapshot');
     check('G3 覆盖人物保留原 id', gAfter.characters[0]?.id === 'c1', JSON.stringify(gAfter.characters));
     check('G4 覆盖人物保留 profileOutline', gAfter.characters[0]?.profile_outline === '[{"id":"node-a"}]', JSON.stringify(gAfter.characters[0]?.profile_outline));
+    check('G4b 覆盖人物名称已更新', gAfter.characters[0]?.name === '沈屿改', `name=${JSON.stringify(gAfter.characters[0]?.name)}, personality=${JSON.stringify(gAfter.characters[0]?.personality)}, count=${gAfter.characters.length}, afterInput=${!!afterInput}, btnDisabled=${gBtnDisabled}`);
 
     // ============ 场景 G2：覆盖同名世界观保留 id 与 parentId ============
     await invoke('reset', 'overwrite-world');
@@ -213,7 +261,10 @@ async function run(): Promise<Result[]> {
     await wait(100);
     const g2Confirm = findButton('确认导入');
     if (g2Confirm && !(g2Confirm as HTMLButtonElement).disabled) (g2Confirm as HTMLButtonElement).click();
-    await waitFor(async () => (await invoke('snapshot')).worlds.length > 0, 8000);
+    await waitFor(async () => {
+      const s = await invoke('snapshot');
+      return s.worlds.find((w: any) => w.id === 'w1')?.description === '新描述。';
+    }, 8000);
     const g2After = await invoke('snapshot');
     const g2World = g2After.worlds.find((w: any) => w.id === 'w1');
     check('G5 覆盖世界观保留原 id', g2World?.id === 'w1', JSON.stringify(g2After.worlds));
@@ -252,8 +303,8 @@ async function run(): Promise<Result[]> {
     check('H2 章纲 volumeIndex 最终=1（选择卷 2）', hAfter.chapterOutlines[0]?.[0]?.volumeIndex === 1, `chapterOutlines=${JSON.stringify(hAfter.chapterOutlines)}`);
 
     // ============ 场景 I：提交期间控件冻结 ============
-    await invoke('setDelays', { commit: 300 });
     await invoke('reset', 'basic');
+    await invoke('setDelays', { commit: 300 });
     await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
     await waitFor(() => document.body.textContent?.includes('完整大纲'), 8000);
     const iActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
@@ -288,6 +339,29 @@ async function run(): Promise<Result[]> {
     check('J1 reparse pending 期间按钮禁用', jConfirm ? (jConfirm as HTMLButtonElement).disabled : false);
     await invoke('setDelays', { reparse: 0 });
     await wait(600); // 等 reparse 完成
+
+    // ============ 场景 K：分页到达最后一条 ============
+    await invoke('reset', 'many-chapters');
+    await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
+    await waitFor(() => document.body.textContent?.includes('章节细纲'), 8000);
+    // 切换到章纲候选
+    const kChapterRow = Array.from(document.querySelectorAll('label')).find(l => l.textContent?.includes('章节细纲'));
+    if (kChapterRow) {
+      const kCb = kChapterRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      const kWas = kCb?.checked ?? false;
+      (kChapterRow as HTMLElement).click();
+      await wait(100);
+      if (kWas && kCb && !kCb.checked) kCb.click();
+      await wait(100);
+    }
+    // 章纲分页：60 章，每页 50，应有两页
+    const kNextBtn = findButton('下一页');
+    check('K1 分页下一页按钮存在', !!kNextBtn);
+    if (!kNextBtn) throw new Error('下一页按钮不存在（可能未渲染分页）');
+    (kNextBtn as HTMLButtonElement).click();
+    await wait(200);
+    const kHasLast = document.body.textContent?.includes('第60章') ?? false;
+    check('K2 点击下一页后到达最后一条（第60章）', kHasLast);
 
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });

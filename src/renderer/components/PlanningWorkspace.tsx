@@ -71,9 +71,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const currentProjectIdRef = useRef(project?.id ?? null);
   currentProjectIdRef.current = project?.id ?? null;
 
-  const loadPlanning = (projectId: string, ticket = projectLoadGuardRef.current.select(projectId)) => {
-    window.electronAPI.invoke('db:planning:findByProject', projectId).then((res: any) => {
-      if (currentProjectIdRef.current !== projectId || !projectLoadGuardRef.current.isCurrent(ticket)) return;
+  const loadPlanning = (projectId: string, ticket = projectLoadGuardRef.current.select(projectId)): Promise<boolean> => {
+    return window.electronAPI.invoke('db:planning:findByProject', projectId).then((res: any) => {
+      if (currentProjectIdRef.current !== projectId || !projectLoadGuardRef.current.isCurrent(ticket)) return false;
       if (res?.success && res.data) {
         const data = res.data as PlanningIdea;
         setIdea(data.idea);
@@ -87,11 +87,14 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         setVolumeStatus(data.volumeStatus);
         setChapterOutlines(data.chapterOutlines || []);
         setChapterOutlineStatus(data.chapterOutlineStatus || 'empty');
+        return true;
       }
+      return false;
     }).catch((loadError: unknown) => {
       if (currentProjectIdRef.current === projectId && projectLoadGuardRef.current.isCurrent(ticket)) {
         setError((loadError as Error).message || '策划数据加载失败');
       }
+      return false;
     });
   };
 
@@ -353,8 +356,10 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
           open={importOpen}
           onClose={() => setImportOpen(false)}
           onImported={async (summary) => {
-            loadPlanning(project!.id);
-            if (onRefreshImportedEntities) await onRefreshImportedEntities(project!.id);
+            // R1：等待策划与实体刷新，任一失败则抛错，使面板停留 refreshPending
+            const planningOk = await loadPlanning(project!.id);
+            const entitiesOk = onRefreshImportedEntities ? await onRefreshImportedEntities(project!.id) : true;
+            if (!planningOk || !entitiesOk) throw new Error('导入已写入，但界面刷新失败');
           }}
         />
 

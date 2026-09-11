@@ -119,6 +119,13 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       write('大纲_卷1.md', ['# 卷 1（第 1-10 章）', '## 本卷目标', '开端'].join('\n'));
       write('大纲_卷2.md', ['# 卷 2（第 11-20 章）', '## 本卷目标', '发展'].join('\n'));
       write('章节细纲.md', ['| 章 | 标题 | 核心事件 |', '|---|---|---|', '| 1 | 起点 | 开场。 |', '| 2 | 转折 | 冲突。 |'].join('\n'));
+    } else if (scenario === 'many-chapters') {
+      // 60 章 + 1 卷，用于分页预览到达最后一条
+      write('完整大纲.md', ['# 完整大纲', '## 一、作品定位', '- 类型：BL', '完整设定：设定。'].join('\n'));
+      write('大纲_卷1.md', ['# 卷 1（第 1-60 章）', '## 本卷目标', '开端'].join('\n'));
+      const rows = ['| 章 | 标题 | 核心事件 |', '|---|---|---|'];
+      for (let i = 1; i <= 60; i++) rows.push(`| ${i} | 第${i}章 | 事件${i}。 |`);
+      write('章节细纲.md', rows.join('\n'));
     } else {
       base();
     }

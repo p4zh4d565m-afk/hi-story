@@ -33,6 +33,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   const [committing, setCommitting] = useState(false);
   // 提交/刷新状态机（P0-8）：写库成功后进入 refreshPending，只允许重试刷新或关闭，不再允许改输入或再次 commit
   const [refreshPending, setRefreshPending] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [savedSummary, setSavedSummary] = useState<ObsidianImportSummary | null>(null);
   const [operationId, setOperationId] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -57,6 +58,9 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   // 让 useRef 里创建的 onApply 闭包始终读到最新项目名，避免首次渲染闭包陷阱
   const projectNameRef = useRef(project?.name ?? '');
   projectNameRef.current = project?.name ?? '';
+
+  // R4：候选级 canonical edit state，每个候选保存 slots + defaultVolumeIndex，供 reparse 与重试使用最新完整快照
+  const editStateRef = useRef<Record<string, { slots: ObsidianImportSlot[]; defaultVolumeIndex: number | null }>>({});
 
   const guardRef = useRef(createObsidianImportGuard({
     invoke: (channel, ...args) => (window as any).electronAPI.invoke(channel, ...args),
@@ -114,6 +118,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     setStoryOptionDraft(null);
     setCommitting(false);
     setRefreshPending(false);
+    setRefreshing(false);
     setSavedSummary(null);
     if (open && project?.id) {
       guardRef.current.prepare(project.id);
@@ -278,24 +283,37 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   // 只重试刷新，绝不再次调用 commit IPC，也不生成新 operationId
   const retryRefresh = async (summary: ObsidianImportSummary) => {
+    if (refreshing) return; // 刷新进行中禁止并发重试
+    setRefreshing(true);
     try {
       await onImported(summary);
       onClose();
     } catch (refreshError) {
       setError('导入已写入，界面刷新失败');
+    } finally {
+      setRefreshing(false);
     }
   };
 
   if (!open) return null;
 
-  const setSlot = (candidate: ObsidianImportCandidate, slot: ObsidianImportSlot, enabled: boolean) => {
-    const nextSlots = enabled ? [...new Set([...candidate.slots, slot])] : candidate.slots.filter(s => s !== slot);
-    markEdited();
+  // R4：从 canonical edit state 读最新完整快照发起 reparse，避免闭包陷阱
+  const runReparse = (candidate: ObsidianImportCandidate) => {
+    const edit = editStateRef.current[candidate.relativePath] ?? { slots: candidate.slots, defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null };
     setReparseTick(t => t + 1); // 进入 pending
-    guardRef.current.reparse({
+    return guardRef.current.reparse({
       projectId: project!.id, relativePath: candidate.relativePath, hash: candidate.hash,
-      slots: nextSlots as ObsidianImportSlot[], defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null,
-    }).then(result => {
+      slots: edit.slots, defaultVolumeIndex: edit.defaultVolumeIndex,
+    });
+  };
+
+  const setSlot = (candidate: ObsidianImportCandidate, slot: ObsidianImportSlot, enabled: boolean) => {
+    const cur = editStateRef.current[candidate.relativePath] ?? { slots: candidate.slots, defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null };
+    const nextSlots = enabled ? [...new Set([...cur.slots, slot])] : cur.slots.filter(s => s !== slot);
+    // 先原子更新 canonical edit state，再以最新完整快照 reparse
+    editStateRef.current[candidate.relativePath] = { slots: nextSlots as ObsidianImportSlot[], defaultVolumeIndex: cur.defaultVolumeIndex };
+    markEdited();
+    runReparse(candidate).then(result => {
       if (result) {
         setPrepareResult(prev => prev ? {
           ...prev,
@@ -315,13 +333,11 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   };
 
   const setVolumeFor = (candidate: ObsidianImportCandidate, index: number | null) => {
+    const cur = editStateRef.current[candidate.relativePath] ?? { slots: candidate.slots, defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null };
+    editStateRef.current[candidate.relativePath] = { slots: cur.slots, defaultVolumeIndex: index };
     setVolumeAssign(prev => ({ ...prev, [candidate.relativePath]: index }));
     markEdited();
-    setReparseTick(t => t + 1); // 进入 pending
-    guardRef.current.reparse({
-      projectId: project!.id, relativePath: candidate.relativePath, hash: candidate.hash,
-      slots: candidate.slots, defaultVolumeIndex: index,
-    }).then(result => {
+    runReparse(candidate).then(result => {
       if (result) {
         setPrepareResult(prev => prev ? {
           ...prev,
@@ -329,6 +345,12 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
         } : prev);
       }
     }).finally(() => setReparseTick(t => t + 1)); // 退出 pending
+  };
+
+  // R3：reparse 失败重试——用最新 canonical edit state 重发
+  const retryReparse = (candidate: ObsidianImportCandidate) => {
+    setError(null);
+    runReparse(candidate).finally(() => setReparseTick(t => t + 1));
   };
 
   const renderFields = (candidate: ObsidianImportCandidate) => {
@@ -497,14 +519,14 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   };
 
   return (
-    <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-8" onMouseDown={e => { if (e.target === e.currentTarget && !committing) onClose(); }}>
+    <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-8" onMouseDown={e => { if (e.target === e.currentTarget && !committing && !refreshing) onClose(); }}>
       <div className="w-full max-w-6xl h-[85vh] bg-float-900 border border-float-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
         <header className="px-5 py-3 border-b border-float-700 flex items-center justify-between">
           <div>
             <h2 className="text-base font-semibold text-white">从 Obsidian 导入策划</h2>
             <p className="text-xs text-amber-300 mt-0.5">单向只读导入，不修改 Obsidian 文件</p>
           </div>
-          <button onClick={onClose} disabled={frozen} className="text-gray-400 hover:text-white text-xl disabled:opacity-40">×</button>
+          <button onClick={onClose} disabled={committing || refreshing} className="text-gray-400 hover:text-white text-xl disabled:opacity-40">×</button>
         </header>
 
         {loading && <p className="px-5 py-3 text-sm text-gray-400">正在扫描 Obsidian 目录…</p>}
@@ -542,6 +564,16 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                           {issue.severity === 'blocking' ? '⛔' : '⚠'} {issue.message}
                         </p>
                       ))}
+                    </div>
+                  )}
+                  {/* R3：reparse 失败重试入口 */}
+                  {guardRef.current.getReparseState(project?.id ?? '', selectedCandidate.relativePath) === 'failed' && (
+                    <div className="mb-4 flex items-center gap-2">
+                      <p className="text-xs text-red-300">该候选重新解析失败</p>
+                      <button onClick={() => retryReparse(selectedCandidate)} disabled={committing}
+                        className="px-2 py-1 bg-float-800 rounded text-xs text-gray-200 disabled:opacity-40">
+                        重新解析
+                      </button>
                     </div>
                   )}
                   {/* 槽位勾选 */}
@@ -628,12 +660,12 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             <p className="text-[11px] text-gray-500">预计：新建 {stats.create} · 覆盖 {stats.update} · 跳过 {stats.skip}</p>
             {refreshPending ? (
               <div className="flex items-center gap-2">
-                <button onClick={() => savedSummary && retryRefresh(savedSummary)}
-                  className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">
-                  重试刷新
+                <button onClick={() => savedSummary && retryRefresh(savedSummary)} disabled={refreshing}
+                  className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
+                  {refreshing ? '刷新中…' : '重试刷新'}
                 </button>
-                <button onClick={onClose}
-                  className="px-3 py-2 rounded bg-float-700 text-xs text-gray-300 hover:bg-float-600">
+                <button onClick={onClose} disabled={refreshing}
+                  className="px-3 py-2 rounded bg-float-700 text-xs text-gray-300 hover:bg-float-600 disabled:opacity-40">
                   关闭
                 </button>
               </div>

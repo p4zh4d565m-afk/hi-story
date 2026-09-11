@@ -5,31 +5,40 @@ import { ObsidianImportRepo } from '../db/repositories/obsidian-import.repo';
 import { validateObsidianCommitInput } from '../obsidian/import-validator';
 import type { IpcResult, ObsidianCommitInput, ObsidianImportReparseInput } from '../../renderer/types';
 
-/** 有界稳定序列化：递归排序对象键、保留数组顺序，遇到循环/超预算返回 null。 */
-function canonicalize(value: unknown, budget: number): string | null {
-  if (budget <= 0) return null;
-  if (value === null) return 'null';
+/** 有界稳定序列化：递归排序对象键、保留数组顺序，遇到循环/超预算返回 null。
+ * 预算按累计字节数计算（而非递归深度），超限立即终止，避免先拼出完整字符串再检查。 */
+function canonicalize(value: unknown, state: { bytes: number }, budget: number): string | null {
+  if (state.bytes > budget) return null;
+  if (value === null) { state.bytes += 4; return 'null'; }
   const t = typeof value;
-  if (t === 'string') return JSON.stringify(value);
-  if (t === 'number' || t === 'boolean') return String(value);
-  if (t === 'undefined') return 'undefined';
+  if (t === 'string') {
+    const s = JSON.stringify(value);
+    state.bytes += Buffer.byteLength(s, 'utf8');
+    return state.bytes > budget ? null : s;
+  }
+  if (t === 'number' || t === 'boolean') { const s = String(value); state.bytes += s.length; return s; }
+  if (t === 'undefined') { state.bytes += 9; return 'undefined'; }
   if (t !== 'object') return null;
   if (Array.isArray(value)) {
     const parts: string[] = [];
     for (const item of value) {
-      const s = canonicalize(item, budget - 1);
+      const s = canonicalize(item, state, budget);
       if (s === null) return null;
       parts.push(s);
     }
+    state.bytes += 2 + Math.max(0, parts.length - 1);
     return `[${parts.join(',')}]`;
   }
   const keys = Object.keys(value as Record<string, unknown>).sort();
   const parts: string[] = [];
   for (const k of keys) {
-    const s = canonicalize((value as Record<string, unknown>)[k], budget - 1);
+    const ks = JSON.stringify(k);
+    state.bytes += Buffer.byteLength(ks, 'utf8') + 1;
+    const s = canonicalize((value as Record<string, unknown>)[k], state, budget);
     if (s === null) return null;
-    parts.push(`${JSON.stringify(k)}:${s}`);
+    parts.push(`${ks}:${s}`);
   }
+  state.bytes += 2 + Math.max(0, parts.length - 1);
   return `{${parts.join(',')}}`;
 }
 
@@ -38,10 +47,9 @@ export const INVALID_INPUT_FINGERPRINT = 'invalid_input';
 
 export function hashCanonicalCommitInput(input: ObsidianCommitInput): string {
   try {
-    const canonical = canonicalize(input, 10000);
+    const state = { bytes: 0 };
+    const canonical = canonicalize(input, state, 64 * 1024 * 1024);
     if (canonical === null) return INVALID_INPUT_FINGERPRINT;
-    const bytes = Buffer.byteLength(canonical, 'utf8');
-    if (bytes > 64 * 1024 * 1024) return INVALID_INPUT_FINGERPRINT;
     return createHash('sha256').update(canonical).digest('hex');
   } catch {
     return INVALID_INPUT_FINGERPRINT;
