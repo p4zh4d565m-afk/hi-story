@@ -104,14 +104,33 @@ export function parseMaster(content: string, name: string): ParseResult<MasterOu
   outline.structureModel = findField(posLines, '类型');
   outline.protagonistArc = findField(posLines, '人设定调');
 
-  // phases：三卷大纲索引
-  const index = findSection(blocks, '三卷大纲索引', 2);
-  const indexLines = listText(index);
-  const phaseRe = /(卷\s*\d+[^（(]*)[（(]第\s*(\d+)[—-]\s*(\d+)\s*章/;
-  for (const line of indexLines) {
-    const m = line.match(phaseRe);
-    if (m) {
-      outline.phases.push({ title: m[1].trim(), purpose: '', chapterRange: `第 ${m[2]}-${m[3]} 章`, keyEvents: [], turningPoint: '', emotionTrend: '' });
+  // phases：优先识别「## 阶段 N：标题（章范围）」heading + 小节列表；缺省回退「三卷大纲索引」扁平列表项
+  const phaseHeadings = blocks.filter(b => b.type === 'heading' && b.level === 2 && /^阶段\s*\d+/.test(b.text));
+  if (phaseHeadings.length) {
+    const phaseTitleRe = /^阶段\s*\d+\s*[:：]?\s*(.+?)\s*[（(](第\s*\d+[—-]\s*\d+\s*章)[）)]$/;
+    for (const h of phaseHeadings) {
+      const sec = findSection(blocks, h.text, 2);
+      const secLines = listText(sec);
+      const m = h.text.match(phaseTitleRe);
+      const keyEventsText = findField(secLines, '关键事件');
+      outline.phases.push({
+        title: m ? m[1].trim() : h.text,
+        purpose: findField(secLines, '目的'),
+        chapterRange: m ? m[2] : '',
+        keyEvents: keyEventsText.split(/[；、]/).map(s => s.trim()).filter(Boolean),
+        turningPoint: findField(secLines, '转折点'),
+        emotionTrend: findField(secLines, '情绪趋势'),
+      });
+    }
+  } else {
+    const index = findSection(blocks, '三卷大纲索引', 2);
+    const indexLines = listText(index);
+    const phaseRe = /(卷\s*\d+[^（(]*)[（(]第\s*(\d+)[—-]\s*(\d+)\s*章/;
+    for (const line of indexLines) {
+      const m = line.match(phaseRe);
+      if (m) {
+        outline.phases.push({ title: m[1].trim(), purpose: '', chapterRange: `第 ${m[2]}-${m[3]} 章`, keyEvents: [], turningPoint: '', emotionTrend: '' });
+      }
     }
   }
 

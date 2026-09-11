@@ -55,6 +55,40 @@ describe('Obsidian 导入字段映射（真实格式）', () => {
     expect(r.value.storyPromises[0]).toContain('身份伪装');
   });
 
+  it('解析总纲阶段小节：阶段 heading 下的小节填充 purpose/转折点/情绪/关键事件', () => {
+    const src = [
+      '# 测试总纲',
+      '> 完整设定：一个前提。',
+      '',
+      '## 作品定位',
+      '- 类型：BL',
+      '- 结局：开放式',
+      '- 人设定调：作精',
+      '',
+      '## 阶段 1：骗婚骗心（第 1-50 章）',
+      '- 目的：建立骗局与三角张力',
+      '- 转折点：性别暴露',
+      '- 情绪趋势：暧昧转暗流',
+      '- 关键事件：黄金三章、订婚、身份暴露',
+      '',
+      '## 阶段 2：蛇窝囚笼（第 51-100 章）',
+      '- 目的：囚禁与反制',
+      '- 转折点：第三次逃跑',
+      '- 情绪趋势：窒息转反抗',
+      '- 关键事件：蛇窝审讯、中点灾难',
+    ].join('\n');
+    const r = parseMaster(src, '测试总纲');
+    expect(r.value.phases).toHaveLength(2);
+    expect(r.value.phases[0]).toMatchObject({
+      title: '骗婚骗心',
+      chapterRange: '第 1-50 章',
+      purpose: '建立骗局与三角张力',
+      turningPoint: '性别暴露',
+      emotionTrend: '暧昧转暗流',
+    });
+    expect(r.value.phases[0].keyEvents).toEqual(['黄金三章', '订婚', '身份暴露']);
+  });
+
   it('解析分卷：卷文件（标题含章范围、核心冲突、阶段拆解、卷末钩子）', () => {
     const src = [
       '# 卷 1 陆昭线 · 骗婚骗心（第 1-50 章）',
