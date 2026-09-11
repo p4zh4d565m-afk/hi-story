@@ -2,7 +2,7 @@ import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import path from 'path';
-import { scanImportCandidates, identifySlots, sha256, resolveInsideRoot, IMPORT_LIMITS } from '../../../src/main/obsidian/import-candidates';
+import { scanImportCandidates, identifySlots, isOutlineAuxiliary, sha256, resolveInsideRoot, IMPORT_LIMITS } from '../../../src/main/obsidian/import-candidates';
 
 describe('Obsidian 导入候选扫描', () => {
   let vault: string;
@@ -34,6 +34,12 @@ describe('Obsidian 导入候选扫描', () => {
     expect(paths).toContain('我有一个妹妹_大纲_卷1.md');
   });
 
+  it('文件名中间含「阶段N」的备忘文件不因锚定缺失被整文件忽略', async () => {
+    await write('分卷大纲/卷一/备忘-阶段1讨论.md', '# 备忘\n## 讨论\n阶段1 的讨论稿');
+    const r = await scanImportCandidates(vault);
+    expect(r.candidates.some(c => c.relativePath === '分卷大纲/卷一/备忘-阶段1讨论.md')).toBe(true);
+  });
+
   it('无法分类的 Markdown 保留为 unclassified 并进入候选', async () => {
     await write('资料/随手记.md', '没有类型标记');
     const r = await scanImportCandidates(vault);
@@ -50,6 +56,17 @@ describe('Obsidian 导入候选扫描', () => {
     expect(identifySlots('分卷大纲/卷一/阶段1.md', {}).slots).toEqual([]);
     expect(identifySlots('小说大纲_分卷大纲.md', {}).slots).toEqual([]);
     expect(identifySlots('我有一个妹妹_大纲_卷1.md', {}).slots).toEqual(['volume']);
+  });
+
+  it('identifySlots：阶段文件即使显式 role:volume 仍为空槽位', () => {
+    expect(identifySlots('分卷大纲/卷一/阶段1.md', { role: 'volume' }).slots).toEqual([]);
+  });
+
+  it('isOutlineAuxiliary：阶段文件与分卷总览为 true，真卷文件为 false', () => {
+    expect(isOutlineAuxiliary('分卷大纲/卷一/阶段1-订婚.md')).toBe(true);
+    expect(isOutlineAuxiliary('小说大纲_分卷大纲.md')).toBe(true);
+    expect(isOutlineAuxiliary('分卷大纲/卷一大纲.md')).toBe(false);
+    expect(isOutlineAuxiliary('我有一个妹妹_大纲_卷1.md')).toBe(false);
   });
 
   it('路径逃逸被拒绝', async () => {

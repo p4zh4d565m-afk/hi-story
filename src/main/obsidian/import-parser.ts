@@ -104,10 +104,10 @@ export function parseMaster(content: string, name: string): ParseResult<MasterOu
   outline.structureModel = findField(posLines, '类型');
   outline.protagonistArc = findField(posLines, '人设定调');
 
-  // phases：优先识别「## 阶段 N：标题（章范围）」heading + 小节列表；缺省回退「三卷大纲索引」扁平列表项
-  const phaseHeadings = blocks.filter((b): b is Extract<MarkdownBlock, { type: 'heading' }> => b.type === 'heading' && b.level === 2 && /^阶段\s*\d+/.test(b.text));
+  // phases：仅当至少一条 h2「阶段 N」完整命中标题+章范围时才走 heading 路径；否则回退「三卷大纲索引」
+  const phaseTitleRe = /^阶段\s*\d+\s*[:：]?\s*(.+?)\s*[（(](第\s*\d+[—-]\s*\d+\s*章)[）)]$/;
+  const phaseHeadings = blocks.filter((b): b is Extract<MarkdownBlock, { type: 'heading' }> => b.type === 'heading' && b.level === 2 && phaseTitleRe.test(b.text));
   if (phaseHeadings.length) {
-    const phaseTitleRe = /^阶段\s*\d+\s*[:：]?\s*(.+?)\s*[（(](第\s*\d+[—-]\s*\d+\s*章)[）)]$/;
     for (const h of phaseHeadings) {
       const sec = findSection(blocks, h.text, 2);
       const secLines = listText(sec);

@@ -37,7 +37,7 @@ export function isOutlineAuxiliary(relativePath: string): boolean {
   // 卷目录（分卷大纲/卷N 或 第N卷）下的「阶段N」文件
   const dirSegs = relativePath.split('/').slice(0, -1).map(s => s.toLowerCase());
   const inVolumeDir = dirSegs.some(s => /分卷大纲|^第.{1,8}卷/.test(s));
-  const isStageFile = /阶段\s*\d+/.test(base);
+  const isStageFile = /^阶段\s*\d+/.test(base);
   if (inVolumeDir && isStageFile) return true;
   // 分卷总览：文件名本身含「分卷大纲」但非「大纲_卷N」形式（如「小说大纲_分卷大纲.md」），且不在卷目录内
   if (/分卷大纲/.test(base) && !/大纲_卷\d/.test(base) && !inVolumeDir) return true;

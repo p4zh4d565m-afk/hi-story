@@ -50,6 +50,11 @@ describe('Obsidian 导入字段映射（真实格式）', () => {
     expect(r.value.structureModel).toBe('BL 男受 ABO · 未来星际');
     expect(r.value.phases).toHaveLength(3);
     expect(r.value.phases[0]).toMatchObject({ title: '卷 1 陆昭线 · 骗婚骗心', chapterRange: '第 1-50 章' });
+    // 索引型 phase 子字段必须显式为空，不能靠 toMatchObject 放过
+    expect(r.value.phases[0]).toEqual({
+      title: '卷 1 陆昭线 · 骗婚骗心', purpose: '', chapterRange: '第 1-50 章',
+      keyEvents: [], turningPoint: '', emotionTrend: '',
+    });
     expect(r.value.subplots).toHaveLength(2);
     expect(r.value.storyPromises).toHaveLength(2);
     expect(r.value.storyPromises[0]).toContain('身份伪装');
@@ -87,6 +92,37 @@ describe('Obsidian 导入字段映射（真实格式）', () => {
       emotionTrend: '暧昧转暗流',
     });
     expect(r.value.phases[0].keyEvents).toEqual(['黄金三章', '订婚', '身份暴露']);
+  });
+
+  it('解析总纲：不合规「## 阶段 N」不得关掉三卷索引（8.2.3）', () => {
+    const src = [
+      '# 测试总纲',
+      '> 完整设定：一个前提。',
+      '',
+      '## 作品定位',
+      '- 类型：BL',
+      '- 结局：开放式',
+      '- 人设定调：作精',
+      '',
+      '## 三卷大纲索引',
+      '',
+      '1. [卷 1 霍昭线（第 1-50 章）](卷1.md)',
+      '2. [卷 2 祁景然线（第 51-100 章）](卷2.md)',
+      '3. [卷 3 萧君耀线（第 101-150 章）](卷3.md)',
+      '',
+      '## 阶段 1 草稿',
+      '- 这是不合规的阶段标题（无章范围）',
+    ].join('\n');
+    const r = parseMaster(src, '测试总纲');
+    expect(r.value.phases).toHaveLength(3);
+    expect(r.value.phases[0]).toMatchObject({
+      title: '卷 1 霍昭线',
+      chapterRange: '第 1-50 章',
+      purpose: '',
+      turningPoint: '',
+      emotionTrend: '',
+    });
+    expect(r.value.phases[0].keyEvents).toEqual([]);
   });
 
   it('解析分卷：卷文件（标题含章范围、核心冲突、阶段拆解、卷末钩子）', () => {
