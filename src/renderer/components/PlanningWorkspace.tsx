@@ -55,6 +55,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  // 改总纲字段会清空分卷纲与 stages 的就地提示（独立于 error 通道，见 Spec R6）
+  const [stageClearedNotice, setStageClearedNotice] = useState(false);
   const [status, setStatus] = useState<PlanningIdea['status']>('draft');
   const [masterOutline, setMasterOutline] = useState<MasterOutline | null>(null);
   const [outlineStatus, setOutlineStatus] = useState<PlanningIdea['outlineStatus']>('empty');
@@ -87,6 +89,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         setVolumeStatus(data.volumeStatus);
         setChapterOutlines(data.chapterOutlines || []);
         setChapterOutlineStatus(data.chapterOutlineStatus || 'empty');
+        setStageClearedNotice(false);
         return true;
       }
       return false;
@@ -103,6 +106,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     setMasterOutline(null); setOutlineStatus('empty'); setError('');
     setVolumeOutlines([]); setVolumeStatus('empty');
     setChapterOutlines([]); setChapterOutlineStatus('empty'); setActiveVolume(0);
+    setStageClearedNotice(false);
     const ticket = projectLoadGuardRef.current.select(project?.id ?? null);
     if (!project) return;
     loadPlanning(project.id, ticket);
@@ -226,7 +230,11 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     if (!masterOutline) return;
     setMasterOutline({ ...masterOutline, [field]: value });
     if (outlineStatus === 'locked') setOutlineStatus('generated');
-    if (volumeOutlines.length) { setVolumeOutlines([]); setVolumeStatus('empty'); }
+    if (volumeOutlines.length) {
+      const hadStages = volumeOutlines.some(v => (v.stages ?? []).length > 0);
+      if (hadStages) setStageClearedNotice(true);
+      setVolumeOutlines([]); setVolumeStatus('empty');
+    }
     if (chapterOutlines.length) { setChapterOutlines([]); setChapterOutlineStatus('empty'); }
   };
 
@@ -235,7 +243,11 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     const phases = masterOutline.phases.map((phase, i) => i === index ? { ...phase, [field]: value } : phase);
     setMasterOutline({ ...masterOutline, phases });
     if (outlineStatus === 'locked') setOutlineStatus('generated');
-    if (volumeOutlines.length) { setVolumeOutlines([]); setVolumeStatus('empty'); }
+    if (volumeOutlines.length) {
+      const hadStages = volumeOutlines.some(v => (v.stages ?? []).length > 0);
+      if (hadStages) setStageClearedNotice(true);
+      setVolumeOutlines([]); setVolumeStatus('empty');
+    }
     if (chapterOutlines.length) { setChapterOutlines([]); setChapterOutlineStatus('empty'); }
   };
 
@@ -266,6 +278,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       const volumes = parseVolumeOutlines(raw);
       setVolumeOutlines(volumes);
       setChapterOutlines([]); setChapterOutlineStatus('empty');
+      setStageClearedNotice(false);
       await save('confirmed', selectedOption, options, masterOutline, 'locked', volumes, 'generated', [], 'empty');
     } catch (err) { setError((err as Error).message); }
     finally { setVolumeLoading(false); }
@@ -435,6 +448,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
                   </div>)}</div>
 
                   {(['subplots', 'storyPromises'] as const).map(field => <label key={field} className="block"><span className="block text-xs text-gray-500 mb-1">{field === 'subplots' ? '副线及交汇方式（每行一项）' : '必须兑现的故事承诺（每行一项）'}</span><textarea rows={4} value={masterOutline[field].join('\n')} onChange={e => updateOutlineField(field, e.target.value.split('\n').filter(Boolean))} className="w-full bg-editor-900 border border-editor-700 rounded p-2 text-sm text-gray-300" /></label>)}
+                  {stageClearedNotice && (
+                    <p className="text-xs text-amber-400">分卷纲与已导入的卷内阶段已从当前编辑区清空（尚未写入数据库）。保存总纲会把清空写入数据库；如需恢复，请重新加载本项目，或重新从 Obsidian 导入。</p>
+                  )}
                   <p className={`text-xs ${outlineStatus === 'locked' ? 'text-green-400' : 'text-yellow-500'}`}>{outlineStatus === 'locked' ? '✓ 总纲已锁定，可以继续拆分卷纲' : '总纲尚未锁定，你可以直接修改所有字段'}</p>
                 </div>}
               </div>

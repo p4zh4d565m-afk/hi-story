@@ -151,6 +151,38 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
         chapters: '[]', chapterStatus: 'empty', status: 'confirmed', selectedOption: 0,
       });
       write('分卷大纲/卷一/阶段1.md', ['# 阶段1：订婚与身份暴露（第1—5章）', '## 这一阶段做什么', '订婚。', '## 关键推进', '- a', '## 主要人物', '- b', '## 调用的世界观', '- c', '## 阶段出口', '出口。'].join('\n'));
+    } else if (scenario === 'stage-planning-render') {
+      // 策划页可渲染的完整总纲 + 带 stages 的分卷：用于「改总纲清空阶段提示」断言。
+      // master_outline 必须含 phases 数组（PlanningWorkspace 会 masterOutline.phases.map）。
+      seedPlanning({
+        master: JSON.stringify({
+          premise: '核心前提', ending: '结局', protagonistArc: '人物弧', centralConflict: '冲突',
+          structureModel: '结构', phases: [{ title: '阶段1', purpose: '目的', chapterRange: '第 1-10 章', keyEvents: ['事件'], turningPoint: '转折', emotionTrend: '趋势' }],
+          subplots: ['副线'], storyPromises: ['承诺'],
+        }), masterStatus: 'generated',
+        volumes: JSON.stringify([{
+          title: '数据库卷A', chapterRange: '第 1-10 章', volumeGoal: '目标', openingState: '起态',
+          mainProgression: '主线', characterProgression: '人物', keyEvents: ['事件'], climax: '高潮', endingState: '终态',
+          promisesOpened: [], promisesPaid: [],
+          stages: [{ title: '阶段1', chapterRange: '第 1-5 章', goal: '目标', keyProgressions: ['推进'], characters: [], worldRefs: [], exit: '出口', endingHook: '' }],
+        }]), volumeStatus: 'generated',
+        chapters: '[]', chapterStatus: 'empty', status: 'confirmed', selectedOption: 0,
+      });
+    } else if (scenario === 'stage-planning-no-stages') {
+      // 同上但分卷无 stages：用于「改总纲无 stages 不提示」回归断言。
+      seedPlanning({
+        master: JSON.stringify({
+          premise: '核心前提', ending: '结局', protagonistArc: '人物弧', centralConflict: '冲突',
+          structureModel: '结构', phases: [{ title: '阶段1', purpose: '目的', chapterRange: '第 1-10 章', keyEvents: ['事件'], turningPoint: '转折', emotionTrend: '趋势' }],
+          subplots: ['副线'], storyPromises: ['承诺'],
+        }), masterStatus: 'generated',
+        volumes: JSON.stringify([{
+          title: '数据库卷A', chapterRange: '第 1-10 章', volumeGoal: '目标', openingState: '起态',
+          mainProgression: '主线', characterProgression: '人物', keyEvents: ['事件'], climax: '高潮', endingState: '终态',
+          promisesOpened: [], promisesPaid: [],
+        }]), volumeStatus: 'generated',
+        chapters: '[]', chapterStatus: 'empty', status: 'confirmed', selectedOption: 0,
+      });
     } else {
       base();
     }

@@ -22,6 +22,10 @@ function setNativeValue(el: HTMLInputElement | HTMLSelectElement, value: string)
   const proto = el.tagName.toLowerCase() === 'select' ? window.HTMLSelectElement.prototype : window.HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(el, value);
 }
+// textarea 受控组件同样需要走 textarea 原型（input/select 的 setter 对 textarea 无效）
+function setNativeTextareaValue(el: HTMLTextAreaElement, value: string) {
+  Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set?.call(el, value);
+}
 function fireInput(el: HTMLElement) { el.dispatchEvent(new Event('input', { bubbles: true })); }
 function fireChange(el: HTMLElement) { el.dispatchEvent(new Event('change', { bubbles: true })); }
 
@@ -73,6 +77,24 @@ async function run(): Promise<Result[]> {
   const findButton = (text: string) => Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes(text));
   const findSelects = () => Array.from(document.querySelectorAll('select'));
   const findCheckboxes = () => Array.from(document.querySelectorAll('input[type="checkbox"]'));
+
+  // 只挂 PlanningWorkspace（不点「从 Obsidian 导入」），直接暴露策划页总纲 textarea，用于 8.3 改总纲清空提示断言
+  const mountPlanningDirect = async () => {
+    if (root) { try { root.unmount(); } catch {} }
+    document.getElementById('root')!.innerHTML = '';
+    root = createRoot(document.getElementById('root')!);
+    const refreshImportedEntities = createImportedEntitiesRefresher({
+      invoke: (channel, ...args) => invoke(channel, ...args),
+      isProjectCurrent: () => true,
+      onApply: () => {},
+    });
+    root.render(React.createElement(PlanningWorkspace, {
+      project: { id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' },
+      onRefreshImportedEntities: refreshImportedEntities,
+    }));
+    await waitFor(() => document.body.textContent?.includes('全书总纲') === true, 8000);
+    await waitFor(() => !document.body.textContent?.includes('正在扫描'), 8000);
+  };
 
   try {
     // ============ 场景 A：basic 五类扫描 + 默认全选提交 + 三层 JSON 断言 ============
@@ -673,6 +695,43 @@ async function run(): Promise<Result[]> {
     await waitFor(async () => (await invoke('snapshot')).volumeOutlines[0]?.[0]?.stages?.length === 1, 8000);
     const oAfter = await invoke('snapshot');
     check('O5 解锁后阶段写入卷 0', oAfter.volumeOutlines[0]?.[0]?.stages?.[0]?.title === '订婚与身份暴露', JSON.stringify(oAfter.volumeOutlines[0]?.[0]?.stages));
+
+    // ============ 场景 P：改总纲清空阶段的就地提示（R6） ============
+    // P1：带 stages 时改总纲字段 → 总纲区内出现完成时提示
+    await invoke('reset', 'stage-planning-render');
+    await mountPlanningDirect();
+    // 找到总纲区的第一个 textarea（premise 字段），对总纲字段 fireInput
+    const pTextareas = Array.from(document.querySelectorAll('textarea'));
+    const pPremise = pTextareas.find(t => (t as HTMLTextAreaElement).value === '核心前提');
+    check('P0 总纲 textarea 存在', !!pPremise);
+    if (!pPremise) throw new Error('总纲 textarea 不存在');
+    setNativeTextareaValue(pPremise as HTMLTextAreaElement, '核心前提改');
+    fireInput(pPremise);
+    await wait(200);
+    check('P1 总纲区内出现清空提示', document.body.textContent?.includes('已从当前编辑区清空') ?? false, document.body.textContent?.slice(0, 500));
+    check('P2 提示含尚未写入数据库', document.body.textContent?.includes('尚未写入数据库') ?? false);
+    // 提示位置：总纲区（showMaster 块）内，而非页首第一步卡片
+    const masterBlock = Array.from(document.querySelectorAll('div')).find(d => d.textContent?.includes('全书总纲') && d.textContent?.includes('策划工作台 · 第二步'));
+    check('P3 提示在总纲区内', masterBlock ? (masterBlock.textContent?.includes('已从当前编辑区清空') ?? false) : false);
+
+    // P4：改总纲后分卷区从 DOM 消失（showVolumes 变 false）
+    check('P4 改总纲后分卷区消失', !(document.body.textContent?.includes('策划工作台 · 第三步') ?? false));
+
+    // P5：提示出现后不点保存，重挂 → stages 从数据库回来，提示消失
+    await mountPlanningDirect();
+    check('P5 重载后提示消失', !(document.body.textContent?.includes('已从当前编辑区清空') ?? false));
+    check('P6 重载后分卷区恢复（stages 回来）', document.body.textContent?.includes('策划工作台 · 第三步') ?? false);
+
+    // P7：无 stages 时改总纲 → 无提示（回归不破）
+    await invoke('reset', 'stage-planning-no-stages');
+    await mountPlanningDirect();
+    const p2Textareas = Array.from(document.querySelectorAll('textarea'));
+    const p2Premise = p2Textareas.find(t => (t as HTMLTextAreaElement).value === '核心前提');
+    if (!p2Premise) throw new Error('无 stages 场景总纲 textarea 不存在');
+    setNativeTextareaValue(p2Premise as HTMLTextAreaElement, '核心前提改');
+    fireInput(p2Premise);
+    await wait(200);
+    check('P7 无 stages 改总纲无提示', !(document.body.textContent?.includes('已从当前编辑区清空') ?? false));
 
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });
