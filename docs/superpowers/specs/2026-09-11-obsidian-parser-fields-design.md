@@ -1,6 +1,6 @@
 # Obsidian 导入 parser 字段增强 Spec
 
-> 状态：实施主体已合入 `3a9857d`；独立复审（见工作区 `parser-fields-enhancement-report.md` 第五节）发现 2 项产品偏差（P0-1 phase heading 误触发、P0-2 阶段文件名未锚定），已于 `3442373` 修复并补 P1 测试；P2 文档口径于 `c5ad577` 更新；真实副本烟测已独立复现（见报告第六节），完成标准第三条已勾选。
+> 状态：实施主体已合入 `3a9857d`；独立复审（见工作区 `parser-fields-enhancement-report.md` 第五节）发现 2 项产品偏差（P0-1 phase heading 误触发、P0-2 阶段文件名未锚定），已于 `3442373` 修复并补 P1 测试；P2 文档口径于 `c5ad577`/`a42bb78` 更新。第二次独立复审（报告第八节）确认 P0/P1 生产逻辑收口；真实 vault 烟测仅有实施方书面记录、脚本未入库、未做第二人独立复跑，故完成标准第三条不勾选。
 >
 > 基线提交：`ffa2cb9`
 >
@@ -156,7 +156,7 @@ phase 的 `purpose`、`turningPoint`、`emotionTrend`、`keyEvents` 仅在 phase
 - [x] 不合规 `## 阶段 N` 不得关掉三卷索引（8.2.3）。
 - [x] 阶段文件名以 `阶段N` 开头才忽略；中间夹「阶段1」的文件仍进候选（8.3.4）。
 - [x] 显式 `role: volume` 的阶段文件仍空槽位（8.3.5）；`isOutlineAuxiliary` 有直接单测（8.3.6）。
-- [x] `identifySlots` 修复后真实 vault volume 候选数 = 3（须可复现：系统 temp 副本、只扫描不写库、原目录 hash 不变）。
+- [ ] `identifySlots` 修复后真实 vault volume 候选数 = 3（须可复现：系统 temp 副本、只扫描不写库、原目录 hash 不变）。仅实施方书面记录（37 个 md 的 12 位 hash、脚本未入库）不足以勾选，需第二人独立复跑。
 - [x] 不新增数据库迁移、不落库 stage、不跨文件推导、不猜测。
 - [x] 现有 8.1—8.3 回归不破（`node tests/ui/run-obsidian-import.cjs` 全部通过）。
 
