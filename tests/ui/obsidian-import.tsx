@@ -3,6 +3,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import ObsidianImportPanel from '../../src/renderer/components/ObsidianImportPanel';
+import PlanningWorkspace from '../../src/renderer/components/PlanningWorkspace';
+import { createImportedEntitiesRefresher } from '../../src/renderer/services/imported-entities-refresher';
 
 const invoke = (window as any).electronAPI.invoke.bind((window as any).electronAPI);
 
@@ -41,6 +43,30 @@ async function run(): Promise<Result[]> {
     }));
     await waitFor(() => document.body.textContent?.includes('从 Obsidian 导入策划') === true, 8000);
     // 等待扫描完成（候选列表或错误出现）
+    await waitFor(() => !document.body.textContent?.includes('正在扫描'), 8000);
+  };
+
+  // 挂载真实 PlanningWorkspace（R1 集成测试）：面板 onImported 走真实的 loadPlanning + refreshImportedEntities 链路。
+  // 实体刷新使用与 App 一致的 createImportedEntitiesRefresher，测试库通过 failNextEntityRefresh 触发真实 IPC 失败。
+  const mountPlanning = async () => {
+    if (root) { try { root.unmount(); } catch {} }
+    document.getElementById('root')!.innerHTML = '';
+    root = createRoot(document.getElementById('root')!);
+    const refreshImportedEntities = createImportedEntitiesRefresher({
+      invoke: (channel, ...args) => invoke(channel, ...args),
+      isProjectCurrent: () => true,
+      onApply: () => {},
+    });
+    root.render(React.createElement(PlanningWorkspace, {
+      project: { id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' },
+      onRefreshImportedEntities: refreshImportedEntities,
+    }));
+    // PlanningWorkspace 初始 importOpen=false，点「从 Obsidian 导入」打开真实面板
+    await waitFor(() => document.body.textContent?.includes('从 Obsidian 导入') === true, 8000);
+    const openBtn = findButton('从 Obsidian 导入');
+    if (!openBtn) throw new Error('从 Obsidian 导入按钮不存在');
+    openBtn.click();
+    await waitFor(() => document.body.textContent?.includes('从 Obsidian 导入策划') === true, 8000);
     await waitFor(() => !document.body.textContent?.includes('正在扫描'), 8000);
   };
 
@@ -360,6 +386,65 @@ async function run(): Promise<Result[]> {
     check('I7 提交期间文本输入框禁用', iTextInput ? (iTextInput as HTMLInputElement).disabled : false);
     const iCategorySelect = Array.from(document.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'place'));
     check('I8 提交期间分类下拉禁用', iCategorySelect ? (iCategorySelect as HTMLSelectElement).disabled : false);
+    // 故事方向表单（basic 无已确认方向，导入总纲时预填表单）
+    const iStoryInput = Array.from(document.querySelectorAll('input')).find(i => (i as HTMLInputElement).value === '测试项目');
+    check('I9 提交期间故事方向输入框禁用', iStoryInput ? (iStoryInput as HTMLInputElement).disabled : false);
+    await invoke('setDelays', { commit: 0 });
+    await wait(500);
+
+    // I10：章纲卷归属下拉在提交期间冻结（two-volumes 场景才渲染该下拉）
+    await invoke('reset', 'two-volumes');
+    await invoke('setDelays', { commit: 300 });
+    await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
+    await waitFor(() => document.body.textContent?.includes('章节细纲'), 8000);
+    const i10ActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
+    for (const sel of i10ActionSelects) { setNativeValue(sel as HTMLSelectElement, 'fill'); fireChange(sel); }
+    await wait(200);
+    const i10ChapterRow = Array.from(document.querySelectorAll('label')).find(l => l.textContent?.includes('章节细纲'));
+    if (i10ChapterRow) {
+      const i10Cb = i10ChapterRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      const i10Was = i10Cb?.checked ?? false;
+      (i10ChapterRow as HTMLElement).click();
+      await wait(100);
+      if (i10Was && i10Cb && !i10Cb.checked) i10Cb.click();
+      await wait(100);
+    }
+    const i10VolSelect = Array.from(document.querySelectorAll('select')).find(s => s.value === '' && Array.from(s.options).some(o => o.value === '1'));
+    check('I10a 章纲卷归属下拉存在', !!i10VolSelect);
+    if (i10VolSelect) {
+      setNativeValue(i10VolSelect as HTMLSelectElement, '1');
+      fireChange(i10VolSelect);
+      await wait(300);
+    }
+    const i10Confirm = findButton('确认导入');
+    if (i10Confirm && !(i10Confirm as HTMLButtonElement).disabled) (i10Confirm as HTMLButtonElement).click();
+    await wait(50);
+    const i10VolSelectFrozen = Array.from(document.querySelectorAll('select')).find(s => s.value === '1' && Array.from(s.options).some(o => o.value === '1'));
+    check('I10 提交期间章纲卷归属下拉禁用', i10VolSelectFrozen ? (i10VolSelectFrozen as HTMLSelectElement).disabled : false);
+    await invoke('setDelays', { commit: 0 });
+    await wait(500);
+
+    // I11：人物覆盖 checkbox 在提交期间冻结（overwrite 场景渲染覆盖 checkbox）
+    await invoke('reset', 'overwrite');
+    await invoke('setDelays', { commit: 300 });
+    await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
+    await waitFor(() => document.body.textContent?.includes('沈屿'), 8000);
+    // overwrite 场景只导入人物（非策划层，不受三层 action 门控），无需设 fill
+    const i11OverwriteCb = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+      const parent = cb.closest('label') || cb.parentElement;
+      return parent?.textContent?.includes('覆盖同名');
+    });
+    check('I11a 人物覆盖 checkbox 存在', !!i11OverwriteCb);
+    if (i11OverwriteCb && !(i11OverwriteCb as HTMLInputElement).checked) (i11OverwriteCb as HTMLInputElement).click();
+    await wait(100);
+    const i11Confirm = findButton('确认导入');
+    if (i11Confirm && !(i11Confirm as HTMLButtonElement).disabled) (i11Confirm as HTMLButtonElement).click();
+    await wait(50);
+    const i11OverwriteFrozen = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+      const parent = cb.closest('label') || cb.parentElement;
+      return parent?.textContent?.includes('覆盖同名');
+    });
+    check('I11 提交期间人物覆盖 checkbox 禁用', i11OverwriteFrozen ? (i11OverwriteFrozen as HTMLInputElement).disabled : false);
     await invoke('setDelays', { commit: 0 });
     await wait(500);
 
@@ -440,11 +525,112 @@ async function run(): Promise<Result[]> {
     await waitFor(() => !document.body.textContent?.includes('重新解析'), 8000);
     const lBtnAfterRetry = findButton('确认导入');
     check('L3 重试成功后确认导入可用', lBtnAfterRetry ? !(lBtnAfterRetry as HTMLButtonElement).disabled : false);
+    // 13.3 第1条：重试结果真正落地到预览——人物预览块消失、人物槽位取消（而非仅解除门禁）
+    check('L3b 重试后人物预览块已消失', !document.body.textContent?.includes('人物（'), document.body.textContent?.match(/人物（\d+）/)?.[0] ?? '人物预览块仍在');
+    const lSlotAfterRetry = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+      const label = cb.closest('label');
+      return label && label.textContent?.trim() === '人物';
+    });
+    check('L3c 重试后人物槽位已取消', lSlotAfterRetry ? !(lSlotAfterRetry as HTMLInputElement).checked : false);
     // 提交并核对 SQLite：沈屿的人物槽位已取消，人物不应写入（证明重试结果真正落地到 commit 参数）
     if (lBtnAfterRetry && !(lBtnAfterRetry as HTMLButtonElement).disabled) (lBtnAfterRetry as HTMLButtonElement).click();
     await waitFor(async () => (await invoke('snapshot')).planning.length === 1, 8000);
     const lAfter = await invoke('snapshot');
     check('L4 重试后提交成功且人物未写入', lAfter.planning.length === 1 && lAfter.characters.length === 0, `characters=${JSON.stringify(lAfter.characters)}, planning=${lAfter.planning.length}`);
+
+    // ============ 场景 M：真实 PlanningWorkspace 刷新链路（planning/entity 失败 + 并发门禁） ============
+    // M1：策划刷新失败 → 面板停留 refreshPending（真实 db 层 planning 失败）
+    await invoke('reset', 'basic');
+    await mountPlanning();
+    const m1ActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
+    for (const sel of m1ActionSelects) { setNativeValue(sel as HTMLSelectElement, 'fill'); fireChange(sel); }
+    await wait(200);
+    await invoke('failNextPlanningRefresh'); // 让 commit 后的 loadPlanning 失败一次
+    const m1Confirm = findButton('确认导入');
+    if (m1Confirm && !(m1Confirm as HTMLButtonElement).disabled) (m1Confirm as HTMLButtonElement).click();
+    await waitFor(() => document.body.textContent?.includes('重试刷新'), 8000);
+    check('M1 planning 刷新失败后停留 refreshPending', document.body.textContent?.includes('重试刷新') ?? false);
+    check('M1b 显示界面刷新失败提示', document.body.textContent?.includes('导入已写入，界面刷新失败') ?? false);
+    const m1Counts = await invoke('counts');
+    check('M1c 只提交一次（不因刷新失败重复写库）', m1Counts.commitCalls === 1, JSON.stringify(m1Counts));
+
+    // M2 + M3：entity 刷新失败（真实 IPC 失败，沿 App 同款 createImportedEntitiesRefresher 返回 false）→ 停留 refreshPending；重试成功 → 面板关闭
+    await invoke('reset', 'basic');
+    await mountPlanning();
+    const m2ActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
+    for (const sel of m2ActionSelects) { setNativeValue(sel as HTMLSelectElement, 'fill'); fireChange(sel); }
+    await wait(200);
+    await invoke('failNextEntityRefresh'); // 让 commit 后的实体刷新（char IPC）失败一次
+    const m2Confirm = findButton('确认导入');
+    if (m2Confirm && !(m2Confirm as HTMLButtonElement).disabled) (m2Confirm as HTMLButtonElement).click();
+    await waitFor(() => document.body.textContent?.includes('重试刷新'), 8000);
+    check('M2 entity 刷新失败后停留 refreshPending', document.body.textContent?.includes('重试刷新') ?? false);
+    const m2Counts = await invoke('counts');
+    check('M2b 只提交一次', m2Counts.commitCalls === 1, JSON.stringify(m2Counts));
+    check('M2c 实体刷新确因 IPC 失败返回 false', m2Counts.entityRefreshCalls >= 1, JSON.stringify(m2Counts));
+    // M3：重试刷新成功 → 面板关闭
+    const m3Retry = findButton('重试刷新');
+    if (m3Retry) (m3Retry as HTMLButtonElement).click();
+    await waitFor(() => !document.body.textContent?.includes('从 Obsidian 导入策划'), 8000);
+    check('M3 重试刷新成功后面板关闭', !document.body.textContent?.includes('从 Obsidian 导入策划'));
+    const m3Counts = await invoke('counts');
+    check('M3b 重试不再次提交', m3Counts.commitCalls === 1, JSON.stringify(m3Counts));
+
+    // M4：刷新并发门禁 + 刷新中关闭无效（先让首次刷新失败停留在 refreshPending，再在重试刷新时制造「刷新中」窗口）
+    await invoke('reset', 'basic');
+    await mountPlanning();
+    const m4ActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
+    for (const sel of m4ActionSelects) { setNativeValue(sel as HTMLSelectElement, 'fill'); fireChange(sel); }
+    await wait(200);
+    await invoke('failNextPlanningRefresh'); // 首次刷新失败 → 停留 refreshPending
+    const m4Confirm = findButton('确认导入');
+    if (m4Confirm && !(m4Confirm as HTMLButtonElement).disabled) (m4Confirm as HTMLButtonElement).click();
+    await waitFor(() => document.body.textContent?.includes('重试刷新'), 8000);
+    await invoke('setDelays', { refresh: 400 }); // 重试刷新耗时，制造「刷新中」窗口
+    const m4Before = await invoke('counts');
+    const m4Retry = findButton('重试刷新');
+    if (!m4Retry) throw new Error('重试刷新按钮不存在');
+    (m4Retry as HTMLButtonElement).click();
+    await wait(80); // 进入刷新中窗口
+    const m4RetryingBtn = findButton('刷新中');
+    check('M4a 刷新中重试按钮显示刷新中', !!m4RetryingBtn);
+    check('M4b 刷新中重试按钮禁用', m4RetryingBtn ? (m4RetryingBtn as HTMLButtonElement).disabled : false);
+    const m4CloseBtn = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('关闭'));
+    check('M4c 刷新中关闭按钮禁用', m4CloseBtn ? (m4CloseBtn as HTMLButtonElement).disabled : false);
+    const m4HeaderClose = Array.from(document.querySelectorAll('button')).find(b => b.textContent?.includes('×'));
+    check('M4d 刷新中标题栏关闭禁用', m4HeaderClose ? (m4HeaderClose as HTMLButtonElement).disabled : false);
+    // 背景关闭：refreshing 时 onMouseDown 不触发 onClose
+    const overlay = document.querySelector('.fixed.inset-0');
+    if (overlay) { (overlay as HTMLElement).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await wait(80); }
+    check('M4e 刷新中背景关闭后面板仍在', document.body.textContent?.includes('从 Obsidian 导入策划') ?? false);
+    if (m4RetryingBtn) (m4RetryingBtn as HTMLButtonElement).click(); // 第二次点击（仍刷新中，被 refreshingRef 挡住）
+    await waitFor(() => !document.body.textContent?.includes('从 Obsidian 导入策划'), 8000);
+    await invoke('setDelays', { refresh: 0 });
+    const m4After = await invoke('counts');
+    check('M4 双击重试只进入一次刷新', m4After.planningRefreshCalls - m4Before.planningRefreshCalls === 1, `before=${m4Before.planningRefreshCalls}, after=${m4After.planningRefreshCalls}`);
+
+    // I12：世界观「覆盖同名」checkbox 冻结（overwrite-world 场景渲染世界观覆盖 checkbox）
+    await invoke('reset', 'overwrite-world');
+    await invoke('setDelays', { commit: 300 });
+    await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
+    await waitFor(() => document.body.textContent?.includes('主要场景'), 8000);
+    const i12OverwriteCb = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+      const parent = cb.closest('label') || cb.parentElement;
+      return parent?.textContent?.includes('覆盖同名');
+    });
+    check('I12a 世界观覆盖 checkbox 存在', !!i12OverwriteCb);
+    if (i12OverwriteCb && !(i12OverwriteCb as HTMLInputElement).checked) (i12OverwriteCb as HTMLInputElement).click();
+    await wait(100);
+    const i12Confirm = findButton('确认导入');
+    if (i12Confirm && !(i12Confirm as HTMLButtonElement).disabled) (i12Confirm as HTMLButtonElement).click();
+    await wait(50);
+    const i12OverwriteFrozen = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+      const parent = cb.closest('label') || cb.parentElement;
+      return parent?.textContent?.includes('覆盖同名');
+    });
+    check('I12 提交期间世界观覆盖 checkbox 禁用', i12OverwriteFrozen ? (i12OverwriteFrozen as HTMLInputElement).disabled : false);
+    await invoke('setDelays', { commit: 0 });
+    await wait(500);
 
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });

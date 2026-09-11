@@ -4,6 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { runMigrations } = require('../../dist/main/main/db/migrations');
 const { ObsidianImportRepo } = require('../../dist/main/main/db/repositories/obsidian-import.repo');
+const { PlanningRepo } = require('../../dist/main/main/db/repositories/planning.repo');
 
 // 为 obsidian 导入真实 UI 回归提供内存数据库 + 主进程侧仓储 + 真实临时 Obsidian 目录。
 // 支持多场景 fixture、三层 JSON 快照、commit/reparse 调用计数、可控延迟。
@@ -17,6 +18,11 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
   let commitDelayMs = 0;
   let currentScenario = '';
   let failNextReparse = false;  // 控制下一次 reparse 返回失败，用于验证失败重试闭环
+  let failNextPlanningRefresh = false;  // 控制下一次策划刷新返回失败（R1 集成测试）
+  let failNextEntityRefresh = false;    // 控制下一次人物/世界观刷新返回失败（R1 集成测试）
+  let refreshDelayMs = 0;               // 策划/实体刷新的可控延迟（并发门禁测试）
+  let planningRefreshCalls = 0;
+  let entityRefreshCalls = 0;           // 人物/世界观刷新调用次数（一次 onRefreshImportedEntities = 2 次 IPC）
 
   const write = (rel, content) => {
     const f = path.join(vault, rel);
@@ -147,6 +153,11 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       reparseDelayMs = 0;
       commitDelayMs = 0;
       failNextReparse = false;
+      failNextPlanningRefresh = false;
+      failNextEntityRefresh = false;
+      refreshDelayMs = 0;
+      planningRefreshCalls = 0;
+      entityRefreshCalls = 0;
       setupFixture(currentScenario);
       db.prepare('UPDATE projects SET obsidian_path = ? WHERE id = ?').run(vault, 'project-a');
       repo = new ObsidianImportRepo(db);
@@ -165,15 +176,24 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       };
     }
     if (channel === 'counts') {
-      return { commitCalls, reparseCalls };
+      return { commitCalls, reparseCalls, planningRefreshCalls, entityRefreshCalls };
     }
     if (channel === 'setDelays') {
       reparseDelayMs = args[0]?.reparse ?? 0;
       commitDelayMs = args[0]?.commit ?? 0;
+      refreshDelayMs = args[0]?.refresh ?? 0;
       return { success: true };
     }
     if (channel === 'failNextReparse') {
       failNextReparse = true;
+      return { success: true };
+    }
+    if (channel === 'failNextPlanningRefresh') {
+      failNextPlanningRefresh = true;
+      return { success: true };
+    }
+    if (channel === 'failNextEntityRefresh') {
+      failNextEntityRefresh = true;
       return { success: true };
     }
     if (channel === 'prepare' || channel === 'obsidian:preparePlanningImport') return repo.prepare(args[0]);
@@ -187,6 +207,24 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       commitCalls++;
       if (commitDelayMs) await new Promise(res => setTimeout(res, commitDelayMs));
       return repo.commit(args[0]);
+    }
+    if (channel === 'db:planning:findByProject') {
+      planningRefreshCalls++;
+      if (refreshDelayMs) await new Promise(res => setTimeout(res, refreshDelayMs));
+      // R1 集成测试：可控让策划刷新失败一次，验证面板停留 refreshPending
+      if (failNextPlanningRefresh) { failNextPlanningRefresh = false; return { success: false, error: '模拟策划刷新失败' }; }
+      return new PlanningRepo(db).findByProject(args[0]);
+    }
+    if (channel === 'db:character:findByProject') {
+      entityRefreshCalls++;
+      if (refreshDelayMs) await new Promise(res => setTimeout(res, refreshDelayMs));
+      // 消费一次失败标记：人物通道失败即让整个实体刷新返回 false（world 通道不受影响）
+      if (failNextEntityRefresh) { failNextEntityRefresh = false; return { success: false, error: '模拟实体刷新失败' }; }
+      return { success: true, data: db.prepare('SELECT * FROM characters WHERE project_id = ? ORDER BY sort_order ASC').all(args[0]) };
+    }
+    if (channel === 'db:worldEntry:findByProject') {
+      if (refreshDelayMs) await new Promise(res => setTimeout(res, refreshDelayMs));
+      return { success: true, data: db.prepare('SELECT * FROM world_entries WHERE project_id = ? ORDER BY sort_order ASC').all(args[0]) };
     }
     throw new Error('未知测试请求: ' + channel);
   });

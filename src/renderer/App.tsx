@@ -33,6 +33,7 @@ import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
 import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
 import { createProjectDataLoader } from './services/project-data-loader';
+import { createImportedEntitiesRefresher } from './services/imported-entities-refresher';
 import { createObsidianLoader } from './services/obsidian-loader';
 import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './services/ai-runtime-context-loader';
 
@@ -546,21 +547,15 @@ const App: React.FC = () => {
   }, [activeProject, chapters, outlineNodes]);
 
   // Obsidian 导入后，只刷新人物与世界观（不重载章节/大纲，避免覆盖未保存正文）。
-  const refreshImportedEntities = useCallback(async (projectId: string): Promise<boolean> => {
-    try {
-      const [charRes, worldRes] = await Promise.all([
-        window.electronAPI.invoke('db:character:findByProject', projectId) as any,
-        window.electronAPI.invoke('db:worldEntry:findByProject', projectId) as any,
-      ]);
-      if (!isActiveProject(projectId)) return false;
-      if (!charRes?.success || !worldRes?.success) return false;
-      setCharacters(charRes.data);
-      setWorldEntries(worldRes.data);
-      return true;
-    } catch {
-      return false;
-    }
-  }, [isActiveProject]);
+  // 与 UI 集成测试共用 createImportedEntitiesRefresher，保证测试证明的是与生产一致的 IPC 失败链路。
+  const refreshImportedEntities = useMemo(
+    () => createImportedEntitiesRefresher({
+      invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+      isProjectCurrent: isActiveProject,
+      onApply: (characters, worldEntries) => { setCharacters(characters); setWorldEntries(worldEntries); },
+    }),
+    [isActiveProject],
+  );
 
   const handleDeleteOutlineNode = useCallback(async (id: string) => {
     const node = outlineNodes.find(n => n.id === id);
