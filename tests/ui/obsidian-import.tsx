@@ -590,8 +590,11 @@ async function run(): Promise<Result[]> {
     const m4Before = await invoke('counts');
     const m4Retry = findButton('重试刷新');
     if (!m4Retry) throw new Error('重试刷新按钮不存在');
+    // 同一渲染周期连点两次：此时按钮仍 enabled，第二次进入必须由 refreshingRef 挡住。
+    // 若等 React 重渲染成「刷新中」且 disabled 后再点，浏览器不会触发 onClick，证明不了互斥。
     (m4Retry as HTMLButtonElement).click();
-    await wait(80); // 进入刷新中窗口
+    (m4Retry as HTMLButtonElement).click();
+    await wait(80); // 进入刷新中窗口（disabled 路径另证关闭门禁）
     const m4RetryingBtn = findButton('刷新中');
     check('M4a 刷新中重试按钮显示刷新中', !!m4RetryingBtn);
     check('M4b 刷新中重试按钮禁用', m4RetryingBtn ? (m4RetryingBtn as HTMLButtonElement).disabled : false);
@@ -603,11 +606,10 @@ async function run(): Promise<Result[]> {
     const overlay = document.querySelector('.fixed.inset-0');
     if (overlay) { (overlay as HTMLElement).dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); await wait(80); }
     check('M4e 刷新中背景关闭后面板仍在', document.body.textContent?.includes('从 Obsidian 导入策划') ?? false);
-    if (m4RetryingBtn) (m4RetryingBtn as HTMLButtonElement).click(); // 第二次点击（仍刷新中，被 refreshingRef 挡住）
     await waitFor(() => !document.body.textContent?.includes('从 Obsidian 导入策划'), 8000);
     await invoke('setDelays', { refresh: 0 });
     const m4After = await invoke('counts');
-    check('M4 双击重试只进入一次刷新', m4After.planningRefreshCalls - m4Before.planningRefreshCalls === 1, `before=${m4Before.planningRefreshCalls}, after=${m4After.planningRefreshCalls}`);
+    check('M4 同一拍双击只进入一次刷新', m4After.planningRefreshCalls - m4Before.planningRefreshCalls === 1, `before=${m4Before.planningRefreshCalls}, after=${m4After.planningRefreshCalls}`);
 
     // I12：世界观「覆盖同名」checkbox 冻结（overwrite-world 场景渲染世界观覆盖 checkbox）
     await invoke('reset', 'overwrite-world');
