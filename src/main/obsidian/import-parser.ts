@@ -189,6 +189,11 @@ export function parseChapters(content: string, defaultVolumeIndex: number | null
     if (!table.rows.length) continue;
 
     const col = (name: string) => table.headers.findIndex(h => h === name);
+    // 可选列：仅当表头命中任一别名时才解析，否则该字段留空（绝不猜测）
+    const optionalCol = (names: string[]) => {
+      const lower = names.map(n => n.toLowerCase());
+      return table.headers.findIndex(h => lower.includes(h.toLowerCase()));
+    };
     const iChapter = col('章');
     const iTitle = col('标题');
     const iCore = col('核心事件');
@@ -197,6 +202,10 @@ export function parseChapters(content: string, defaultVolumeIndex: number | null
     const iForeshadow = col('伏笔');
     const iScene = col('场景');
     const iEmotion = col('情绪');
+    const iPov = optionalCol(['视角', 'POV', 'pov']);
+    const iOpening = optionalCol(['开场处境', '开场']);
+    const iKeyBeats = optionalCol(['关键节拍', '节拍', 'keyBeats']);
+    const iCharacterChange = optionalCol(['人物变化', '人物弧变化']);
 
     for (const row of table.rows) {
       const chapterNumber = iChapter >= 0 ? parseInt(row[iChapter], 10) : NaN;
@@ -214,18 +223,21 @@ export function parseChapters(content: string, defaultVolumeIndex: number | null
       const payoff = coolParts.find(s => s.startsWith('爽点'))?.replace(/^爽点[：:]?/, '').trim() || '';
       const endingHook = coolParts.find(s => s.startsWith('钩子') || s.startsWith('悬念'))?.replace(/^(钩子|悬念)[：:]?/, '').trim() || '';
 
+      const keyBeatsCell = iKeyBeats >= 0 ? stripWikiLinks(row[iKeyBeats] || '') : '';
+      const keyBeats = keyBeatsCell.split(/[；、]/).map(s => s.trim()).filter(Boolean);
+
       chapters.push({
         sourceHeading: `${chapterNumber} ${iTitle >= 0 ? row[iTitle] || '' : ''}`.trim(),
         chapterNumber,
         volumeIndex: currentVolumeIndex >= 0 ? currentVolumeIndex : null,
         title: iTitle >= 0 ? stripWikiLinks(row[iTitle] || '') : '',
-        pov: '',
+        pov: iPov >= 0 ? stripWikiLinks(row[iPov] || '') : '',
         chapterGoal: iPush >= 0 ? stripWikiLinks(row[iPush] || '') : '',
-        openingSituation: '',
+        openingSituation: iOpening >= 0 ? stripWikiLinks(row[iOpening] || '') : '',
         centralConflict: iCore >= 0 ? stripWikiLinks(row[iCore] || '') : '',
-        keyBeats: [],
+        keyBeats,
         reveal: iForeshadow >= 0 ? stripWikiLinks(row[iForeshadow] || '') : '',
-        characterChange: '',
+        characterChange: iCharacterChange >= 0 ? stripWikiLinks(row[iCharacterChange] || '') : '',
         emotionalBeat: iEmotion >= 0 ? stripWikiLinks(row[iEmotion] || '') : '',
         payoff,
         endingHook,

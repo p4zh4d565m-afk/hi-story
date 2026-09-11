@@ -117,6 +117,37 @@ describe('Obsidian 导入字段映射（真实格式）', () => {
     expect(r.value[2]).toMatchObject({ volumeIndex: 1, chapterNumber: 51, title: '蛇窝' });
   });
 
+  it('解析章纲可选列：表头命中视角/开场处境/关键节拍/人物变化时填充', () => {
+    const src = [
+      '| 章 | 标题 | 核心事件 | 视角 | 开场处境 | 关键节拍 | 人物变化 |',
+      '|---|------|---------|------|---------|---------|---------|',
+      '| 1 | 初见 | 宴会。 | 米尘 | 混入宴会 | 异常出现；主角拒绝；代价落下 | 从回避转应对 |',
+    ].join('\n');
+    const r = parseChapters(src, null);
+    expect(r.value).toHaveLength(1);
+    expect(r.value[0]).toMatchObject({
+      pov: '米尘',
+      openingSituation: '混入宴会',
+      characterChange: '从回避转应对',
+    });
+    expect(r.value[0].keyBeats).toEqual(['异常出现', '主角拒绝', '代价落下']);
+  });
+
+  it('解析章纲可选列：表头未命中时字段留空，且「场景」列不误填开场处境', () => {
+    const src = [
+      '| 章 | 标题 | 核心事件 | 场景 | 情绪 |',
+      '|---|------|---------|------|------|',
+      '| 1 | 初见 | 宴会。 | 星海游轮 | 紧张 |',
+    ].join('\n');
+    const r = parseChapters(src, null);
+    expect(r.value[0]).toMatchObject({
+      pov: '',
+      openingSituation: '',
+      characterChange: '',
+      keyBeats: [],
+    });
+  });
+
   it('解析人物：独立人物文件（身份与能力 / 性格层次 / 欲望与成长）', () => {
     const src = [
       '# 沈屿',
