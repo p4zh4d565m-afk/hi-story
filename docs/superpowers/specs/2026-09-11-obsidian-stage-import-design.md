@@ -1,6 +1,6 @@
 # Obsidian 导入 stage 落库 Spec
 
-> 状态：**可实施**（P0 已全部回写正文，含 overlay 下标对齐与 keep+锁定时的解锁勾选）。本轮仅产出本文档，不写代码。
+> 状态：**已实施并收口。** 代码 + 自动回归经三次独立复审闭环（见工作区 `stage-import-report.md` 第五/七/九节），完成标准除「真实 vault 烟测」（第 8 条）外均已勾选；第 8 条未授权、保持不勾。
 >
 > 基线提交：`eb83f65`
 >
@@ -293,13 +293,13 @@ overlayVolumeStages(input: {
 
 ## 完成标准
 
-- [ ] `parseStage` 各小节映射 + 可选 `卷末钩子` + 只忽略导航小节 + 不完整标题不猜文件名，有单测。
-- [ ] `identifySlots` **先于** `/分卷/` 与 `role:volume` 判 stage；真卷仍 volume；分卷总览仍忽略；文件名锚在开头。
-- [ ] 归属预填：卷一/卷1=0、卷N=N-1、对不上=null。
-- [ ] 提交 overlay：写入对应卷 `stages`；keep 且只勾阶段也能写库；fill/replace 未勾阶段按 `existingVolumes[i]` 保留；clear/未归属/越界/无卷/锁定未解锁均拦截；部分勾选整组替换不 merge；keep+锁定时解锁勾选可见。
-- [ ] 无迁移、无第四策划层、不回填章纲/总纲；`incoming.volumes` 仍只看卷文件。
-- [ ] 策划页保存/锁定透传 `stages`；重新生成会丢掉 stages 须在报告里写明已知限制。
-- [ ] 现有回归不破（`node tests/ui/run-obsidian-import.cjs` 全部通过）。
+- [x] `parseStage` 各小节映射 + 可选 `卷末钩子` + 只忽略导航小节 + 不完整标题不猜文件名，有单测。
+- [x] `identifySlots` **先于** `/分卷/` 与 `role:volume` 判 stage；真卷仍 volume；分卷总览仍忽略；文件名锚在开头。
+- [x] 归属预填：卷一/卷1=0、卷N=N-1、对不上=null。
+- [x] 提交 overlay：写入对应卷 `stages`；keep 且只勾阶段也能写库；fill/replace 未勾阶段按 `existingVolumes[i]` 保留；clear/未归属/越界/无卷/锁定未解锁均拦截；部分勾选整组替换不 merge；keep+锁定时解锁勾选可见。
+- [x] 无迁移、无第四策划层、不回填章纲/总纲；`incoming.volumes` 仍只看卷文件。
+- [x] 策划页保存/锁定透传 `stages`；重新生成会丢掉 stages 须在报告里写明已知限制。
+- [x] 现有回归不破（`node tests/ui/run-obsidian-import.cjs` 全部通过，102/102）。
 - [ ] 真实 vault 烟测默认不勾选；未经授权不得复制/扫描原目录。
 
 ## 报告模板
