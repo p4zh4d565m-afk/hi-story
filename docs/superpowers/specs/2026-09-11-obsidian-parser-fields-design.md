@@ -1,6 +1,6 @@
 # Obsidian 导入 parser 字段增强 Spec
 
-> 状态：设计完成，待实施（本轮仅产出本文档，不写代码）
+> 状态：实施主体已合入 `3a9857d`；独立复审（见工作区 `parser-fields-enhancement-report.md` 第五节）发现 2 项产品偏差（P0-1 phase heading 误触发、P0-2 阶段文件名未锚定），已于 `3442373` 修复并补 P1 测试。自动回归通过；真实副本烟测待复现前，完成标准第三条保持未勾选。
 >
 > 基线提交：`ffa2cb9`
 >
@@ -87,13 +87,14 @@ phase 的 `purpose`、`turningPoint`、`emotionTrend`、`keyEvents` 仅在 phase
 约束：
 
 - 结构识别失败时 `title` + `chapterRange` 仍按现有逻辑正确填充，子字段留空。
+- **进入 heading 路径的门禁**：至少一条 h2 **完整命中** `阶段 N：标题（第 x-y 章）` 才切换；仅有不合规 `## 阶段 N …` 时必须回退「三卷大纲索引」，不得把索引 3 条 phase 丢掉。
 - 不把「三卷大纲索引」的列表项文本猜测成 phase 子字段。
 
 ### R3 卷内阶段文件与分卷总览的误判修复
 
 `identifySlots` 做两处排除，只让「一个文件 = 一个卷」的真卷文件判 `volume`：
 
-1. 文件处于卷目录（目录段命中 `分卷大纲` 且下一段形如 `卷N`）且文件名为 `阶段N` 形式时，不判 `volume`。
+1. 文件处于卷目录（**任一祖先目录段**命中 `分卷大纲` 或 `第.{1,8}卷`，不要求下一段必须是 `卷N`）且**文件名以** `阶段N` 开头时，不判 `volume`。文件名仅在中间含「阶段1」（如 `备忘-阶段1讨论.md`）不得忽略。
 2. 分卷总览 `小说大纲_分卷大纲.md`（文件名命中 `分卷大纲` 但非 `大纲_卷N` 形式；其卷是 level 2 标题，`parseVolumes` 只认 level 1，会产出空卷噪音）不判 `volume`。
 
 二者均**完全忽略**（不进入候选、不产生槽位、不落库），避免噪音。
@@ -122,14 +123,18 @@ phase 的 `purpose`、`turningPoint`、`emotionTrend`、`keyEvents` 仅在 phase
 ### 8.2 总纲 phase 可选小节
 
 1. phase 为「heading + 小节列表」时，`purpose/turningPoint/emotionTrend/keyEvents` 正确填充。
-2. phase 为扁平列表项时，子字段为空但 `title` + `chapterRange` 正确。
+2. phase 为扁平列表项时，子字段为空但 `title` + `chapterRange` 正确（单测必须显式断言 `purpose/turningPoint/emotionTrend === ''` 且 `keyEvents === []`，`toMatchObject` 只含 title/range 不够）。
+3. 同一份总纲同时含「三卷大纲索引」与不合规 `## 阶段 1 草稿` 时，仍走索引：3 条 phase、章范围保留、子字段为空。
 
 ### 8.3 卷内阶段与分卷总览误判
 
 1. `分卷大纲/卷一/阶段1-…md` 不判 `volume`、不产生候选。
 2. `小说大纲_分卷大纲.md` 不判 `volume`、不产生卷候选。
 3. `我有一个妹妹_大纲_卷1.md` 仍判 `volume`。
-4. 真实 vault 副本烟测：volume 候选数 = 3（3 个 `大纲_卷N`）。
+4. `分卷大纲/卷一/备忘-阶段1讨论.md` 不得当辅助文件忽略，仍进入候选。
+5. `identifySlots('分卷大纲/卷一/阶段1.md', { role: 'volume' })` 仍为空槽位。
+6. 直接测 `isOutlineAuxiliary`：阶段文件与分卷总览为 true；`分卷大纲/卷一大纲.md` 与 `大纲_卷N` 为 false。
+7. 真实 vault 副本烟测：volume 候选数 = 3（3 个 `大纲_卷N`）。未独立复现前不得勾选完成标准对应项。
 
 ## 建议实施顺序
 
@@ -146,11 +151,14 @@ phase 的 `purpose`、`turningPoint`、`emotionTrend`、`keyEvents` 仅在 phase
 
 ## 完成标准
 
-- [ ] 章纲可选列解析有单测，未命中留空有单测。
-- [ ] 总纲 phase 可选小节解析有单测，扁平列表项留空有单测。
-- [ ] `identifySlots` 修复后真实 vault volume 候选数 = 3。
-- [ ] 不新增数据库迁移、不落库 stage、不跨文件推导、不猜测。
-- [ ] 现有 8.1—8.3 回归不破（`node tests/ui/run-obsidian-import.cjs` 全部通过）。
+- [x] 章纲可选列解析有单测，未命中留空有单测。
+- [x] 总纲 phase 可选小节解析有单测，扁平列表项留空有**显式空值断言**（8.2.2）。
+- [x] 不合规 `## 阶段 N` 不得关掉三卷索引（8.2.3）。
+- [x] 阶段文件名以 `阶段N` 开头才忽略；中间夹「阶段1」的文件仍进候选（8.3.4）。
+- [x] 显式 `role: volume` 的阶段文件仍空槽位（8.3.5）；`isOutlineAuxiliary` 有直接单测（8.3.6）。
+- [ ] `identifySlots` 修复后真实 vault volume 候选数 = 3（须可复现：系统 temp 副本、只扫描不写库、原目录 hash 不变）。**未复现不得勾选。**
+- [x] 不新增数据库迁移、不落库 stage、不跨文件推导、不猜测。
+- [x] 现有 8.1—8.3 回归不破（`node tests/ui/run-obsidian-import.cjs` 全部通过）。
 
 ## 报告模板
 

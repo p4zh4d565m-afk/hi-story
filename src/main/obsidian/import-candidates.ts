@@ -44,7 +44,7 @@ export function isOutlineAuxiliary(relativePath: string): boolean {
   return false;
 }
 
-/** 大纲细分：role/roles 优先，其次文件名按章纲→总纲→分卷特异性顺序，最后目录层级。 */
+/** 大纲细分：先排除大纲辅助文件，其次 role/roles，最后按文件名章纲→总纲→分卷特异性顺序与目录层级。 */
 export function identifySlots(relativePath: string, frontmatter: Record<string, unknown>): { slots: ObsidianImportSlot[]; issues: ObsidianImportIssue[] } {
   const issues: ObsidianImportIssue[] = [];
   // 阶段文件与分卷总览显式排除（最优先），即使作者显式声明 role 也不当卷——只读导入的确定性保护
