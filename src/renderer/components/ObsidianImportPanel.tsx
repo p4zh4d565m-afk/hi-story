@@ -61,6 +61,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   // R4：候选级 canonical edit state，每个候选保存 slots + defaultVolumeIndex，供 reparse 与重试使用最新完整快照
   const editStateRef = useRef<Record<string, { slots: ObsidianImportSlot[]; defaultVolumeIndex: number | null }>>({});
+  // T4：同步刷新互斥门禁，防同一渲染闭包内连续触发重试
+  const refreshingRef = useRef(false);
 
   const guardRef = useRef(createObsidianImportGuard({
     invoke: (channel, ...args) => (window as any).electronAPI.invoke(channel, ...args),
@@ -76,11 +78,15 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
       const chars: Record<string, ImportCharacterOverride[]> = {};
       const worlds: Record<string, ImportWorldOverride[]> = {};
       const vols: Record<string, number | null> = {};
+      // T2：每次 prepare 成功时，用本次候选完整重建 canonical edit state，避免复用旧项目/旧扫描的快照
+      const edits: Record<string, { slots: ObsidianImportSlot[]; defaultVolumeIndex: number | null }> = {};
       for (const c of result.candidates) {
         chars[c.relativePath] = c.drafts.characters.map(ch => ({ sourceName: ch.sourceName, name: ch.name, overwrite: false }));
         worlds[c.relativePath] = c.drafts.worlds.map(w => ({ sourceName: w.sourceName, name: w.name, category: w.category as any, overwrite: false }));
         vols[c.relativePath] = null;
+        edits[c.relativePath] = { slots: c.slots, defaultVolumeIndex: null };
       }
+      editStateRef.current = edits;
       setCharOverrides(chars);
       setWorldOverrides(worlds);
       setVolumeAssign(vols);
@@ -120,6 +126,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     setRefreshPending(false);
     setRefreshing(false);
     setSavedSummary(null);
+    refreshingRef.current = false;
+    editStateRef.current = {};  // T2：关闭/项目切换清空 canonical edit state
     if (open && project?.id) {
       guardRef.current.prepare(project.id);
     } else {
@@ -138,14 +146,19 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     return computeFinalVolumes(layerChoices.volumes.action, dbVolumes, sourceVolumes);
   })();
 
-  // R3：最终卷列表变化后，越界的卷归属自动清空（要求用户重选）
+  // R3：最终卷列表变化后，越界的卷归属自动清空（要求用户重选），并同步 canonical edit state
   const finalVolumeCount = finalVolumes.length;
   useEffect(() => {
     setVolumeAssign(prev => {
       let changed = false;
       const next = { ...prev };
       for (const key of Object.keys(next)) {
-        if (next[key] !== null && next[key]! >= finalVolumeCount) { next[key] = null; changed = true; }
+        if (next[key] !== null && next[key]! >= finalVolumeCount) {
+          next[key] = null;
+          changed = true;
+          // T3：同步 canonical edit state，避免「重新解析」仍用旧越界卷下标
+          if (editStateRef.current[key]) editStateRef.current[key] = { ...editStateRef.current[key], defaultVolumeIndex: null };
+        }
       }
       return changed ? next : prev;
     });
@@ -259,14 +272,18 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     try {
       const selections = candidates
         .filter(c => selectedSet.has(c.relativePath))
-        .map(c => ({
-          relativePath: c.relativePath,
-          hash: c.hash,
-          slots: c.slots,
-          defaultVolumeIndex: volumeAssign[c.relativePath] ?? null,
-          characterOverrides: charOverrides[c.relativePath] ?? [],
-          worldOverrides: worldOverrides[c.relativePath] ?? [],
-        }));
+        .map(c => {
+          // T1：commit 参数与 canonical edit state 一致，避免预览与提交结果分叉
+          const edit = editStateRef.current[c.relativePath] ?? { slots: c.slots, defaultVolumeIndex: volumeAssign[c.relativePath] ?? null };
+          return {
+            relativePath: c.relativePath,
+            hash: c.hash,
+            slots: edit.slots,
+            defaultVolumeIndex: edit.defaultVolumeIndex,
+            characterOverrides: charOverrides[c.relativePath] ?? [],
+            worldOverrides: worldOverrides[c.relativePath] ?? [],
+          };
+        });
       const summary = await guardRef.current.commit({
         projectId: project.id, operationId: opId, selections, layerChoices, storyOptionDraft: storyOptionDraft ?? undefined,
       });
@@ -283,7 +300,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   // 只重试刷新，绝不再次调用 commit IPC，也不生成新 operationId
   const retryRefresh = async (summary: ObsidianImportSummary) => {
-    if (refreshing) return; // 刷新进行中禁止并发重试
+    if (refreshingRef.current) return; // 同步互斥：同一渲染周期内第二次进入直接返回
+    refreshingRef.current = true;
     setRefreshing(true);
     try {
       await onImported(summary);
@@ -291,6 +309,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     } catch (refreshError) {
       setError('导入已写入，界面刷新失败');
     } finally {
+      refreshingRef.current = false;
       setRefreshing(false);
     }
   };
@@ -307,6 +326,23 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     });
   };
 
+  // T1：统一落地 reparse 成功结果——首次解析与重试成功必须走同一路径，保证 slots/drafts/issues/overrides 一致
+  const applyReparseResult = (candidate: ObsidianImportCandidate, nextSlots: ObsidianImportSlot[], result: { drafts: ObsidianImportDrafts; issues: ObsidianImportIssue[] }) => {
+    setPrepareResult(prev => prev ? {
+      ...prev,
+      candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, slots: nextSlots, drafts: result.drafts, issues: result.issues } : c),
+    } : prev);
+    // 槽位/卷归属变化后按归一化 source key 合并旧 override：仍存在的保留作者编辑，新出现用默认
+    setCharOverrides(prev => {
+      const oldList = prev[candidate.relativePath] ?? [];
+      return { ...prev, [candidate.relativePath]: mergeCharacterOverrides(oldList, result.drafts.characters) };
+    });
+    setWorldOverrides(prev => {
+      const oldList = prev[candidate.relativePath] ?? [];
+      return { ...prev, [candidate.relativePath]: mergeWorldOverrides(oldList, result.drafts.worlds) };
+    });
+  };
+
   const setSlot = (candidate: ObsidianImportCandidate, slot: ObsidianImportSlot, enabled: boolean) => {
     const cur = editStateRef.current[candidate.relativePath] ?? { slots: candidate.slots, defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null };
     const nextSlots = enabled ? [...new Set([...cur.slots, slot])] : cur.slots.filter(s => s !== slot);
@@ -314,21 +350,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     editStateRef.current[candidate.relativePath] = { slots: nextSlots as ObsidianImportSlot[], defaultVolumeIndex: cur.defaultVolumeIndex };
     markEdited();
     runReparse(candidate).then(result => {
-      if (result) {
-        setPrepareResult(prev => prev ? {
-          ...prev,
-          candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, slots: nextSlots as ObsidianImportSlot[], drafts: result.drafts, issues: result.issues } : c),
-        } : prev);
-        // 槽位变化后按归一化 source key 合并旧 override：仍存在的保留作者编辑，新出现用默认
-        setCharOverrides(prev => {
-          const oldList = prev[candidate.relativePath] ?? [];
-          return { ...prev, [candidate.relativePath]: mergeCharacterOverrides(oldList, result.drafts.characters) };
-        });
-        setWorldOverrides(prev => {
-          const oldList = prev[candidate.relativePath] ?? [];
-          return { ...prev, [candidate.relativePath]: mergeWorldOverrides(oldList, result.drafts.worlds) };
-        });
-      }
+      if (result) applyReparseResult(candidate, nextSlots as ObsidianImportSlot[], result);
     }).finally(() => setReparseTick(t => t + 1)); // 退出 pending
   };
 
@@ -338,19 +360,17 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     setVolumeAssign(prev => ({ ...prev, [candidate.relativePath]: index }));
     markEdited();
     runReparse(candidate).then(result => {
-      if (result) {
-        setPrepareResult(prev => prev ? {
-          ...prev,
-          candidates: prev.candidates.map(c => c.relativePath === candidate.relativePath ? { ...c, drafts: result.drafts, issues: result.issues } : c),
-        } : prev);
-      }
+      if (result) applyReparseResult(candidate, cur.slots, result);
     }).finally(() => setReparseTick(t => t + 1)); // 退出 pending
   };
 
-  // R3：reparse 失败重试——用最新 canonical edit state 重发
+  // R3：reparse 失败重试——用最新 canonical edit state 重发，成功后同样走统一落地路径
   const retryReparse = (candidate: ObsidianImportCandidate) => {
     setError(null);
-    runReparse(candidate).finally(() => setReparseTick(t => t + 1));
+    const cur = editStateRef.current[candidate.relativePath] ?? { slots: candidate.slots, defaultVolumeIndex: volumeAssign[candidate.relativePath] ?? null };
+    runReparse(candidate).then(result => {
+      if (result) applyReparseResult(candidate, cur.slots, result);
+    }).finally(() => setReparseTick(t => t + 1));
   };
 
   const renderFields = (candidate: ObsidianImportCandidate) => {

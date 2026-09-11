@@ -50,9 +50,20 @@ describe('hashCanonicalCommitInput', () => {
     circular.self = circular;
     expect(hashCanonicalCommitInput(circular)).toBe(INVALID_INPUT_FINGERPRINT);
   });
+  it('嵌套循环引用（数组/对象内环）返回 invalid_input', () => {
+    const circular: any = { arr: [] };
+    circular.arr.push(circular);
+    expect(hashCanonicalCommitInput(circular)).toBe(INVALID_INPUT_FINGERPRINT);
+  });
   it('超预算输入返回 invalid_input', () => {
     // 单个字段超过 64 MiB 预算
     const huge: any = { selections: [{ relativePath: 'a.md', hash: 'h', slots: ['master'], defaultVolumeIndex: null, characterOverrides: [{ sourceName: 'x'.repeat(70 * 1024 * 1024), name: 'x', overwrite: false }], worldOverrides: [] }] };
     expect(hashCanonicalCommitInput(huge)).toBe(INVALID_INPUT_FINGERPRINT);
+  });
+  it('合法输入仍得到稳定指纹（不误伤）', () => {
+    const valid: any = { projectId: 'p1', operationId: 'op', selections: [{ relativePath: 'a.md', hash: 'a'.repeat(64), slots: ['master'], defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [] }], layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } } };
+    const h = hashCanonicalCommitInput(valid);
+    expect(h).not.toBe(INVALID_INPUT_FINGERPRINT);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
   });
 });

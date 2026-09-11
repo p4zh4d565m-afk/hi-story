@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createObsidianImportGuard } from '../../../src/renderer/services/obsidian-import-guard';
 
+const commitInput = { projectId: 'p', operationId: 'op', selections: [], layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'keep', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } } };
+
 describe('Obsidian 导入 guard 竞态', () => {
   it('旧项目迟到回执被忽略', async () => {
     const pending = new Map<string, (v: any) => void>();
@@ -85,5 +87,36 @@ describe('Obsidian 导入 guard 竞态', () => {
     pending.get(1)!({ success: true, data: { drafts: { master: { premise: '旧A' }, volumes: [], chapters: [], characters: [], worlds: [] }, issues: [] } });
     const oldResult = await oldA;
     expect(oldResult).toBeNull();
+  });
+});
+
+describe('Obsidian 导入 guard commit reject 防护（R5）', () => {
+  it('commit invoke 直接 reject 时走 onError 并返回 null', async () => {
+    const invoke = vi.fn(() => Promise.reject(new Error('IPC 缺失')));
+    const onError = vi.fn();
+    const guard = createObsidianImportGuard({ invoke, onApply: vi.fn(), onError });
+
+    const r = await guard.commit(commitInput as any);
+    expect(r).toBeNull();
+    expect(onError).toHaveBeenCalled();
+  });
+
+  it('commit 返回非 success 时走 onError 并返回 null', async () => {
+    const invoke = vi.fn(() => Promise.resolve({ success: false, error: '导入失败' }));
+    const onError = vi.fn();
+    const guard = createObsidianImportGuard({ invoke, onApply: vi.fn(), onError });
+
+    const r = await guard.commit(commitInput as any);
+    expect(r).toBeNull();
+    expect(onError).toHaveBeenCalled();
+  });
+
+  it('commit 成功返回 summary', async () => {
+    const summary = { planning: { master: 'kept', volumes: 'kept', chapters: 'kept' }, characters: { created: 0, updated: 0, skipped: 0 }, worlds: { created: 0, updated: 0, skipped: 0 } };
+    const invoke = vi.fn(() => Promise.resolve({ success: true, data: summary }));
+    const guard = createObsidianImportGuard({ invoke, onApply: vi.fn() });
+
+    const r = await guard.commit(commitInput as any);
+    expect(r).toEqual(summary);
   });
 });

@@ -16,6 +16,7 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
   let reparseDelayMs = 0;
   let commitDelayMs = 0;
   let currentScenario = '';
+  let failNextReparse = false;  // 控制下一次 reparse 返回失败，用于验证失败重试闭环
 
   const write = (rel, content) => {
     const f = path.join(vault, rel);
@@ -145,6 +146,7 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       reparseCalls = 0;
       reparseDelayMs = 0;
       commitDelayMs = 0;
+      failNextReparse = false;
       setupFixture(currentScenario);
       db.prepare('UPDATE projects SET obsidian_path = ? WHERE id = ?').run(vault, 'project-a');
       repo = new ObsidianImportRepo(db);
@@ -170,10 +172,15 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       commitDelayMs = args[0]?.commit ?? 0;
       return { success: true };
     }
+    if (channel === 'failNextReparse') {
+      failNextReparse = true;
+      return { success: true };
+    }
     if (channel === 'prepare' || channel === 'obsidian:preparePlanningImport') return repo.prepare(args[0]);
     if (channel === 'reparse' || channel === 'obsidian:reparsePlanningImport') {
       reparseCalls++;
       if (reparseDelayMs) await new Promise(res => setTimeout(res, reparseDelayMs));
+      if (failNextReparse) { failNextReparse = false; return { success: false, error: '模拟 reparse 失败' }; }
       return repo.reparse(args[0]);
     }
     if (channel === 'commit' || channel === 'obsidian:commitPlanningImport') {
