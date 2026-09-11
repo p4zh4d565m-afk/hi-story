@@ -31,6 +31,9 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
+  // 提交/刷新状态机（P0-8）：写库成功后进入 refreshPending，只允许重试刷新或关闭，不再允许改输入或再次 commit
+  const [refreshPending, setRefreshPending] = useState(false);
+  const [savedSummary, setSavedSummary] = useState<ObsidianImportSummary | null>(null);
   const [operationId, setOperationId] = useState<string | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   // 候选选中集合（relativePath）
@@ -110,6 +113,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     });
     setStoryOptionDraft(null);
     setCommitting(false);
+    setRefreshPending(false);
+    setSavedSummary(null);
     if (open && project?.id) {
       guardRef.current.prepare(project.id);
     } else {
@@ -201,7 +206,9 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   const anyReparsing = candidates.some(c => selectedSet.has(c.relativePath) && guardRef.current.isReparsing(project?.id ?? '', c.relativePath));
   void reparseTick; // 引用 tick，确保 pending 变化触发重渲染
 
-  const canCommit = !loading && !committing && !!prepareResult && !anyReparsing && blockReasons.length === 0;
+  const canCommit = !loading && !committing && !refreshPending && !!prepareResult && !anyReparsing && blockReasons.length === 0;
+  // 冻结：提交中或刷新 pending（写库已成功）时，禁用一切导入输入
+  const frozen = committing || refreshPending;
 
   const generateOperationId = () => {
     const id = crypto.randomUUID();
@@ -240,16 +247,23 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
         projectId: project.id, operationId: opId, selections, layerChoices, storyOptionDraft: storyOptionDraft ?? undefined,
       });
       if (summary) {
-        // 写库已成功，刷新失败也不能伪装成导入失败并再次写入
-        try {
-          await onImported(summary);
-          onClose();
-        } catch (refreshError) {
-          setError('导入已写入，但界面刷新失败，请重新加载');
-        }
+        // 写库已成功：进入 refreshPending，冻结所有导入输入，只允许重试刷新或关闭
+        setSavedSummary(summary);
+        setRefreshPending(true);
+        await retryRefresh(summary);
       }
     } finally {
       setCommitting(false);
+    }
+  };
+
+  // 只重试刷新，绝不再次调用 commit IPC，也不生成新 operationId
+  const retryRefresh = async (summary: ObsidianImportSummary) => {
+    try {
+      await onImported(summary);
+      onClose();
+    } catch (refreshError) {
+      setError('导入已写入，界面刷新失败');
     }
   };
 
@@ -377,7 +391,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
               return (
                 <div key={i} className="mb-2 space-y-1 border-b border-float-800 last:border-0 pb-2">
                   <div className="flex items-center gap-2">
-                    <input value={ov?.name ?? ch.name} disabled={committing} onChange={e => {
+                    <input value={ov?.name ?? ch.name} disabled={frozen} onChange={e => {
                       markEdited();
                       const arr = [...(charOverrides[candidate.relativePath] ?? [])];
                       arr[i] = { ...arr[i], name: e.target.value };
@@ -385,7 +399,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                     }} className="flex-1 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" />
                     {matched && (
                       <label className="flex items-center gap-1 text-[11px] text-gray-400">
-                        <input type="checkbox" checked={ov?.overwrite ?? false} disabled={committing} onChange={e => {
+                        <input type="checkbox" checked={ov?.overwrite ?? false} disabled={frozen} onChange={e => {
                           markEdited();
                           const arr = [...(charOverrides[candidate.relativePath] ?? [])];
                           arr[i] = { ...arr[i], overwrite: e.target.checked };
@@ -413,14 +427,14 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
               const matched = prepareResult?.target.worlds.some(t => t.normalizedName === w.sourceName.normalize('NFKC').trim().toLowerCase());
               return (
                 <div key={i} className="mb-2 space-y-1 border-b border-float-800 last:border-0 pb-2">
-                  <input value={ov?.name ?? w.name} disabled={committing} onChange={e => {
+                  <input value={ov?.name ?? w.name} disabled={frozen} onChange={e => {
                     markEdited();
                     const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
                     arr[i] = { ...arr[i], name: e.target.value };
                     setWorldOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
                   }} className="w-full px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" />
                   <div className="flex items-center gap-2">
-                    <select value={ov?.category ?? ''} disabled={committing} onChange={e => {
+                    <select value={ov?.category ?? ''} disabled={frozen} onChange={e => {
                       markEdited();
                       const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
                       arr[i] = { ...arr[i], category: e.target.value as any };
@@ -431,7 +445,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                     </select>
                     {matched && (
                       <label className="flex items-center gap-1 text-[11px] text-gray-400">
-                        <input type="checkbox" checked={ov?.overwrite ?? false} disabled={committing} onChange={e => {
+                        <input type="checkbox" checked={ov?.overwrite ?? false} disabled={frozen} onChange={e => {
                           markEdited();
                           const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
                           arr[i] = { ...arr[i], overwrite: e.target.checked };
@@ -459,7 +473,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             <h2 className="text-base font-semibold text-white">从 Obsidian 导入策划</h2>
             <p className="text-xs text-amber-300 mt-0.5">单向只读导入，不修改 Obsidian 文件</p>
           </div>
-          <button onClick={onClose} disabled={committing} className="text-gray-400 hover:text-white text-xl disabled:opacity-40">×</button>
+          <button onClick={onClose} disabled={frozen} className="text-gray-400 hover:text-white text-xl disabled:opacity-40">×</button>
         </header>
 
         {loading && <p className="px-5 py-3 text-sm text-gray-400">正在扫描 Obsidian 目录…</p>}
@@ -473,7 +487,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                 {candidates.map(c => (
                   <div key={c.relativePath} className={`border-l-2 ${selectedCandidate?.relativePath === c.relativePath ? 'border-accent bg-float-700' : 'border-transparent hover:bg-float-800'}`}>
                     <label className="flex items-start gap-2 px-3 py-2 cursor-pointer" onClick={() => setSelectedPath(c.relativePath)}>
-                      <input type="checkbox" checked={selectedSet.has(c.relativePath)} disabled={committing}
+                      <input type="checkbox" checked={selectedSet.has(c.relativePath)} disabled={frozen}
                         onChange={e => { markEdited(); setSelectedSet(prev => { const next = new Set(prev); e.target.checked ? next.add(c.relativePath) : next.delete(c.relativePath); return next; }); }} />
                       <span className="flex-1 min-w-0">
                         <span className="block text-xs font-medium text-gray-200 truncate">{c.name}</span>
@@ -505,7 +519,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                     <div className="flex gap-2 flex-wrap">
                       {(['master', 'volume', 'chapter', 'character', 'world'] as ObsidianImportSlot[]).map(slot => (
                         <label key={slot} className="text-xs text-gray-300 flex items-center gap-1">
-                          <input type="checkbox" disabled={committing} checked={selectedCandidate.slots.includes(slot)} onChange={e => setSlot(selectedCandidate, slot, e.target.checked)} />
+                          <input type="checkbox" disabled={frozen} checked={selectedCandidate.slots.includes(slot)} onChange={e => setSlot(selectedCandidate, slot, e.target.checked)} />
                           {SLOT_LABELS[slot]}
                         </label>
                       ))}
@@ -515,7 +529,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                   {selectedCandidate.slots.includes('chapter') && selectedCandidate.drafts.chapters.some(ch => ch.volumeIndex === null) && (
                     <div className="mb-4">
                       <p className="text-xs text-gray-500 mb-1">未分配章纲的默认卷归属</p>
-                      <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={committing}
+                      <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
                         onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
                         className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
                         <option value="">选择卷…</option>
@@ -542,12 +556,12 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             <div className="rounded border border-float-700 p-3">
               <p className="text-xs font-semibold text-gray-200 mb-2">Obsidian 导入方案（自动构造故事方向）</p>
               <div className="grid grid-cols-2 gap-2">
-                <label className="text-[11px] text-gray-400">标题<input value={storyOptionDraft.title} disabled={committing} onChange={e => editStory('title', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">一句话<input value={storyOptionDraft.logline} disabled={committing} onChange={e => editStory('logline', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">核心体验<input value={storyOptionDraft.corePromise} disabled={committing} onChange={e => editStory('corePromise', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">主要冲突<input value={storyOptionDraft.centralConflict} disabled={committing} onChange={e => editStory('centralConflict', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">结局方向<input value={storyOptionDraft.endingDirection} disabled={committing} onChange={e => editStory('endingDirection', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">主角（可空）<input value={storyOptionDraft.protagonist} disabled={committing} onChange={e => editStory('protagonist', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">标题<input value={storyOptionDraft.title} disabled={frozen} onChange={e => editStory('title', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">一句话<input value={storyOptionDraft.logline} disabled={frozen} onChange={e => editStory('logline', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">核心体验<input value={storyOptionDraft.corePromise} disabled={frozen} onChange={e => editStory('corePromise', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">主要冲突<input value={storyOptionDraft.centralConflict} disabled={frozen} onChange={e => editStory('centralConflict', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">结局方向<input value={storyOptionDraft.endingDirection} disabled={frozen} onChange={e => editStory('endingDirection', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+                <label className="text-[11px] text-gray-400">主角（可空）<input value={storyOptionDraft.protagonist} disabled={frozen} onChange={e => editStory('protagonist', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
               </div>
             </div>
           )}
@@ -555,7 +569,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
           <div className="flex items-center gap-2">
             {(Object.keys(LAYER_LABELS) as Array<keyof ImportLayerChoices>).map(layer => (
               <label key={layer} className="flex items-center gap-1">
-                <select value={layerChoices[layer].action} disabled={committing}
+                <select value={layerChoices[layer].action} disabled={frozen}
                   onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], action: e.target.value as any } })); }}
                   className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
                   <option value="keep">{LAYER_LABELS[layer]}：保留</option>
@@ -565,7 +579,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                 </select>
                 {(target?.layers[layer === 'master' ? 'master' : layer === 'volumes' ? 'volumes' : 'chapters'].status === 'locked') && (layerChoices[layer].action === 'replace' || layerChoices[layer].action === 'clear') && (
                   <span className="flex items-center gap-1 text-[11px] text-amber-300">
-                    <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={committing} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
+                    <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={frozen} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
                     解锁
                   </span>
                 )}
@@ -581,10 +595,23 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
           <div className="flex items-center justify-between">
             <p className="text-[11px] text-gray-500">预计：新建 {stats.create} · 覆盖 {stats.update} · 跳过 {stats.skip}</p>
-            <button onClick={commit} disabled={!canCommit}
-              className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
-              {committing ? '导入中…' : '确认导入'}
-            </button>
+            {refreshPending ? (
+              <div className="flex items-center gap-2">
+                <button onClick={() => savedSummary && retryRefresh(savedSummary)}
+                  className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover">
+                  重试刷新
+                </button>
+                <button onClick={onClose}
+                  className="px-3 py-2 rounded bg-float-700 text-xs text-gray-300 hover:bg-float-600">
+                  关闭
+                </button>
+              </div>
+            ) : (
+              <button onClick={commit} disabled={!canCommit}
+                className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
+                {committing ? '导入中…' : '确认导入'}
+              </button>
+            )}
           </div>
         </footer>
       </div>
