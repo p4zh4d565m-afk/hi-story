@@ -705,14 +705,27 @@ async function run(): Promise<Result[]> {
     const pPremise = pTextareas.find(t => (t as HTMLTextAreaElement).value === '核心前提');
     check('P0 总纲 textarea 存在', !!pPremise);
     if (!pPremise) throw new Error('总纲 textarea 不存在');
+
+    // P0a-P0c：改总纲之前，先测分卷字段编辑保真（updateVolume spread 不丢 stages、不触发清空提示）
+    const vTitleInput = Array.from(document.querySelectorAll('input')).find(i => (i as HTMLInputElement).value === '数据库卷A');
+    check('P0a 分卷 title input 存在', !!vTitleInput);
+    if (!vTitleInput) throw new Error('分卷 title input 不存在');
+    setNativeValue(vTitleInput as HTMLInputElement, '数据库卷A改');
+    fireInput(vTitleInput as HTMLElement);
+    await wait(200);
+    check('P0b 编辑分卷后 stages 保留', document.body.textContent?.includes('卷内阶段（Obsidian 导入，只读）') ?? false);
+    check('P0c 编辑分卷后无清空提示', !(document.body.textContent?.includes('已从当前编辑区清空') ?? false));
+
     setNativeTextareaValue(pPremise as HTMLTextAreaElement, '核心前提改');
     fireInput(pPremise);
     await wait(200);
     check('P1 总纲区内出现清空提示', document.body.textContent?.includes('已从当前编辑区清空') ?? false, document.body.textContent?.slice(0, 500));
     check('P2 提示含尚未写入数据库', document.body.textContent?.includes('尚未写入数据库') ?? false);
-    // 提示位置：总纲区（showMaster 块）内，而非页首第一步卡片
-    const masterBlock = Array.from(document.querySelectorAll('div')).find(d => d.textContent?.includes('全书总纲') && d.textContent?.includes('策划工作台 · 第二步'));
-    check('P3 提示在总纲区内', masterBlock ? (masterBlock.textContent?.includes('已从当前编辑区清空') ?? false) : false);
+    // 提示位置：总纲区卡片内含提示；第一步「你的故事想法」卡片不含提示（收紧：排除最外层滚动容器误命中）
+    const masterCard = Array.from(document.querySelectorAll('div')).find(d => d.textContent?.includes('全书总纲') && !d.textContent?.includes('你的故事想法'));
+    check('P3 提示在总纲区内', masterCard ? (masterCard.textContent?.includes('已从当前编辑区清空') ?? false) : false);
+    const ideaCard = Array.from(document.querySelectorAll('div')).find(d => d.textContent?.includes('你的故事想法') && !d.textContent?.includes('全书总纲'));
+    check('P3b 第一步卡片不含提示', ideaCard ? !(ideaCard.textContent?.includes('已从当前编辑区清空') ?? false) : false);
 
     // P4：改总纲后分卷区从 DOM 消失（showVolumes 变 false）
     check('P4 改总纲后分卷区消失', !(document.body.textContent?.includes('策划工作台 · 第三步') ?? false));
