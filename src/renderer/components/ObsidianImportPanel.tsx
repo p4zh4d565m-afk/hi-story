@@ -6,6 +6,7 @@ import type {
 import { createObsidianImportGuard } from '../services/obsidian-import-guard';
 import { computeFinalVolumes } from '../../main/obsidian/final-volumes';
 import { mergeCharacterOverrides, mergeWorldOverrides } from '../../main/obsidian/override-merge';
+import { computeLayerFinalState } from '../../main/obsidian/layer-actions';
 
 interface ObsidianImportPanelProps {
   project: Project | null;
@@ -47,6 +48,8 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
   const [storyOptionDraft, setStoryOptionDraft] = useState<StoryOption | null>(null);
   // reparse pending 的响应式版本号：发起/结束时递增，驱动 canCommit 重算
   const [reparseTick, setReparseTick] = useState(0);
+  // 章纲预览分页（每页 50 条，用户可访问最后一条）
+  const [chapterPage, setChapterPage] = useState(0);
 
   // 让 useRef 里创建的 onApply 闭包始终读到最新项目名，避免首次渲染闭包陷阱
   const projectNameRef = useRef(project?.name ?? '');
@@ -172,13 +175,26 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     const unassigned = c.drafts.chapters.filter(ch => ch.volumeIndex === null && (volumeAssign[c.relativePath] ?? null) === null);
     if (unassigned.length) blockReasons.push(`${c.name}：${unassigned.length} 章未分配卷`);
   }
-  // 锁定层解锁确认
+
+  // 三层动作语义：用与主进程共享的纯函数预判，覆盖锁定/替换无来源/上下游约束/清空后保留下游等全部确定性原因
   const target = prepareResult?.target;
   if (target) {
-    const lockedReplace = (l: keyof ImportLayerChoices) => target.layers[l === 'master' ? 'master' : l === 'volumes' ? 'volumes' : 'chapters'].status === 'locked' && (layerChoices[l].action === 'replace' || layerChoices[l].action === 'clear') && !layerChoices[l].unlockLocked;
-    if (lockedReplace('master')) blockReasons.push('总纲已锁定，替换/清空需确认解锁');
-    if (lockedReplace('volumes')) blockReasons.push('分卷纲已锁定，替换/清空需确认解锁');
-    if (lockedReplace('chapters')) blockReasons.push('章纲已锁定，替换/清空需确认解锁');
+    const selectedCands = candidates.filter(c => selectedSet.has(c.relativePath));
+    const incoming = {
+      master: selectedCands.some(c => c.slots.includes('master') && c.drafts.master),
+      volumes: selectedCands.some(c => c.drafts.volumes.length > 0),
+      chapters: selectedCands.some(c => c.drafts.chapters.length > 0),
+    };
+    const layerResult = computeLayerFinalState(
+      {
+        master: { exists: target.layers.master.exists, locked: target.layers.master.status === 'locked' },
+        volumes: { exists: target.layers.volumes.exists, locked: target.layers.volumes.status === 'locked' },
+        chapters: { exists: target.layers.chapters.exists, locked: target.layers.chapters.status === 'locked' },
+      },
+      layerChoices,
+      incoming,
+    );
+    for (const reason of layerResult.reasons) blockReasons.push(reason);
   }
 
   // 任一已选候选仍有最新一代 reparse 未返回 → 提交禁用
@@ -284,6 +300,11 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 
   const renderFields = (candidate: ObsidianImportCandidate) => {
     const d = candidate.drafts;
+    const pageSize = 50;
+    const chapterTotal = d.chapters.length;
+    const chapterPages = Math.max(1, Math.ceil(chapterTotal / pageSize));
+    const pageStart = chapterPage * pageSize;
+    const pageChapters = d.chapters.slice(pageStart, pageStart + pageSize);
     return (
       <div className="space-y-3">
         {d.master && (
@@ -294,31 +315,57 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             <Field label="核心冲突" value={d.master.centralConflict} />
             <Field label="人物弧" value={d.master.protagonistArc} />
             <Field label="结构模型" value={d.master.structureModel} />
-            <p className="text-[11px] text-gray-500 mt-2">阶段 {d.master.phases.length} 个 · 副线 {d.master.subplots.length} 条 · 承诺 {d.master.storyPromises.length} 条</p>
+            <Field label="阶段" value={d.master.phases.map((p, i) => `${i + 1}.${p.title || '未命名'}（${p.chapterRange || '未标注章范围'}）${p.purpose ? '：' + p.purpose : ''}`).join('；')} />
+            <Field label="副线" value={d.master.subplots.join('；')} />
+            <Field label="故事承诺" value={d.master.storyPromises.join('；')} />
           </div>
         )}
         {d.volumes.length > 0 && (
           <div className="rounded border border-float-700 p-3">
             <p className="text-xs font-semibold text-gray-200 mb-2">分卷纲（{d.volumes.length}）</p>
             {d.volumes.map((v, i) => (
-              <div key={i} className="mb-2">
-                <p className="text-xs text-gray-300">{v.title}（{v.chapterRange}）</p>
-                <p className="text-[11px] text-gray-500">目标：{v.volumeGoal || '—'}</p>
+              <div key={i} className="mb-2 border-b border-float-800 last:border-0 pb-2">
+                <p className="text-xs text-gray-300">{i + 1}. {v.title}（{v.chapterRange || '未标注章范围'}）</p>
+                <Field label="卷目标" value={v.volumeGoal} />
+                <Field label="起态" value={v.openingState} />
+                <Field label="主线推进" value={v.mainProgression} />
+                <Field label="人物推进" value={v.characterProgression} />
+                <Field label="关键事件" value={v.keyEvents.join('；')} />
+                <Field label="高潮" value={v.climax} />
+                <Field label="终态" value={v.endingState} />
+                <Field label="开启承诺" value={v.promisesOpened.join('；')} />
+                <Field label="回收承诺" value={v.promisesPaid.join('；')} />
               </div>
             ))}
           </div>
         )}
-        {d.chapters.length > 0 && (
+        {chapterTotal > 0 && (
           <div className="rounded border border-float-700 p-3">
-            <p className="text-xs font-semibold text-gray-200 mb-2">章纲（{d.chapters.length}）</p>
-            <div className="space-y-1">
-              {d.chapters.slice(0, 20).map((ch, i) => (
-                <p key={i} className="text-[11px] text-gray-400">
-                  卷{ch.volumeIndex ?? '?'} 第{ch.chapterNumber ?? '?'}章 {ch.title}：{ch.centralConflict || '—'}
-                </p>
+            <p className="text-xs font-semibold text-gray-200 mb-2">章纲（{chapterTotal}，第 {chapterPage + 1}/{chapterPages} 页）</p>
+            <div className="space-y-2">
+              {pageChapters.map((ch, i) => (
+                <div key={pageStart + i} className="border-b border-float-800 last:border-0 pb-2">
+                  <p className="text-xs text-gray-300">卷{ch.volumeIndex ?? '?'} 第{ch.chapterNumber ?? '?'}章 {ch.title || '未命名'}</p>
+                  <Field label="来源标题" value={ch.sourceHeading} />
+                  <Field label="章目标" value={ch.chapterGoal} />
+                  <Field label="开场处境" value={ch.openingSituation} />
+                  <Field label="核心冲突" value={ch.centralConflict} />
+                  <Field label="关键节拍" value={ch.keyBeats.join('；')} />
+                  <Field label="信息揭示" value={ch.reveal} />
+                  <Field label="人物变化" value={ch.characterChange} />
+                  <Field label="情绪" value={ch.emotionalBeat} />
+                  <Field label="回报" value={ch.payoff} />
+                  <Field label="章末钩子" value={ch.endingHook} />
+                </div>
               ))}
-              {d.chapters.length > 20 && <p className="text-[11px] text-gray-600">…还有 {d.chapters.length - 20} 章</p>}
             </div>
+            {chapterPages > 1 && (
+              <div className="flex items-center gap-2 mt-2">
+                <button onClick={() => setChapterPage(p => Math.max(0, p - 1))} disabled={chapterPage === 0} className="px-2 py-1 bg-float-800 rounded text-xs text-gray-300 disabled:opacity-40">上一页</button>
+                <span className="text-[11px] text-gray-500">{chapterPage + 1} / {chapterPages}</span>
+                <button onClick={() => setChapterPage(p => Math.min(chapterPages - 1, p + 1))} disabled={chapterPage === chapterPages - 1} className="px-2 py-1 bg-float-800 rounded text-xs text-gray-300 disabled:opacity-40">下一页</button>
+              </div>
+            )}
           </div>
         )}
         {d.characters.length > 0 && (
@@ -328,24 +375,31 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
               const ov = charOverrides[candidate.relativePath]?.[i];
               const matched = prepareResult?.target.characters.some(t => t.normalizedName === ch.sourceName.normalize('NFKC').trim().toLowerCase());
               return (
-                <div key={i} className="mb-2 flex items-center gap-2">
-                  <input value={ov?.name ?? ch.name} disabled={committing} onChange={e => {
-                    markEdited();
-                    const arr = [...(charOverrides[candidate.relativePath] ?? [])];
-                    arr[i] = { ...arr[i], name: e.target.value };
-                    setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
-                  }} className="flex-1 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" />
-                  {matched && (
-                    <label className="flex items-center gap-1 text-[11px] text-gray-400">
-                      <input type="checkbox" checked={ov?.overwrite ?? false} disabled={committing} onChange={e => {
-                        markEdited();
-                        const arr = [...(charOverrides[candidate.relativePath] ?? [])];
-                        arr[i] = { ...arr[i], overwrite: e.target.checked };
-                        setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
-                      }} />
-                      覆盖同名
-                    </label>
-                  )}
+                <div key={i} className="mb-2 space-y-1 border-b border-float-800 last:border-0 pb-2">
+                  <div className="flex items-center gap-2">
+                    <input value={ov?.name ?? ch.name} disabled={committing} onChange={e => {
+                      markEdited();
+                      const arr = [...(charOverrides[candidate.relativePath] ?? [])];
+                      arr[i] = { ...arr[i], name: e.target.value };
+                      setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
+                    }} className="flex-1 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" />
+                    {matched && (
+                      <label className="flex items-center gap-1 text-[11px] text-gray-400">
+                        <input type="checkbox" checked={ov?.overwrite ?? false} disabled={committing} onChange={e => {
+                          markEdited();
+                          const arr = [...(charOverrides[candidate.relativePath] ?? [])];
+                          arr[i] = { ...arr[i], overwrite: e.target.checked };
+                          setCharOverrides(prev => ({ ...prev, [candidate.relativePath]: arr }));
+                        }} />
+                        覆盖同名
+                      </label>
+                    )}
+                  </div>
+                  <Field label="别名" value={ch.aliases} />
+                  <Field label="外貌" value={ch.appearance} />
+                  <Field label="性格" value={ch.personality} />
+                  <Field label="背景" value={ch.background} />
+                  <Field label="人物弧" value={ch.arc} />
                 </div>
               );
             })}
@@ -358,7 +412,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
               const ov = worldOverrides[candidate.relativePath]?.[i];
               const matched = prepareResult?.target.worlds.some(t => t.normalizedName === w.sourceName.normalize('NFKC').trim().toLowerCase());
               return (
-                <div key={i} className="mb-2 space-y-1">
+                <div key={i} className="mb-2 space-y-1 border-b border-float-800 last:border-0 pb-2">
                   <input value={ov?.name ?? w.name} disabled={committing} onChange={e => {
                     markEdited();
                     const arr = [...(worldOverrides[candidate.relativePath] ?? [])];
@@ -387,6 +441,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                       </label>
                     )}
                   </div>
+                  <Field label="描述" value={w.description} />
                 </div>
               );
             })}
@@ -538,7 +593,9 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
 };
 
 const Field: React.FC<{ label: string; value: string }> = ({ label, value }) => (
-  <p className="text-[11px] text-gray-400 mb-1">{label}：{value || '—'}</p>
+  <p className="text-[11px] text-gray-400 mb-1">
+    {label}：{value ? <span className="text-gray-300">{value}</span> : <span className="text-gray-600">无来源，将留空</span>}
+  </p>
 );
 
 export default ObsidianImportPanel;
