@@ -143,6 +143,14 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       });
       write('分卷大纲/卷一/阶段1.md', ['# 阶段1：订婚与身份暴露（第1—5章）', '## 这一阶段做什么', '订婚。', '## 关键推进', '- a', '## 主要人物', '- b', '## 调用的世界观', '- c', '## 阶段出口', '出口。'].join('\n'));
       write('分卷大纲/卷一/阶段2.md', ['# 阶段2：绑架与逃离（第6—10章）', '## 这一阶段做什么', '逃离。', '## 关键推进', '- d', '## 主要人物', '- e', '## 调用的世界观', '- f', '## 阶段出口', '出口2。'].join('\n'));
+    } else if (scenario === 'stage-locked') {
+      // 与 stage 相同，但分卷纲 volumeStatus = locked：用于「锁定分卷 + keep + 勾阶段 → 解锁勾选可见」断言
+      seedPlanning({
+        master: '{"premise":"旧前提"}', masterStatus: 'generated',
+        volumes: '[{"title":"数据库卷A","chapterRange":"第 1-10 章"},{"title":"数据库卷B","chapterRange":"第 11-20 章"}]', volumeStatus: 'locked',
+        chapters: '[]', chapterStatus: 'empty', status: 'confirmed', selectedOption: 0,
+      });
+      write('分卷大纲/卷一/阶段1.md', ['# 阶段1：订婚与身份暴露（第1—5章）', '## 这一阶段做什么', '订婚。', '## 关键推进', '- a', '## 主要人物', '- b', '## 调用的世界观', '- c', '## 阶段出口', '出口。'].join('\n'));
     } else {
       base();
     }

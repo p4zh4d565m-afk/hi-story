@@ -651,6 +651,29 @@ async function run(): Promise<Result[]> {
     check('N4 卷 1 stages 为空数组', Array.isArray(nVol1?.stages) && nVol1.stages.length === 0, JSON.stringify(nVol1?.stages));
     check('N5 卷 0 字段未被阶段覆盖', nVol0?.title === '数据库卷A', JSON.stringify(nVol0));
 
+    // ============ 场景 O：锁定分卷 + keep + 勾阶段 → 解锁勾选可见、未勾时提交禁用 ============
+    await invoke('reset', 'stage-locked');
+    await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
+    await waitFor(() => document.body.textContent?.includes('阶段1'), 8000);
+    check('O1 锁定分卷时阶段候选出现锁定提示', document.body.textContent?.includes('分卷纲已锁定') ?? false, document.body.textContent?.slice(0, 300));
+    const oBtnBefore = findButton('确认导入');
+    check('O2 未解锁时提交禁用', oBtnBefore ? (oBtnBefore as HTMLButtonElement).disabled : false);
+    // 锁定分卷 + keep + 勾阶段，应渲染「解锁」checkbox
+    const oUnlockCbs = findCheckboxes().filter(cb => {
+      const span = cb.closest('span') || cb.parentElement;
+      return span?.textContent?.includes('解锁');
+    });
+    check('O3 解锁勾选可见', oUnlockCbs.length > 0, `实际 ${oUnlockCbs.length} 个解锁 checkbox`);
+    if (oUnlockCbs.length === 0) throw new Error('锁定分卷 + 勾阶段未显示解锁勾选');
+    oUnlockCbs[0].click();
+    await wait(200);
+    const oBtnAfter = findButton('确认导入');
+    check('O4 解锁后可提交', oBtnAfter ? !(oBtnAfter as HTMLButtonElement).disabled : false);
+    if (oBtnAfter && !(oBtnAfter as HTMLButtonElement).disabled) (oBtnAfter as HTMLButtonElement).click();
+    await waitFor(async () => (await invoke('snapshot')).volumeOutlines[0]?.[0]?.stages?.length === 1, 8000);
+    const oAfter = await invoke('snapshot');
+    check('O5 解锁后阶段写入卷 0', oAfter.volumeOutlines[0]?.[0]?.stages?.[0]?.title === '订婚与身份暴露', JSON.stringify(oAfter.volumeOutlines[0]?.[0]?.stages));
+
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });
   } finally {
