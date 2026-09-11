@@ -30,9 +30,26 @@ export async function resolveInsideRoot(rootPath: string, relativePath: string):
 
 const SLOT_ORDER: ObsidianImportSlot[] = ['chapter', 'master', 'volume'];
 
+/** 大纲辅助文件：卷内阶段文件与分卷总览——它们不是「一个文件 = 一个卷」的真卷，导入时忽略，避免空卷/阶段噪音。 */
+export function isOutlineAuxiliary(relativePath: string): boolean {
+  const name = relativePath.toLowerCase();
+  const base = path.basename(relativePath).toLowerCase();
+  // 卷目录（分卷大纲/卷N 或 第N卷）下的「阶段N」文件
+  const dirSegs = relativePath.split('/').slice(0, -1).map(s => s.toLowerCase());
+  const inVolumeDir = dirSegs.some(s => /分卷大纲|^第.{1,8}卷/.test(s));
+  const isStageFile = /阶段\s*\d+/.test(base);
+  if (inVolumeDir && isStageFile) return true;
+  // 分卷总览：文件名本身含「分卷大纲」但非「大纲_卷N」形式（如「小说大纲_分卷大纲.md」），且不在卷目录内
+  if (/分卷大纲/.test(base) && !/大纲_卷\d/.test(base) && !inVolumeDir) return true;
+  return false;
+}
+
 /** 大纲细分：role/roles 优先，其次文件名按章纲→总纲→分卷特异性顺序，最后目录层级。 */
 export function identifySlots(relativePath: string, frontmatter: Record<string, unknown>): { slots: ObsidianImportSlot[]; issues: ObsidianImportIssue[] } {
   const issues: ObsidianImportIssue[] = [];
+  // 阶段文件与分卷总览显式排除（最优先），即使作者显式声明 role 也不当卷——只读导入的确定性保护
+  if (isOutlineAuxiliary(relativePath)) return { slots: [], issues };
+
   const role = frontmatter.role;
   const roles = frontmatter.roles;
   const valid: ObsidianImportSlot[] = ['master', 'volume', 'chapter'];
@@ -122,6 +139,8 @@ export async function scanImportCandidates(rootPath: string): Promise<ImportScan
   for (const filePath of files) {
     const relativePath = path.relative(configuredPath, filePath).split(path.sep).join('/');
     if (isNavFile(relativePath)) continue;
+    // 大纲辅助文件（卷内阶段 / 分卷总览）不进入候选，避免空卷/阶段噪音
+    if (isOutlineAuxiliary(relativePath)) continue;
     try {
       const stat = await fs.stat(filePath);
       if (stat.size > IMPORT_LIMITS.maxFileBytes) {

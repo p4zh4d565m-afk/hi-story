@@ -13,14 +13,25 @@ describe('Obsidian 导入候选扫描', () => {
   it('按目录分类：人物/世界观/分卷大纲目录下的 md 分别归类', async () => {
     await write('人物/沈屿.md', '# 沈屿\n## 性格层次\n- 表面：高智商。');
     await write('世界观/主要场景.md', '# 主要场景\n## 星海游轮\n- 开场地点。');
-    await write('分卷大纲/卷一/阶段1.md', '# 阶段1\n## 这一阶段做什么\n推进。');
+    await write('分卷大纲/卷一大纲.md', '# 卷 1\n## 核心冲突\n推进。');
     await write('我的完整大纲.md', '# 完整大纲\n## 作品定位\n- 类型：BL');
     const r = await scanImportCandidates(vault);
     expect(r.status).toBe('ready');
     const kinds = Object.fromEntries(r.candidates.map(c => [c.relativePath, c.kind]));
     expect(kinds['人物/沈屿.md']).toBe('character');
     expect(kinds['世界观/主要场景.md']).toBe('world');
-    expect(kinds['分卷大纲/卷一/阶段1.md']).toBe('outline');
+    expect(kinds['分卷大纲/卷一大纲.md']).toBe('outline');
+  });
+
+  it('卷内阶段文件与分卷总览不作为独立卷候选', async () => {
+    await write('分卷大纲/卷一/阶段1-订婚.md', '# 阶段1\n## 这一阶段做什么\n推进。');
+    await write('小说大纲_分卷大纲.md', '# 分卷大纲\n## 卷 1\n- 核心冲突：x');
+    await write('我有一个妹妹_大纲_卷1.md', '# 卷 1 霍昭线（第 1-50 章）\n## 核心冲突\nx');
+    const r = await scanImportCandidates(vault);
+    const paths = r.candidates.map(c => c.relativePath);
+    expect(paths).not.toContain('分卷大纲/卷一/阶段1-订婚.md');
+    expect(paths).not.toContain('小说大纲_分卷大纲.md');
+    expect(paths).toContain('我有一个妹妹_大纲_卷1.md');
   });
 
   it('无法分类的 Markdown 保留为 unclassified 并进入候选', async () => {
@@ -33,6 +44,12 @@ describe('Obsidian 导入候选扫描', () => {
     expect(identifySlots('大纲/第一卷大纲.md', { role: 'master' }).slots).toEqual(['master']);
     expect(identifySlots('随便.md', { roles: ['volume', 'chapter'] }).slots).toEqual(['volume', 'chapter']);
     expect(identifySlots('第一卷大纲.md', {}).slots).toEqual(['volume']);
+  });
+
+  it('identifySlots：阶段文件与分卷总览返回空槽位，大纲_卷N 仍判卷', () => {
+    expect(identifySlots('分卷大纲/卷一/阶段1.md', {}).slots).toEqual([]);
+    expect(identifySlots('小说大纲_分卷大纲.md', {}).slots).toEqual([]);
+    expect(identifySlots('我有一个妹妹_大纲_卷1.md', {}).slots).toEqual(['volume']);
   });
 
   it('路径逃逸被拒绝', async () => {
