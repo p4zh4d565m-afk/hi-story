@@ -1080,7 +1080,9 @@ const App: React.FC = () => {
   }, [undo]);
 
   // === AI context ===
-  const obsidianResult = obsidianSnapshot?.projectId === activeProject?.id ? obsidianSnapshot.result : null;
+  const obsidianResult = obsidianSnapshot && activeProject && obsidianSnapshot.projectId === activeProject.id
+    ? obsidianSnapshot.result
+    : null;
   const obsidianDocuments = obsidianResult?.status === 'ready' ? obsidianResult.documents : [];
   const obsidianContext = useMemo(
     () => ContextBuilder.getObsidianContext(obsidianDocuments) || undefined,
