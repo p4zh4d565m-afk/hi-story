@@ -4,7 +4,7 @@ import type {
   ObsidianImportSlot, ImportLayerChoices, StoryOption, ImportCharacterOverride, ImportWorldOverride,
 } from '../types';
 import { createObsidianImportGuard } from '../services/obsidian-import-guard';
-import { computeFinalVolumes } from '../../main/obsidian/final-volumes';
+import { computeFinalVolumes, overlayStages } from '../../main/obsidian/final-volumes';
 import { mergeCharacterOverrides, mergeWorldOverrides, findDuplicateSourceKeys } from '../../main/obsidian/override-merge';
 import { computeLayerFinalState } from '../../main/obsidian/layer-actions';
 
@@ -236,18 +236,17 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     }
   }
 
-  // 阶段归属/越界/clear/锁定拦截（与主进程 validateFinalState 一致）
+  // 阶段归属/越界/clear/锁定拦截（与主进程共用 overlayStages 纯函数）
+  const hasStageSelected = candidates.some(c => selectedSet.has(c.relativePath) && c.drafts.stages.length > 0);
   {
-    const hasStage = candidates.some(c => selectedSet.has(c.relativePath) && c.drafts.stages.length > 0);
-    if (hasStage) {
+    if (hasStageSelected) {
       if (layerChoices.volumes.action === 'clear') blockReasons.push('清空分卷纲时不能同时导入阶段');
       if (target && target.layers.volumes.status === 'locked' && !layerChoices.volumes.unlockLocked) blockReasons.push('分卷纲已锁定，导入阶段需确认解锁');
-      for (const c of candidates) {
-        if (!selectedSet.has(c.relativePath)) continue;
-        const idx = volumeAssign[c.relativePath] ?? c.drafts.stages[0]?.volumeIndex ?? null;
-        if (idx === null) { blockReasons.push(`${c.name}：阶段未指定归属卷`); continue; }
-        if (idx >= finalVolumeCount) blockReasons.push(`${c.name}：阶段卷归属越界（最终仅 ${finalVolumeCount} 卷）`);
-      }
+      const stageDrafts = candidates
+        .filter(c => selectedSet.has(c.relativePath))
+        .flatMap(c => c.drafts.stages.map(s => ({ ...s, volumeIndex: volumeAssign[c.relativePath] ?? s.volumeIndex })));
+      const ov = overlayStages(finalVolumes, target?.existingVolumes ?? [], stageDrafts);
+      if (ov.error) blockReasons.push(ov.error);
     }
   }
 
@@ -709,12 +708,18 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                   <option value="replace">{LAYER_LABELS[layer]}：替换</option>
                   <option value="clear">{LAYER_LABELS[layer]}：清空</option>
                 </select>
-                {(target?.layers[layer === 'master' ? 'master' : layer === 'volumes' ? 'volumes' : 'chapters'].status === 'locked') && (layerChoices[layer].action === 'replace' || layerChoices[layer].action === 'clear') && (
-                  <span className="flex items-center gap-1 text-[11px] text-amber-300">
-                    <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={frozen} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
-                    解锁
-                  </span>
-                )}
+                {(() => {
+                  const layerKey = layer === 'master' ? 'master' : layer === 'volumes' ? 'volumes' : 'chapters';
+                  const isLocked = target?.layers[layerKey].status === 'locked';
+                  // 锁定且（替换/清空）或（勾了阶段）时显示解锁，否则锁定项目导入阶段无入口
+                  const needUnlock = isLocked && ((layerChoices[layer].action === 'replace' || layerChoices[layer].action === 'clear') || (layer === 'volumes' && hasStageSelected));
+                  return needUnlock ? (
+                    <span className="flex items-center gap-1 text-[11px] text-amber-300">
+                      <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={frozen} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
+                      解锁
+                    </span>
+                  ) : null;
+                })()}
               </label>
             ))}
           </div>

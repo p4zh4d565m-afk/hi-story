@@ -268,7 +268,7 @@ export class ObsidianImportRepo {
 
     // 阶段归堆校验：未归属 / 越界 / 最终卷为空 / 卷层 clear 冲突 / 锁定未解锁均拦截
     if (stages.length) {
-      const stageOverlay = overlayStages(finalVolumeList, stages);
+      const stageOverlay = overlayStages(finalVolumeList, target.existingVolumes, stages);
       if (stageOverlay.error) throw new Error(stageOverlay.error);
       if (lc.volumes.action === 'clear') throw new Error('清空分卷纲时不能同时导入阶段');
       if (target.layers.volumes.status === 'locked' && !lc.volumes.unlockLocked) throw new Error('分卷纲已锁定，导入阶段需确认解锁');
@@ -358,11 +358,13 @@ export class ObsidianImportRepo {
     const volumesDecision = decide(lc.volumes.action, lc.volumes.unlockLocked, volumesCurrent, JSON.stringify(volumes), volumesExists, volumesStatus === 'locked', volumesStatus);
     const chaptersDecision = decide(lc.chapters.action, lc.chapters.unlockLocked, chaptersCurrent, JSON.stringify(chapters), chaptersExists, chaptersStatus === 'locked', chaptersStatus);
 
-    // 阶段 overlay：在最终卷列表上按 volumeIndex 归堆写 stages；卷字段保持 keep/fill/replace 决策，status 不变。
+    // 阶段 overlay：在最终卷列表上按 volumeIndex 归堆写 stages；空桶保留「导入前」数据库卷的 stages。
+    // 需要 overlay 的条件：勾了阶段（写入），或 replace（来源卷无 stages，需保留已有 stages，防止空数组擦除）。
     let volumesValue = volumesDecision.value;
-    if (stages.length) {
+    if (lc.volumes.action !== 'clear' && (stages.length > 0 || lc.volumes.action === 'replace')) {
+      const existingVolumes = existing && volumesCurrent ? (() => { try { return JSON.parse(volumesCurrent) as VolumeOutline[]; } catch { return []; } })() : [];
       const finalVols = volumesValue ? (() => { try { return JSON.parse(volumesValue) as VolumeOutline[]; } catch { return []; } })() : [];
-      const ov = overlayStages(finalVols, stages);
+      const ov = overlayStages(finalVols, existingVolumes, stages);
       if (ov.error) throw new Error(ov.error);
       volumesValue = JSON.stringify(ov.volumes);
     }

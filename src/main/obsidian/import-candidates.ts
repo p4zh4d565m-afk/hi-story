@@ -57,7 +57,8 @@ export function identifySlots(relativePath: string, frontmatter: Record<string, 
 
   const role = frontmatter.role;
   const roles = frontmatter.roles;
-  const valid: ObsidianImportSlot[] = ['master', 'volume', 'chapter', 'stage'];
+  // role 不开放 stage（stage 只由路径判定，避免非阶段文件被 role:stage 收成阶段）
+  const valid: ObsidianImportSlot[] = ['master', 'volume', 'chapter'];
 
   if (Array.isArray(roles)) {
     const slots = roles.filter((r): r is ObsidianImportSlot => valid.includes(r as any));

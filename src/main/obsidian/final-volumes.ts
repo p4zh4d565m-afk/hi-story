@@ -29,11 +29,15 @@ function stageOrder(d: ImportStageDraft): number {
 /**
  * 阶段 overlay：把勾选的 stage 草稿按 volumeIndex 分桶写入最终卷列表的 stages。
  * - 整组替换该卷 stages（不与旧数组 merge）；未勾选的阶段不进入。
- * - 空桶保留该卷导入前的 stages ?? []（fill/replace 也不准用来源卷空数组擦除）。
+ * - 空桶保留「导入前」的 stages（existingVolumes[i]），即使卷层 fill/replace 也不准用来源卷空数组擦除。
  * - 未归属 / 越界 / 最终卷为空均返回 error。
  * 深拷贝最终卷列表，不改入参引用。
  */
-export function overlayStages(finalVolumes: VolumeOutline[], stageDrafts: ImportStageDraft[]): { volumes: VolumeOutline[]; error: string | null } {
+export function overlayStages(
+  finalVolumes: VolumeOutline[],
+  existingVolumes: VolumeOutline[],
+  stageDrafts: ImportStageDraft[],
+): { volumes: VolumeOutline[]; error: string | null } {
   const buckets = new Map<number, ImportStageDraft[]>();
   for (const d of stageDrafts) {
     const idx = d.volumeIndex;
@@ -46,7 +50,8 @@ export function overlayStages(finalVolumes: VolumeOutline[], stageDrafts: Import
     buckets.get(idx)!.push(d);
   }
 
-  const volumes: VolumeOutline[] = finalVolumes.map(v => ({ ...v, stages: (v.stages ?? []) as VolumeStage[] }));
+  // 空桶保留「导入前」的 stages（existingVolumes[i]），有桶整组替换
+  const volumes: VolumeOutline[] = finalVolumes.map((v, i) => ({ ...v, stages: (existingVolumes[i]?.stages ?? []) as VolumeStage[] }));
   for (const [idx, drafts] of buckets) {
     const sorted = [...drafts].sort((a, b) => stageOrder(a) - stageOrder(b) || a.sourceHeading.localeCompare(b.sourceHeading, 'zh-CN'));
     volumes[idx].stages = sorted.map(d => d.stage);

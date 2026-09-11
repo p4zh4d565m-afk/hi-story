@@ -133,6 +133,16 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
       const rows = ['| 章 | 标题 | 核心事件 |', '|---|---|---|'];
       for (let i = 1; i <= 60; i++) rows.push(`| ${i} | 第${i}章 | 事件${i}。 |`);
       write('章节细纲.md', rows.join('\n'));
+    } else if (scenario === 'stage') {
+      // 预置总纲 + 2 卷（generated），源文件只有阶段文件（卷一目录下）。
+      // 用于「勾阶段 + keep 分卷」归堆断言：阶段 overlay 到已有卷，不改卷字段。
+      seedPlanning({
+        master: '{"premise":"旧前提"}', masterStatus: 'generated',
+        volumes: '[{"title":"数据库卷A","chapterRange":"第 1-10 章"},{"title":"数据库卷B","chapterRange":"第 11-20 章"}]', volumeStatus: 'generated',
+        chapters: '[]', chapterStatus: 'empty', status: 'confirmed', selectedOption: 0,
+      });
+      write('分卷大纲/卷一/阶段1.md', ['# 阶段1：订婚与身份暴露（第1—5章）', '## 这一阶段做什么', '订婚。', '## 关键推进', '- a', '## 主要人物', '- b', '## 调用的世界观', '- c', '## 阶段出口', '出口。'].join('\n'));
+      write('分卷大纲/卷一/阶段2.md', ['# 阶段2：绑架与逃离（第6—10章）', '## 这一阶段做什么', '逃离。', '## 关键推进', '- d', '## 主要人物', '- e', '## 调用的世界观', '- f', '## 阶段出口', '出口2。'].join('\n'));
     } else {
       base();
     }

@@ -634,6 +634,23 @@ async function run(): Promise<Result[]> {
     await invoke('setDelays', { commit: 0 });
     await wait(500);
 
+    // ============ 场景 N：勾阶段 + keep 分卷 → 归堆写入卷 stages ============
+    await invoke('reset', 'stage');
+    await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
+    await waitFor(() => document.body.textContent?.includes('阶段1'), 8000);
+    check('N1 扫描出阶段候选', document.body.textContent?.includes('阶段1') ?? false);
+    // 三层保持 keep（分卷纲已有 2 卷），只勾阶段 → stages 归堆到已有卷 0
+    const nConfirm = findButton('确认导入');
+    check('N2 阶段默认归属卷 0 可提交', nConfirm ? !(nConfirm as HTMLButtonElement).disabled : false, document.body.textContent?.slice(0, 400));
+    if (nConfirm && !(nConfirm as HTMLButtonElement).disabled) (nConfirm as HTMLButtonElement).click();
+    await waitFor(async () => (await invoke('snapshot')).volumeOutlines[0]?.[0]?.stages?.length === 2, 8000);
+    const nAfter = await invoke('snapshot');
+    const nVol0 = nAfter.volumeOutlines[0]?.[0];
+    const nVol1 = nAfter.volumeOutlines[0]?.[1];
+    check('N3 卷 0 写入阶段 stages（按阶段号排序）', Array.isArray(nVol0?.stages) && nVol0.stages.length === 2 && nVol0.stages[0].title === '订婚与身份暴露' && nVol0.stages[1].title === '绑架与逃离', JSON.stringify(nVol0?.stages));
+    check('N4 卷 1 stages 为空数组', Array.isArray(nVol1?.stages) && nVol1.stages.length === 0, JSON.stringify(nVol1?.stages));
+    check('N5 卷 0 字段未被阶段覆盖', nVol0?.title === '数据库卷A', JSON.stringify(nVol0));
+
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });
   } finally {

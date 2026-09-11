@@ -74,6 +74,10 @@ describe('Obsidian 导入候选扫描', () => {
     expect(identifySlots('分卷大纲/卷一/阶段1.md', { role: 'volume' }).slots).toEqual(['stage']);
   });
 
+  it('identifySlots：非阶段文件 role:stage 不判 stage（stage 只由路径判定）', () => {
+    expect(identifySlots('随便一个文件.md', { role: 'stage' }).slots).not.toContain('stage');
+  });
+
   it('isOutlineAuxiliary：仅分卷总览为 true，阶段文件与真卷文件为 false', () => {
     expect(isOutlineAuxiliary('分卷大纲/卷一/阶段1-订婚.md')).toBe(false);
     expect(isOutlineAuxiliary('小说大纲_分卷大纲.md')).toBe(true);

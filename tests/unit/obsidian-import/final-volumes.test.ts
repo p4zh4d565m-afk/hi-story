@@ -37,31 +37,42 @@ describe('computeFinalVolumes：P0-1 四种动作语义', () => {
 
 describe('overlayStages：阶段归堆', () => {
   const base = [vol('卷A'), vol('卷B')];
+  const mkStage = (title: string) => ({ title, chapterRange: '', goal: '', keyProgressions: [], characters: [], worldRefs: [], exit: '', endingHook: '' });
 
   it('勾选阶段按 volumeIndex 写入对应卷 stages，整组替换不 merge', () => {
-    const withOld = [vol('卷A'), { ...vol('卷B'), stages: [{ title: '旧1', chapterRange: '', goal: '', keyProgressions: [], characters: [], worldRefs: [], exit: '', endingHook: '' }, { title: '旧2', chapterRange: '', goal: '', keyProgressions: [], characters: [], worldRefs: [], exit: '', endingHook: '' }] }];
-    const r = overlayStages(withOld, [stage('阶段1.md', 1, '新1')]);
+    const existing = [vol('卷A'), { ...vol('卷B'), stages: [mkStage('旧1'), mkStage('旧2')] }];
+    const r = overlayStages(base, existing, [stage('阶段1.md', 1, '新1')]);
     expect(r.error).toBeNull();
     expect(r.volumes[1].stages).toHaveLength(1); // 整组替换，非 3
     expect(r.volumes[1].stages![0].title).toBe('新1');
-    expect(r.volumes[0].stages).toEqual([]); // 空桶保留 []
+    expect(r.volumes[0].stages).toEqual([]); // 空桶保留 existingVolumes[0] 的 []
   });
 
-  it('空桶保留已有 stages（不擦除）', () => {
-    const withStages = [vol('卷A'), { ...vol('卷B'), stages: [{ title: '已有', chapterRange: '', goal: '', keyProgressions: [], characters: [], worldRefs: [], exit: '', endingHook: '' }] }];
-    const r = overlayStages(withStages, [stage('阶段1.md', 0, '新')]);
+  it('空桶保留导入前 stages（existingVolumes，不擦除）', () => {
+    const existing = [vol('卷A'), { ...vol('卷B'), stages: [mkStage('已有')] }];
+    const r = overlayStages(base, existing, [stage('阶段1.md', 0, '新')]);
     expect(r.volumes[1].stages).toHaveLength(1);
     expect(r.volumes[1].stages![0].title).toBe('已有');
   });
 
+  it('replace 未勾阶段时，空桶仍保留 existingVolumes 的 stages（来源卷无 stages 也不擦除）', () => {
+    // finalVolumes 是来源卷（无 stages），existingVolumes 有 stages
+    const srcVolumes = [vol('来源卷X')];
+    const existing = [{ ...vol('数据库卷A'), stages: [mkStage('已有')] }];
+    const r = overlayStages(srcVolumes, existing, []);
+    expect(r.error).toBeNull();
+    expect(r.volumes[0].stages).toHaveLength(1);
+    expect(r.volumes[0].stages![0].title).toBe('已有');
+  });
+
   it('扫描顺序阶段2早于阶段1时按阶段号排序', () => {
-    const r = overlayStages(base, [stage('阶段2.md', 0, '二'), stage('阶段1.md', 0, '一')]);
+    const r = overlayStages(base, [], [stage('阶段2.md', 0, '二'), stage('阶段1.md', 0, '一')]);
     expect(r.volumes[0].stages!.map(s => s.title)).toEqual(['一', '二']);
   });
 
   it('未归属 / 越界 / 最终卷为空返回 error', () => {
-    expect(overlayStages(base, [stage('阶段1.md', null, 'x')]).error).toContain('未指定归属卷');
-    expect(overlayStages(base, [stage('阶段1.md', 5, 'x')]).error).toContain('越界');
-    expect(overlayStages([], [stage('阶段1.md', 0, 'x')]).error).toContain('越界');
+    expect(overlayStages(base, [], [stage('阶段1.md', null, 'x')]).error).toContain('未指定归属卷');
+    expect(overlayStages(base, [], [stage('阶段1.md', 5, 'x')]).error).toContain('越界');
+    expect(overlayStages([], [], [stage('阶段1.md', 0, 'x')]).error).toContain('越界');
   });
 });

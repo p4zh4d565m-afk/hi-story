@@ -451,6 +451,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
                   </div>
                 </div>
                 {!volumeOutlines.length && <p className="text-sm text-gray-500">总纲已锁定，可以按阶段目标拆成分卷。</p>}
+                {!!volumeOutlines.length && volumeOutlines.some(v => (v.stages ?? []).length > 0) && (
+                  <p className="mt-2 text-[11px] text-amber-400">重新生成分卷纲会清空已导入的卷内阶段（当前仅只读展示，不参与重新生成）。</p>
+                )}
                 <div className="space-y-4">{volumeOutlines.map((volume, index) => <article key={index} className="rounded border border-editor-700 bg-editor-900 p-4">
                   <div className="grid grid-cols-[1fr_180px] gap-2"><input value={volume.title} onChange={e => updateVolume(index, 'title', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-sm text-gray-100" /><input value={volume.chapterRange} onChange={e => updateVolume(index, 'chapterRange', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-xs text-gray-300" /></div>
                   {([['volumeGoal','本卷目标'],['openingState','开卷状态'],['mainProgression','主线推进'],['characterProgression','人物/关系推进'],['climax','本卷高潮与代价'],['endingState','卷末新局面']] as const).map(([field,label]) => <label key={field} className="block mt-2"><span className="text-[11px] text-gray-500">{label}</span><textarea rows={2} value={volume[field]} onChange={e => updateVolume(index, field, e.target.value)} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>)}

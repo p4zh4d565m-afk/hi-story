@@ -124,4 +124,31 @@ describe('Obsidian 导入：阶段归堆（stage 落库）', () => {
     expect(parsed[0].stages).toHaveLength(1); // 整组替换，非 3
     expect(parsed[0].stages[0].title).toBe('订婚');
   });
+
+  it('卷层 replace + 未勾阶段：不擦除已有 stages', async () => {
+    const existing = [{
+      title: '数据库卷A', chapterRange: '第 1-10 章',
+      stages: [
+        { title: '已有阶段', chapterRange: '', goal: '', keyProgressions: [], characters: [], worldRefs: [], exit: '', endingHook: '' },
+      ],
+    }];
+    seedVolumes(existing);
+    await write('大纲_卷1.md', '# 卷 1 开端（第 1-10 章）\n## 本卷目标\n开端'); // 来源卷，无 stages
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const volCand = prep.data!.candidates.find((c: any) => c.slots.includes('volume'))!;
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op', selections: [
+        { relativePath: volCand.relativePath, hash: volCand.hash, slots: volCand.slots, defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [] },
+      ],
+      layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'replace', unlockLocked: true }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(true);
+    const row = db.prepare('SELECT volume_outlines FROM planning_ideas WHERE id = ?').get('pl1') as any;
+    const parsed = JSON.parse(row.volume_outlines);
+    expect(parsed[0].stages).toHaveLength(1); // replace 未勾阶段仍保留已有 stages
+    expect(parsed[0].stages[0].title).toBe('已有阶段');
+    expect(parsed[0].title).toBe('卷 1 开端'); // 卷字段本身已被 replace 成来源卷
+  });
 });
