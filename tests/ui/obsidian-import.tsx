@@ -82,14 +82,16 @@ async function run(): Promise<Result[]> {
     check('A15 章纲第1章核心冲突正确', after.chapterOutlines[0]?.[0]?.centralConflict === '游轮宴会。', JSON.stringify(after.chapterOutlines[0]?.[0]));
     check('A16 人物写入=1', after.characters.length === 1 && after.characters[0].name === '沈屿');
     check('A17 世界观写入=1 分类 place', after.worlds.length === 1 && after.worlds[0].category === 'place', JSON.stringify(after.worlds));
-    // 9.4 第1-3条：断言完整字段值（不只查存在）
+    // 11.3 第3条：如实断言——有真值的字段值正确；无来源字段明确标注为空（parser 尚未解析这些列）
     const aMaster = after.masterOutlines[0];
     const aVolume = after.volumeOutlines[0]?.[0];
     const aChapter = after.chapterOutlines[0]?.[0];
     const aPhase = aMaster?.phases?.[0];
-    check('A18 总纲 phase 全字段值', aPhase?.title?.includes('陆昭') && aPhase?.chapterRange === '第 1-50 章' && 'purpose' in aPhase && 'keyEvents' in aPhase && 'turningPoint' in aPhase && 'emotionTrend' in aPhase, JSON.stringify(aPhase));
-    check('A19 分卷 chapterRange/keyEvents 内容', aVolume?.chapterRange === '第 1-50 章' && Array.isArray(aVolume?.keyEvents) && aVolume.keyEvents.length > 0, JSON.stringify(aVolume));
-    check('A20 章纲 pov 值存在且为字符串', aChapter?.chapterNumber === 1 && aChapter?.volumeIndex === 0 && typeof aChapter?.pov === 'string', JSON.stringify(aChapter));
+    check('A18 总纲 phase title/chapterRange 值正确', aPhase?.title?.includes('陆昭') && aPhase?.chapterRange === '第 1-50 章', JSON.stringify(aPhase));
+    check('A18b 总纲 phase purpose/keyEvents/turningPoint/emotionTrend 无来源为空', aPhase?.purpose === '' && Array.isArray(aPhase?.keyEvents) && aPhase.keyEvents.length === 0 && aPhase?.turningPoint === '' && aPhase?.emotionTrend === '', JSON.stringify(aPhase));
+    check('A19 分卷 chapterRange/keyEvents 内容正确', aVolume?.chapterRange === '第 1-50 章' && Array.isArray(aVolume?.keyEvents) && aVolume.keyEvents.length > 0 && aVolume.keyEvents[0].includes('黄金三章'), JSON.stringify(aVolume));
+    check('A20 章纲 chapterNumber/volumeIndex 正确', aChapter?.chapterNumber === 1 && aChapter?.volumeIndex === 0, JSON.stringify(aChapter));
+    check('A20b 章纲 pov 无来源为空（parser 未解析视角列）', aChapter?.pov === '', JSON.stringify(aChapter));
 
     // ============ 场景 B：取消世界观候选 ============
     await invoke('reset', 'basic');
@@ -317,7 +319,17 @@ async function run(): Promise<Result[]> {
     await invoke('reset', 'basic');
     await invoke('setDelays', { commit: 300 });
     await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
-    await waitFor(() => document.body.textContent?.includes('完整大纲'), 8000);
+    await waitFor(() => document.body.textContent?.includes('主要场景'), 8000);
+    // 切到世界观候选（分类下拉仅在世界观候选 main 区渲染）
+    const iWorldRow = Array.from(document.querySelectorAll('label')).find(l => l.textContent?.includes('主要场景') && l.querySelector('input[type="checkbox"]'));
+    if (iWorldRow) {
+      const iWorldCb = iWorldRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      const iWas = iWorldCb?.checked ?? false;
+      (iWorldRow as HTMLElement).click();
+      await wait(100);
+      if (iWas && iWorldCb && !iWorldCb.checked) iWorldCb.click();
+      await wait(100);
+    }
     const iActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
     for (const sel of iActionSelects) { setNativeValue(sel as HTMLSelectElement, 'fill'); fireChange(sel); }
     await wait(200);
@@ -338,6 +350,16 @@ async function run(): Promise<Result[]> {
     check('I4 提交期间候选 checkbox 禁用', iCandidateCb ? (iCandidateCb as HTMLInputElement).disabled : false);
     const iActionSelect = Array.from(document.querySelectorAll('select')).find(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
     check('I5 提交期间 action 下拉禁用', iActionSelect ? (iActionSelect as HTMLSelectElement).disabled : false);
+    // 11.3 第2条：补槽位、文本输入、分类、卷归属、故事方向控件冻结
+    const iSlotCb = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
+      const label = cb.closest('label');
+      return label && ['总纲', '分卷纲', '章纲', '人物', '世界观'].includes(label.textContent?.trim() ?? '');
+    });
+    check('I6 提交期间槽位 checkbox 禁用', iSlotCb ? (iSlotCb as HTMLInputElement).disabled : false);
+    const iTextInput = Array.from(document.querySelectorAll('input')).find(i => ((i as HTMLInputElement).type === 'text' || !(i as HTMLInputElement).type) && (i as HTMLInputElement).value.length > 0);
+    check('I7 提交期间文本输入框禁用', iTextInput ? (iTextInput as HTMLInputElement).disabled : false);
+    const iCategorySelect = Array.from(document.querySelectorAll('select')).find(s => Array.from(s.options).some(o => o.value === 'place'));
+    check('I8 提交期间分类下拉禁用', iCategorySelect ? (iCategorySelect as HTMLSelectElement).disabled : false);
     await invoke('setDelays', { commit: 0 });
     await wait(500);
 
@@ -387,30 +409,42 @@ async function run(): Promise<Result[]> {
     // ============ 场景 L：reparse 失败→重试成功→预览更新→提交成功 ============
     await invoke('reset', 'basic');
     await mount({ id: 'project-a', name: '测试项目', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: 't', updatedAt: 't' }, async () => {});
-    await waitFor(() => document.body.textContent?.includes('完整大纲'), 8000);
+    await waitFor(() => document.body.textContent?.includes('沈屿'), 8000);
     // 三层 fill
     const lActionSelects = Array.from(document.querySelectorAll('select')).filter(s => ['保留', '填空', '替换', '清空'].some(t => Array.from(s.options).some(o => o.textContent?.includes(t))));
     for (const sel of lActionSelects) { setNativeValue(sel as HTMLSelectElement, 'fill'); fireChange(sel); }
     await wait(200);
-    // 让下一次 reparse 失败
+    // 切换到沈屿候选（点击左侧候选行）
+    const lCharRow = Array.from(document.querySelectorAll('label')).find(l => l.textContent?.includes('沈屿') && l.querySelector('input[type="checkbox"]'));
+    check('L0 沈屿候选行存在', !!lCharRow);
+    if (!lCharRow) throw new Error('沈屿候选行不存在');
+    const lCharCb = lCharRow.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    const lWas = lCharCb?.checked ?? false;
+    (lCharRow as HTMLElement).click();
+    await wait(100);
+    if (lWas && lCharCb && !lCharCb.checked) lCharCb.click(); // 恢复选中
+    await wait(100);
+    // 让下一次 reparse 失败，然后取消沈屿的「人物」槽位
     await invoke('failNextReparse');
-    // 触发槽位修改（会 reparse 失败）
     const lSlotCb = Array.from(document.querySelectorAll('input[type="checkbox"]')).find(cb => {
       const label = cb.closest('label');
-      return label && ['总纲', '分卷纲', '章纲', '人物', '世界观'].includes(label.textContent?.trim() ?? '');
+      return label && label.textContent?.trim() === '人物';
     });
-    if (lSlotCb) lSlotCb.click();
+    if (lSlotCb) lSlotCb.click(); // 触发 setSlot → reparse（失败）
     await waitFor(() => document.body.textContent?.includes('重新解析'), 8000);
     check('L1 reparse 失败后出现重试按钮', document.body.textContent?.includes('重新解析') ?? false);
-    // 失败后按钮应禁用
     const lBtnAfterFail = findButton('确认导入');
     check('L2 失败后确认导入禁用', lBtnAfterFail ? (lBtnAfterFail as HTMLButtonElement).disabled : false);
-    // 点击重新解析（成功），预览应更新
     const lRetryBtn = findButton('重新解析');
     if (lRetryBtn) (lRetryBtn as HTMLButtonElement).click();
     await waitFor(() => !document.body.textContent?.includes('重新解析'), 8000);
     const lBtnAfterRetry = findButton('确认导入');
     check('L3 重试成功后确认导入可用', lBtnAfterRetry ? !(lBtnAfterRetry as HTMLButtonElement).disabled : false);
+    // 提交并核对 SQLite：沈屿的人物槽位已取消，人物不应写入（证明重试结果真正落地到 commit 参数）
+    if (lBtnAfterRetry && !(lBtnAfterRetry as HTMLButtonElement).disabled) (lBtnAfterRetry as HTMLButtonElement).click();
+    await waitFor(async () => (await invoke('snapshot')).planning.length === 1, 8000);
+    const lAfter = await invoke('snapshot');
+    check('L4 重试后提交成功且人物未写入', lAfter.planning.length === 1 && lAfter.characters.length === 0, `characters=${JSON.stringify(lAfter.characters)}, planning=${lAfter.planning.length}`);
 
   } catch (e) {
     results.push({ name: '整体执行', error: (e as Error).message });

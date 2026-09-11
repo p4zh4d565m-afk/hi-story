@@ -6,7 +6,9 @@ import { validateObsidianCommitInput } from '../obsidian/import-validator';
 import type { IpcResult, ObsidianCommitInput, ObsidianImportReparseInput } from '../../renderer/types';
 
 /** 有界稳定序列化：递归排序对象键、保留数组顺序，遇到循环/超预算立即终止返回 null。
- * 预算按累计字节数计算，每次累加都通过 consume 检查，超限立即返回 false；WeakSet 检测环。 */
+ * 预算按累计字节数计算，每次累加都通过 consume 检查，超限立即返回 false。
+ * seen 是「当前递归栈」集合（进入对象 add、处理完 delete），只拒绝回到祖先对象的真环，
+ * 不拒绝 DAG 中共享引用（如三个 layer 复用同一 decision 对象）。 */
 function canonicalize(value: unknown, state: { bytes: number; seen: WeakSet<object> }, budget: number): string | null {
   if (value === null) { if (!consume(state, budget, 4)) return null; return 'null'; }
   const t = typeof value;
@@ -19,34 +21,37 @@ function canonicalize(value: unknown, state: { bytes: number; seen: WeakSet<obje
   if (t === 'undefined') { if (!consume(state, budget, 9)) return null; return 'undefined'; }
   if (t !== 'object') return null;
 
-  // 循环引用检测
+  // 递归栈循环检测：回到当前祖先对象才是真环；共享引用（DAG）放行
   if (state.seen.has(value as object)) return null;
   state.seen.add(value as object);
-
-  if (Array.isArray(value)) {
-    if (!consume(state, budget, 2)) return null; // 左右括号
-    const parts: string[] = [];
-    for (let i = 0; i < value.length; i++) {
-      if (i > 0 && !consume(state, budget, 1)) return null; // 逗号
-      const s = canonicalize(value[i], state, budget);
-      if (s === null) return null;
-      parts.push(s);
+  try {
+    if (Array.isArray(value)) {
+      if (!consume(state, budget, 2)) return null; // 左右括号
+      const parts: string[] = [];
+      for (let i = 0; i < value.length; i++) {
+        if (i > 0 && !consume(state, budget, 1)) return null; // 逗号
+        const s = canonicalize(value[i], state, budget);
+        if (s === null) return null;
+        parts.push(s);
+      }
+      return `[${parts.join(',')}]`;
     }
-    return `[${parts.join(',')}]`;
+    const keys = Object.keys(value as Record<string, unknown>).sort();
+    if (!consume(state, budget, 2)) return null; // 左右花括号
+    const parts: string[] = [];
+    for (let i = 0; i < keys.length; i++) {
+      const k = keys[i];
+      const ks = JSON.stringify(k);
+      if (!consume(state, budget, Buffer.byteLength(ks, 'utf8') + 1)) return null; // key + 冒号
+      if (i > 0 && !consume(state, budget, 1)) return null; // 逗号
+      const s = canonicalize((value as Record<string, unknown>)[k], state, budget);
+      if (s === null) return null;
+      parts.push(`${ks}:${s}`);
+    }
+    return `{${parts.join(',')}}`;
+  } finally {
+    state.seen.delete(value as object);
   }
-  const keys = Object.keys(value as Record<string, unknown>).sort();
-  if (!consume(state, budget, 2)) return null; // 左右花括号
-  const parts: string[] = [];
-  for (let i = 0; i < keys.length; i++) {
-    const k = keys[i];
-    const ks = JSON.stringify(k);
-    if (!consume(state, budget, Buffer.byteLength(ks, 'utf8') + 1)) return null; // key + 冒号
-    if (i > 0 && !consume(state, budget, 1)) return null; // 逗号
-    const s = canonicalize((value as Record<string, unknown>)[k], state, budget);
-    if (s === null) return null;
-    parts.push(`${ks}:${s}`);
-  }
-  return `{${parts.join(',')}}`;
 }
 
 function consume(state: { bytes: number }, budget: number, n: number): boolean {

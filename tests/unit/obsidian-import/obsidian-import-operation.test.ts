@@ -66,4 +66,19 @@ describe('hashCanonicalCommitInput', () => {
     expect(h).not.toBe(INVALID_INPUT_FINGERPRINT);
     expect(h).toMatch(/^[0-9a-f]{64}$/);
   });
+  it('共享引用（非环 DAG）得到稳定指纹而非 invalid_input', () => {
+    const decision = { action: 'keep', unlockLocked: false };
+    const input: any = {
+      projectId: 'p', operationId: 'op', selections: [],
+      layerChoices: { master: decision, volumes: decision, chapters: decision },
+    };
+    const h = hashCanonicalCommitInput(input);
+    expect(h).not.toBe(INVALID_INPUT_FINGERPRINT);
+    expect(h).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it('真实循环（回到祖先对象）仍返回 invalid_input', () => {
+    const a: any = { name: 'a' };
+    a.child = a;
+    expect(hashCanonicalCommitInput(a)).toBe(INVALID_INPUT_FINGERPRINT);
+  });
 });
