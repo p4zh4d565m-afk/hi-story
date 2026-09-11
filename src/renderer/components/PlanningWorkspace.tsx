@@ -455,6 +455,14 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
                   <div className="grid grid-cols-[1fr_180px] gap-2"><input value={volume.title} onChange={e => updateVolume(index, 'title', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-sm text-gray-100" /><input value={volume.chapterRange} onChange={e => updateVolume(index, 'chapterRange', e.target.value)} className="bg-editor-800 border border-editor-700 rounded px-2 py-1 text-xs text-gray-300" /></div>
                   {([['volumeGoal','本卷目标'],['openingState','开卷状态'],['mainProgression','主线推进'],['characterProgression','人物/关系推进'],['climax','本卷高潮与代价'],['endingState','卷末新局面']] as const).map(([field,label]) => <label key={field} className="block mt-2"><span className="text-[11px] text-gray-500">{label}</span><textarea rows={2} value={volume[field]} onChange={e => updateVolume(index, field, e.target.value)} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>)}
                   {([['keyEvents','关键事件（每行一项）'],['promisesOpened','本卷新建承诺'],['promisesPaid','本卷兑现承诺']] as const).map(([field,label]) => <label key={field} className="block mt-2"><span className="text-[11px] text-gray-500">{label}</span><textarea rows={field === 'keyEvents' ? 5 : 3} value={volume[field].join('\n')} onChange={e => updateVolume(index, field, e.target.value.split('\n').filter(Boolean))} className="w-full mt-1 bg-editor-800 border border-editor-700 rounded p-2 text-xs text-gray-300" /></label>)}
+                  {(volume.stages ?? []).length > 0 && (
+                    <div className="mt-2 rounded bg-editor-800 border border-editor-700 p-2">
+                      <p className="text-[11px] text-gray-500 mb-1">卷内阶段（Obsidian 导入，只读）</p>
+                      {(volume.stages ?? []).map((s, si) => (
+                        <p key={si} className="text-xs text-gray-400">阶段 {si + 1} · {s.title || '未命名'}{s.chapterRange ? `（${s.chapterRange}）` : ''}</p>
+                      ))}
+                    </div>
+                  )}
                 </article>)}</div>
                 {!!volumeOutlines.length && <p className={`mt-4 text-xs ${volumeStatus === 'locked' ? 'text-green-400' : 'text-yellow-500'}`}>{volumeStatus === 'locked' ? '✓ 分卷纲已锁定，可以继续生成章节清单' : '分卷纲尚未锁定，可以直接修改'}</p>}
               </div>

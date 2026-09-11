@@ -179,6 +179,9 @@ export function buildChapterOutlinesPrompt(
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const methods = skills.map(skill => `\n## ${skill.id}\n${skill.content}`).join('\n');
   const volume = volumes[volumeIndex];
+  // 阶段字段不进 AI 上下文（避免无预算地撑爆 token）；strip 后只传卷的策划字段
+  const volumeForPrompt = (({ stages, ...rest }: VolumeOutline) => rest)(volume);
+  const volumesForPrompt = volumes.map(({ stages, ...rest }: VolumeOutline) => rest);
   return [
     {
       role: 'system',
@@ -194,9 +197,9 @@ chapterNumber 必须覆盖指定章节范围且连续；volumeIndex 固定为给
 
 # 全书总纲\n${JSON.stringify(outline, null, 2)}
 
-# 全部分卷（用于前后衔接）\n${JSON.stringify(volumes, null, 2)}
+# 全部分卷（用于前后衔接）\n${JSON.stringify(volumesForPrompt, null, 2)}
 
-# 本次只拆第 ${volumeIndex + 1} 卷\n${JSON.stringify(volume, null, 2)}
+# 本次只拆第 ${volumeIndex + 1} 卷\n${JSON.stringify(volumeForPrompt, null, 2)}
 
 # 作者要求\n${requirements || '无'}
 
