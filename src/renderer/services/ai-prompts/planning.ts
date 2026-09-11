@@ -1,4 +1,4 @@
-import type { ChapterOutline, MasterOutline, Project, StoryOption, VolumeOutline, WritingSkill } from '../../types';
+import type { ChapterOutline, MasterOutline, Project, StoryOption, VolumeOutline, VolumeStage, WritingSkill } from '../../types';
 
 export function buildStoryOptionsPrompt(
   project: Project,
@@ -173,15 +173,77 @@ export function parseVolumeOutlines(raw: string): VolumeOutline[] {
   return parsed.volumes;
 }
 
+/** 每项必须携带该卷在全书分卷列表中的绝对下标，函数内不得用数组位置推断卷号 */
+export interface StageContextEntry { index: number; volume: VolumeOutline }
+
+const sliceMax = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : s);
+
+/**
+ * 把卷内阶段格式化为有界上下文文本。
+ * - full（当前卷）：含 keyProgressions 与非空 endingHook，用于约束拆出的 keyBeats。
+ * - brief（相邻卷）：每阶段一行「标题（章范围）：目标 → 出口」，只要边界感。
+ * - 卷号取 entry.index + 1，不用数组位置；逐项跳过无 stages 的卷；全部空则返回 null。
+ * - 永不取 characters / worldRefs。
+ */
+export function formatStagesContext(entries: StageContextEntry[], mode: 'full' | 'brief'): string | null {
+  const sections: string[] = [];
+  for (const entry of entries) {
+    const stages = entry.volume.stages ?? [];
+    if (stages.length === 0) continue;
+    const title = `第${entry.index + 1}卷「${entry.volume.title || '未命名'}」：`;
+    if (mode === 'brief') {
+      const lines = stages.map(s => {
+        const range = s.chapterRange ? `（${s.chapterRange}）` : '';
+        const parts = [`- ${s.title}${range}`];
+        const goal = s.goal ? sliceMax(s.goal, 120) : '';
+        const exit = s.exit ? sliceMax(s.exit, 120) : '';
+        if (goal || exit) parts.push(`：${[goal, exit].filter(Boolean).join(' → ')}`);
+        return parts.join('');
+      });
+      sections.push(`${title}\n${lines.join('\n')}`);
+    } else {
+      const blocks = stages.map(s => {
+        const lines: string[] = [];
+        const range = s.chapterRange ? `（${s.chapterRange}）` : '';
+        lines.push(`### ${s.title}${range}`);
+        if (s.goal) lines.push(`目标：${sliceMax(s.goal, 120)}`);
+        if (s.keyProgressions.length) {
+          const shown = s.keyProgressions.slice(0, 8).map(k => sliceMax(k, 60));
+          const more = s.keyProgressions.length > 8 ? '…' : '';
+          lines.push(`关键推进：${shown.join(' / ')}${more}`);
+        }
+        if (s.exit) lines.push(`出口：${sliceMax(s.exit, 120)}`);
+        if (s.endingHook) lines.push(`卷末钩子：${sliceMax(s.endingHook, 80)}`);
+        return lines.join('\n');
+      });
+      sections.push(`${title}\n${blocks.join('\n')}`);
+    }
+  }
+  if (sections.length === 0) return null;
+  return sections.join('\n');
+}
+
 export function buildChapterOutlinesPrompt(
   project: Project, option: StoryOption, outline: MasterOutline, volumes: VolumeOutline[],
   volumeIndex: number, requirements: string, skills: WritingSkill[],
 ): Array<{ role: 'system' | 'user'; content: string }> {
   const methods = skills.map(skill => `\n## ${skill.id}\n${skill.content}`).join('\n');
   const volume = volumes[volumeIndex];
-  // 阶段字段不进 AI 上下文（避免无预算地撑爆 token）；strip 后只传卷的策划字段
+  // 卷 JSON 里剥掉 stages（避免整份 JSON 重复输出阶段），另由 formatStagesContext 有界注入
   const volumeForPrompt = (({ stages, ...rest }: VolumeOutline) => rest)(volume);
   const volumesForPrompt = volumes.map(({ stages, ...rest }: VolumeOutline) => rest);
+
+  // 当前卷无 stages 则整段不注入（先算 full，为 null 则跳过，不再算 brief）
+  const fullBlock = formatStagesContext([{ index: volumeIndex, volume }], 'full');
+  let stagesBlock = '';
+  if (fullBlock) {
+    const adjacent: StageContextEntry[] = [];
+    if (volumeIndex - 1 >= 0) adjacent.push({ index: volumeIndex - 1, volume: volumes[volumeIndex - 1] });
+    if (volumeIndex + 1 < volumes.length) adjacent.push({ index: volumeIndex + 1, volume: volumes[volumeIndex + 1] });
+    const briefBlock = formatStagesContext(adjacent, 'brief');
+    stagesBlock = `\n\n# 卷内阶段（施工依据）\n以下为作者手写的卷内阶段，是本卷的施工依据；关键节拍必须与阶段的关键推进一致，不得另起炉灶。\n${fullBlock}${briefBlock ? `\n\n## 相邻卷阶段\n${briefBlock}` : ''}\n`;
+  }
+
   return [
     {
       role: 'system',
@@ -200,7 +262,7 @@ chapterNumber 必须覆盖指定章节范围且连续；volumeIndex 固定为给
 # 全部分卷（用于前后衔接）\n${JSON.stringify(volumesForPrompt, null, 2)}
 
 # 本次只拆第 ${volumeIndex + 1} 卷\n${JSON.stringify(volumeForPrompt, null, 2)}
-
+${stagesBlock}
 # 作者要求\n${requirements || '无'}
 
 # 本次采用的方法\n${methods}

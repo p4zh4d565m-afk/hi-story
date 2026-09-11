@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../../src/renderer/services/ai-prompts/planning';
+import { parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines, formatStagesContext, buildChapterOutlinesPrompt } from '../../src/renderer/services/ai-prompts/planning';
+import type { VolumeOutline, VolumeStage, MasterOutline, StoryOption } from '../../src/renderer/types';
 
 const option = {
   title: '测试书名',
@@ -81,5 +82,189 @@ describe('parseChapterOutlines', () => {
     expect(() => parseChapterOutlines(JSON.stringify({ chapters: [{ ...chapter, chapterNumber: 2 }, chapter] }), 0)).toThrow();
     expect(() => parseChapterOutlines(JSON.stringify({ chapters: [chapter, { ...chapter, chapterNumber: 3 }] }), 0)).toThrow();
     expect(() => parseChapterOutlines(JSON.stringify({ chapters: [chapter, { ...chapter, chapterNumber: 2, keyBeats: [] }] }), 0)).toThrow();
+  });
+});
+
+describe('formatStagesContext', () => {
+  const mkStage = (over: Partial<VolumeStage> = {}): VolumeStage => ({
+    title: '阶段1', chapterRange: '第 1-15 章', goal: '目标', keyProgressions: [], characters: [], worldRefs: [], exit: '出口', endingHook: '', ...over,
+  });
+  const mkVol = (title: string, stages?: VolumeStage[]): VolumeOutline => ({
+    title, chapterRange: '第 1-50 章', volumeGoal: '', openingState: '', mainProgression: '',
+    characterProgression: '', keyEvents: [], climax: '', endingState: '', promisesOpened: [], promisesPaid: [],
+    stages,
+  });
+
+  it('卷号取自 entry.index 而非数组位置（full 与 brief 都要）', () => {
+    const full = formatStagesContext([{ index: 2, volume: mkVol('卷三', [mkStage()]) }], 'full');
+    expect(full).toContain('第3卷');
+    expect(full).not.toContain('第1卷');
+    const brief = formatStagesContext([{ index: 3, volume: mkVol('卷四', [mkStage()]) }], 'brief');
+    expect(brief).toContain('第4卷');
+  });
+
+  it('full 模式输出标题/章范围/目标/关键推进/出口', () => {
+    const vol = mkVol('卷三', [mkStage({ goal: '达成目标', keyProgressions: ['推进1', '推进2'], exit: '离开' })]);
+    const out = formatStagesContext([{ index: 2, volume: vol }], 'full')!;
+    expect(out).toContain('阶段1');
+    expect(out).toContain('第 1-15 章');
+    expect(out).toContain('达成目标');
+    expect(out).toContain('推进1');
+    expect(out).toContain('推进2');
+    expect(out).toContain('离开');
+  });
+
+  it('brief 模式不含 keyProgressions 与 endingHook', () => {
+    const vol = mkVol('卷四', [mkStage({ goal: '目标A', keyProgressions: ['不该出现'], exit: '出口A', endingHook: '不该出现钩子' })]);
+    const out = formatStagesContext([{ index: 3, volume: vol }], 'brief')!;
+    expect(out).toContain('目标A');
+    expect(out).toContain('出口A');
+    expect(out).not.toContain('不该出现');
+    expect(out).not.toContain('不该出现钩子');
+  });
+
+  it('endingHook 为空则 full 模式整行省略，非空则输出', () => {
+    const empty = formatStagesContext([{ index: 0, volume: mkVol('卷一', [mkStage({ endingHook: '' })]) }], 'full')!;
+    expect(empty).not.toContain('卷末钩子');
+    const withHook = formatStagesContext([{ index: 0, volume: mkVol('卷一', [mkStage({ endingHook: '钩子内容' })]) }], 'full')!;
+    expect(withHook).toContain('卷末钩子');
+    expect(withHook).toContain('钩子内容');
+  });
+
+  it('goal 或 exit 为空时省略对应位置', () => {
+    const out = formatStagesContext([{ index: 0, volume: mkVol('卷一', [mkStage({ goal: '', exit: '' })]) }], 'full')!;
+    expect(out).not.toContain('目标：');
+    expect(out).not.toContain('→');
+  });
+
+  it('全部 entries 无 stages 或 entries 为空 → 返回 null', () => {
+    expect(formatStagesContext([], 'full')).toBeNull();
+    expect(formatStagesContext([{ index: 0, volume: mkVol('卷一') }], 'full')).toBeNull();
+    expect(formatStagesContext([{ index: 0, volume: mkVol('卷一', []) }], 'brief')).toBeNull();
+  });
+
+  it('部分有部分无：只输出有阶段的卷，不为空卷留标题行', () => {
+    const out = formatStagesContext([
+      { index: 0, volume: mkVol('卷一', [mkStage()]) },
+      { index: 1, volume: mkVol('卷二') },        // stages 缺省
+      { index: 2, volume: mkVol('卷三', []) },     // stages 空数组
+    ], 'full')!;
+    expect(out).toContain('卷一');
+    expect(out).not.toContain('卷二');
+    expect(out).not.toContain('卷三');
+  });
+
+  it('截断 goal/exit/keyProgressions/endingHook', () => {
+    const longGoal = '目'.repeat(200);
+    const longExit = '出'.repeat(200);
+    const longKp = '推'.repeat(100);
+    const kps = Array.from({ length: 10 }, (_, i) => `推进${i}`).concat([longKp]);
+    const out = formatStagesContext([{ index: 0, volume: mkVol('卷一', [mkStage({ goal: longGoal, exit: longExit, keyProgressions: kps, endingHook: '钩'.repeat(100) })]) }], 'full')!;
+    expect(out).not.toContain(longGoal);
+    expect(out).not.toContain(longExit);
+    expect(out).not.toContain(longKp);
+    expect(out).toContain('…'); // 截断标记
+    // keyProgressions 最多 8 条
+    expect(out).not.toContain('推进8');
+  });
+
+  it('不泄漏 characters / worldRefs（两种模式）', () => {
+    const vol = mkVol('卷一', [mkStage({ characters: ['米尘'], worldRefs: ['ABO规则'] })]);
+    const full = formatStagesContext([{ index: 0, volume: vol }], 'full')!;
+    const brief = formatStagesContext([{ index: 0, volume: vol }], 'brief')!;
+    expect(full).not.toContain('米尘');
+    expect(full).not.toContain('ABO规则');
+    expect(brief).not.toContain('米尘');
+    expect(brief).not.toContain('ABO规则');
+  });
+});
+
+describe('buildChapterOutlinesPrompt 拆章注入 stages', () => {
+  const option: StoryOption = {
+    title: '书名', logline: '一句话', targetReader: '读者', corePromise: '承诺',
+    protagonist: '主角', centralConflict: '冲突', differentiator: '差异', endingDirection: '结局',
+  };
+  const outline: MasterOutline = {
+    premise: '前提', ending: '结局', protagonistArc: '弧', centralConflict: '冲突',
+    structureModel: '模型', phases: [], subplots: [], storyPromises: [],
+  };
+  const mkStage = (title: string, over: Partial<VolumeStage> = {}): VolumeStage => ({
+    title, chapterRange: '', goal: '', keyProgressions: [], characters: [], worldRefs: [], exit: '', endingHook: '', ...over,
+  });
+  const mkVol = (title: string, stages?: VolumeStage[]): VolumeOutline => ({
+    title, chapterRange: '', volumeGoal: '', openingState: '', mainProgression: '',
+    characterProgression: '', keyEvents: [], climax: '', endingState: '', promisesOpened: [], promisesPaid: [],
+    stages,
+  });
+  const userContent = (volumes: VolumeOutline[], idx: number) =>
+    buildChapterOutlinesPrompt({ name: '书', typeTags: [], style: '', summary: '', obsidianPath: '', createdAt: '', updatedAt: '' }, option, outline, volumes, idx, '要求', [])[1].content;
+
+  it('当前卷带 stages → 完整形块含关键推进；相邻卷带 stages → 精简形块', () => {
+    const volumes = [
+      mkVol('卷一', [mkStage('一阶段1', { goal: 'g1', keyProgressions: ['推进1'] })]),
+      mkVol('卷二', [mkStage('二阶段1', { goal: 'g2', keyProgressions: ['推进2'] })]),
+      mkVol('卷三', [mkStage('三阶段1', { goal: 'g3', keyProgressions: ['推进3'] })]),
+    ];
+    const c = userContent(volumes, 1);
+    expect(c).toContain('卷内阶段');
+    expect(c).toContain('第2卷');       // 当前卷完整形
+    expect(c).toContain('推进2');       // 当前卷 keyProgressions
+    expect(c).toContain('相邻卷阶段');
+    expect(c).toContain('第1卷');       // 相邻卷 brief
+    expect(c).toContain('第3卷');
+    expect(c).not.toContain('推进1');   // 相邻卷 brief 不含 keyProgressions
+    expect(c).not.toContain('推进3');
+  });
+
+  it('当前卷带 stages、相邻卷无 → 只有完整形块，无相邻卷阶段块', () => {
+    const volumes = [mkVol('卷一'), mkVol('卷二', [mkStage('二阶段1')]), mkVol('卷三')];
+    const c = userContent(volumes, 1);
+    expect(c).toContain('卷内阶段');
+    expect(c).not.toContain('相邻卷阶段');
+  });
+
+  it('当前卷无 stages、相邻卷有 → 整个阶段区段都不出现', () => {
+    const volumes = [mkVol('卷一', [mkStage('一阶段1')]), mkVol('卷二'), mkVol('卷三', [mkStage('三阶段1')])];
+    const c = userContent(volumes, 1);
+    expect(c).not.toContain('卷内阶段');
+    expect(c).not.toContain('相邻卷阶段');
+  });
+
+  it('首末卷只取存在的一侧，不越界', () => {
+    const volumes = [mkVol('卷一', [mkStage('一阶段1')]), mkVol('卷二', [mkStage('二阶段1')])];
+    const first = userContent(volumes, 0);
+    expect(first).toContain('相邻卷阶段');
+    expect(first).toContain('第2卷');
+    expect(first).not.toContain('第0卷');
+    const last = userContent(volumes, 1);
+    expect(last).toContain('第1卷');
+    expect(last).not.toContain('第3卷');
+  });
+
+  it('卷号端到端保真：拆第 3 卷标第3卷、相邻标第2/4卷', () => {
+    const volumes = [
+      mkVol('卷一', [mkStage('a')]), mkVol('卷二', [mkStage('b')]),
+      mkVol('卷三', [mkStage('c')]), mkVol('卷四', [mkStage('d')]),
+    ];
+    const c = userContent(volumes, 2);
+    expect(c).toContain('第3卷「卷三」');
+    expect(c).toContain('第2卷「卷二」');
+    expect(c).toContain('第4卷「卷四」');
+    expect(c).not.toContain('第1卷「卷三」'); // 不得错标成切片下标
+  });
+
+  it('输入不带 stages → 不含任何阶段块（回归不破）', () => {
+    const volumes = [mkVol('卷一'), mkVol('卷二')];
+    const c = userContent(volumes, 0);
+    expect(c).not.toContain('卷内阶段');
+    expect(c).not.toContain('相邻卷阶段');
+  });
+
+  it('卷 JSON 中仍无 stages 键（不重复输出）', () => {
+    const volumes = [mkVol('卷一', [mkStage('a', { goal: 'g' })]), mkVol('卷二', [mkStage('b')])];
+    const c = userContent(volumes, 0);
+    // 卷 JSON 剥掉 stages 后，content 里不应出现 JSON 键形式 `"stages"`（formatStagesContext 输出的是中文「阶段」，不含该字面量）
+    expect(c).toContain('卷内阶段');      // 阶段文本块在
+    expect(c).not.toContain('"stages"');   // 但卷 JSON 里无 stages 键
   });
 });
