@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeCharacterOverrides, mergeWorldOverrides } from '../../../src/main/obsidian/override-merge';
+import { mergeCharacterOverrides, mergeWorldOverrides, findDuplicateSourceKeys } from '../../../src/main/obsidian/override-merge';
 import type { ImportCharacterOverride, ImportWorldOverride } from '../../../src/renderer/types';
 
 describe('override 合并（R5 统一归一化 source key）', () => {
@@ -40,5 +40,21 @@ describe('override 合并（R5 统一归一化 source key）', () => {
     const newDrafts = [{ sourceName: 'w', name: 'w', category: 'place', overwrite: false }];
     const merged = mergeWorldOverrides(old, newDrafts as any);
     expect(merged).toEqual([{ sourceName: 'w', name: 'w', category: 'faction', overwrite: false }]);
+  });
+});
+
+describe('findDuplicateSourceKeys：NFKC 重复来源检测（F6）', () => {
+  it('人物 `Ａ` 与 `A` 归一化后重复', () => {
+    const dups = findDuplicateSourceKeys([{ sourceName: 'Ａ' }, { sourceName: 'A' }]);
+    expect(dups).toEqual(['a']);
+  });
+
+  it('世界观全角空格与半角空格归一化后重复', () => {
+    const dups = findDuplicateSourceKeys([{ sourceName: '星　海' }, { sourceName: '星 海' }]);
+    expect(dups).toEqual(['星 海']);
+  });
+
+  it('无重复返回空数组', () => {
+    expect(findDuplicateSourceKeys([{ sourceName: '甲' }, { sourceName: '乙' }])).toEqual([]);
   });
 });

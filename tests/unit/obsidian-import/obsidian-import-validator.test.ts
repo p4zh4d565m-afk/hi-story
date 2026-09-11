@@ -110,6 +110,42 @@ describe('validateObsidianCommitInput：运行时 DTO 逐层校验', () => {
     expect(validateObsidianCommitInput(input)).toMatchObject({ valid: false });
   });
 
+  it('relativePath 空字符串被拒绝', () => {
+    const input = validInput();
+    input.selections[0].relativePath = '   ';
+    const r = validateObsidianCommitInput(input);
+    expect(r).toMatchObject({ valid: false });
+    expect((r as { error: string }).error).toContain('relativePath');
+  });
+
+  it('世界观 override 非数组 / sourceName/name 非字符串 / overwrite 非布尔被拒绝', () => {
+    const input = validInput();
+    input.selections[0].worldOverrides = 'x' as any;
+    expect(validateObsidianCommitInput(input)).toMatchObject({ valid: false });
+    input.selections[0].worldOverrides = [{ sourceName: 1 as any, name: 'w', category: 'place', overwrite: false }];
+    expect(validateObsidianCommitInput(input)).toMatchObject({ valid: false });
+    input.selections[0].worldOverrides = [{ sourceName: 'w', name: 'w', category: 'place', overwrite: 'yes' as any }];
+    expect(validateObsidianCommitInput(input)).toMatchObject({ valid: false });
+  });
+
+  it('selection 缺少 characterOverrides 字段被拒绝', () => {
+    const input = validInput();
+    const { characterOverrides, ...rest } = input.selections[0];
+    input.selections[0] = rest as any;
+    const r = validateObsidianCommitInput(input);
+    expect(r).toMatchObject({ valid: false });
+    expect((r as { error: string }).error).toContain('characterOverrides');
+  });
+
+  it('selection 缺少 worldOverrides 字段被拒绝', () => {
+    const input = validInput();
+    const { worldOverrides, ...rest } = input.selections[0];
+    input.selections[0] = rest as any;
+    const r = validateObsidianCommitInput(input);
+    expect(r).toMatchObject({ valid: false });
+    expect((r as { error: string }).error).toContain('worldOverrides');
+  });
+
   it('layerChoices 缺层 / action 非法 / unlockLocked 非布尔被拒绝', () => {
     const input = validInput();
     const { volumes, ...noVolumes } = input.layerChoices;

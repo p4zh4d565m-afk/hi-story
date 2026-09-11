@@ -58,16 +58,16 @@ export function validateObsidianCommitInput(value: unknown): ValidationResult<Ob
       return fail(`参数错误：selections[${si}].defaultVolumeIndex 须为 null/undefined/非负整数`);
     }
 
-    if (sel.characterOverrides !== undefined && !Array.isArray(sel.characterOverrides)) return fail(`参数错误：selections[${si}].characterOverrides 必须是数组`);
-    if (sel.worldOverrides !== undefined && !Array.isArray(sel.worldOverrides)) return fail(`参数错误：selections[${si}].worldOverrides 必须是数组`);
+    if (!Array.isArray(sel.characterOverrides)) return fail(`参数错误：selections[${si}].characterOverrides 必须是数组`);
+    if (!Array.isArray(sel.worldOverrides)) return fail(`参数错误：selections[${si}].worldOverrides 必须是数组`);
 
-    for (const ov of (sel.characterOverrides as unknown[] | undefined) ?? []) {
+    for (const ov of sel.characterOverrides) {
       if (!isPlainObject(ov)) return fail(`参数错误：selections[${si}].characterOverrides 含非法元素`);
       if (typeof ov.sourceName !== 'string' || typeof ov.name !== 'string') return fail(`参数错误：人物 override 的 sourceName/name 必须是字符串`);
       if (typeof ov.overwrite !== 'boolean') return fail(`参数错误：人物 override 的 overwrite 必须是布尔值`);
     }
 
-    for (const ov of (sel.worldOverrides as unknown[] | undefined) ?? []) {
+    for (const ov of sel.worldOverrides) {
       if (!isPlainObject(ov)) return fail(`参数错误：selections[${si}].worldOverrides 含非法元素`);
       if (typeof ov.sourceName !== 'string' || typeof ov.name !== 'string') return fail(`参数错误：世界观 override 的 sourceName/name 必须是字符串`);
       if (typeof ov.overwrite !== 'boolean') return fail(`参数错误：世界观 override 的 overwrite 必须是布尔值`);

@@ -8,6 +8,7 @@ import { parseCandidateDrafts } from '../../obsidian/import-parser';
 import { validateObsidianCommitInput } from '../../obsidian/import-validator';
 import { simulateFinalEntityNames, characterIncoming, worldIncoming } from '../../obsidian/entity-name-simulator';
 import { computeFinalVolumes } from '../../obsidian/final-volumes';
+import { computeLayerFinalState } from '../../obsidian/layer-actions';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
@@ -236,35 +237,23 @@ export class ObsidianImportRepo {
     const worldSim = simulateFinalEntityNames('世界观', target.worlds.map(w => ({ id: '', name: w.name })), worldIncoming(worlds));
     if (worldSim.error) throw new Error(worldSim.error);
 
-    // 单层动作与锁定语义
-    const applyAction = (action: string, unlock: boolean, currentExists: boolean, hasIncoming: boolean, locked: boolean): boolean => {
-      // 返回该层最终是否存在
-      if (action === 'clear') {
-        if (locked && !unlock) throw new Error('目标层级已锁定，需明确解锁后清空');
-        return false;
-      }
-      if (action === 'replace') {
-        if (locked && !unlock) throw new Error('目标层级已锁定，需明确解锁后替换');
-        if (!hasIncoming) throw new Error('没有可替换的来源内容');
-        return true;
-      }
-      if (action === 'fill') {
-        if (!currentExists && !hasIncoming) throw new Error('没有可填入内容');
-        return currentExists || hasIncoming;
-      }
-      return currentExists; // keep
-    };
-
-    const finalMaster = applyAction(lc.master.action, lc.master.unlockLocked, target.layers.master.exists, !!master, target.layers.master.status === 'locked');
-    const finalVolumes = applyAction(lc.volumes.action, lc.volumes.unlockLocked, target.layers.volumes.exists, volumes.length > 0, target.layers.volumes.status === 'locked');
-    const finalChapters = applyAction(lc.chapters.action, lc.chapters.unlockLocked, target.layers.chapters.exists, chapters.length > 0, target.layers.chapters.status === 'locked');
+    // 单层动作与锁定语义 + 最终状态不变量 + 上下游约束：与 UI 共用同一纯函数，避免规则漂移
+    const layerResult = computeLayerFinalState(
+      {
+        master: { exists: target.layers.master.exists, locked: target.layers.master.status === 'locked' },
+        volumes: { exists: target.layers.volumes.exists, locked: target.layers.volumes.status === 'locked' },
+        chapters: { exists: target.layers.chapters.exists, locked: target.layers.chapters.status === 'locked' },
+      },
+      lc,
+      { master: !!master, volumes: volumes.length > 0, chapters: chapters.length > 0 },
+    );
+    if (layerResult.reasons.length) throw new Error(layerResult.reasons[0]);
+    const finalMaster = layerResult.final.master;
+    const finalVolumes = layerResult.final.volumes;
+    const finalChapters = layerResult.final.chapters;
 
     // 最终卷列表（与 UI 共用同一纯函数），用于校验章纲 volumeIndex 边界
     const finalVolumeList = computeFinalVolumes(lc.volumes.action, target.existingVolumes, volumes);
-
-    // 最终状态不变量
-    if (finalVolumes && !finalMaster) throw new Error('存在分卷纲但缺少全书总纲');
-    if (finalChapters && (!finalMaster || !finalVolumes)) throw new Error('存在章纲但缺少全书总纲或分卷纲');
 
     // 章纲 volumeIndex 越界校验：最终章纲会被写入时，volumeIndex 必须 < 最终卷数量
     if (finalChapters) {
@@ -273,14 +262,6 @@ export class ObsidianImportRepo {
           throw new Error(`章节「${ch.sourceHeading}」卷归属越界：卷下标 ${ch.volumeIndex}，最终仅 ${finalVolumeList.length} 卷`);
         }
       }
-    }
-
-    // 上下游动作约束：替换/清空上游，下游必须也替换/清空（若下游最终存在）
-    if ((lc.master.action === 'replace' || lc.master.action === 'clear') && finalVolumes && !['replace', 'clear'].includes(lc.volumes.action)) {
-      throw new Error('替换或清空总纲时，分卷纲需同步替换或清空');
-    }
-    if ((lc.volumes.action === 'replace' || lc.volumes.action === 'clear') && finalChapters && !['replace', 'clear'].includes(lc.chapters.action)) {
-      throw new Error('替换或清空分卷纲时，章纲需同步替换或清空');
     }
 
     // A1：仅当本次涉及策划层时检查多条策划记录

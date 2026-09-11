@@ -72,4 +72,42 @@ describe('Obsidian 导入：最终卷策略边界（R3）', () => {
     expect(res.error).toContain('分卷纲');
     expect(db.prepare('SELECT COUNT(*) AS n FROM planning_ideas').get()).toEqual({ n: 1 });
   });
+
+  it('clear 且选择来源卷时，最终卷列表仍为空（来源卷不写入）', async () => {
+    seedPlanning([{ title: '数据库卷A', chapterRange: '第 1-10 章' }]);
+    await write('大纲_卷1.md', '# 卷 1 开端（第 1-10 章）\n## 本卷目标\n开端');
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const volumeCand = prep.data!.candidates.find((c: any) => c.slots.includes('volume'))!;
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op', selections: [
+        { relativePath: volumeCand.relativePath, hash: volumeCand.hash, slots: volumeCand.slots, defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [] },
+      ],
+      layerChoices: { master: { action: 'keep', unlockLocked: false }, volumes: { action: 'clear', unlockLocked: true }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(true);
+    const row = db.prepare('SELECT volume_outlines FROM planning_ideas WHERE id = ?').get('pl1') as any;
+    // clear 后 volume_outlines 为空字符串（applyPlanning 的 decide clear 分支），表示清空
+    const parsed = row.volume_outlines ? JSON.parse(row.volume_outlines) : [];
+    expect(parsed).toEqual([]);
+  });
+
+  it('两个卷标题相同被拒绝（卷标题独立去重）', async () => {
+    await write('大纲_卷1.md', '# 卷 1（第 1-10 章）\n## 本卷目标\n开端');
+    await write('大纲_卷2.md', '# 卷 1（第 11-20 章）\n## 本卷目标\n续篇');
+    const repo = new ObsidianImportRepo(db);
+    setPath();
+    const prep = await repo.prepare('p1');
+    const volCands = prep.data!.candidates.filter((c: any) => c.slots.includes('volume'));
+    expect(volCands.length).toBe(2);
+    const res = await repo.commit({
+      projectId: 'p1', operationId: 'op',
+      selections: volCands.map((c: any) => ({ relativePath: c.relativePath, hash: c.hash, slots: c.slots, defaultVolumeIndex: null, characterOverrides: [], worldOverrides: [] })),
+      layerChoices: { master: { action: 'fill', unlockLocked: false }, volumes: { action: 'fill', unlockLocked: false }, chapters: { action: 'keep', unlockLocked: false } },
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('重复卷标题');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM planning_ideas').get()).toEqual({ n: 0 });
+  });
 });

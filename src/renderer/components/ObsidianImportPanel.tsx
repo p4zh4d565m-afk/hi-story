@@ -5,7 +5,7 @@ import type {
 } from '../types';
 import { createObsidianImportGuard } from '../services/obsidian-import-guard';
 import { computeFinalVolumes } from '../../main/obsidian/final-volumes';
-import { mergeCharacterOverrides, mergeWorldOverrides } from '../../main/obsidian/override-merge';
+import { mergeCharacterOverrides, mergeWorldOverrides, findDuplicateSourceKeys } from '../../main/obsidian/override-merge';
 import { computeLayerFinalState } from '../../main/obsidian/layer-actions';
 
 interface ObsidianImportPanelProps {
@@ -174,15 +174,16 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     for (const w of (worldOverrides[c.relativePath] ?? [])) {
       if (!w.category) blockReasons.push(`${c.name}：世界观「${w.sourceName}」未选分类`);
     }
-  }
-  for (const c of candidates) {
-    if (!selectedSet.has(c.relativePath)) continue;
-    const unassigned = c.drafts.chapters.filter(ch => ch.volumeIndex === null && (volumeAssign[c.relativePath] ?? null) === null);
-    if (unassigned.length) blockReasons.push(`${c.name}：${unassigned.length} 章未分配卷`);
+    // F6：同批 drafts 出现归一化重复 source key 时阻塞
+    const dupChars = findDuplicateSourceKeys(c.drafts.characters);
+    if (dupChars.length) blockReasons.push(`${c.name}：人物来源「${dupChars.join('、')}」归一化后重复`);
+    const dupWorlds = findDuplicateSourceKeys(c.drafts.worlds);
+    if (dupWorlds.length) blockReasons.push(`${c.name}：世界观来源「${dupWorlds.join('、')}」归一化后重复`);
   }
 
   // 三层动作语义：用与主进程共享的纯函数预判，覆盖锁定/替换无来源/上下游约束/清空后保留下游等全部确定性原因
   const target = prepareResult?.target;
+  let finalChaptersWillWrite = false;
   if (target) {
     const selectedCands = candidates.filter(c => selectedSet.has(c.relativePath));
     const incoming = {
@@ -200,13 +201,31 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
       incoming,
     );
     for (const reason of layerResult.reasons) blockReasons.push(reason);
+    finalChaptersWillWrite = layerResult.final.chapters;
+  }
+
+  // 章纲未分配/越界检查：仅当章纲最终会写入时才门控（与主进程 finalChapters 一致）
+  if (finalChaptersWillWrite) {
+    for (const c of candidates) {
+      if (!selectedSet.has(c.relativePath)) continue;
+      const unassigned = c.drafts.chapters.filter(ch => ch.volumeIndex === null && (volumeAssign[c.relativePath] ?? null) === null);
+      if (unassigned.length) blockReasons.push(`${c.name}：${unassigned.length} 章未分配卷`);
+      // R3：最终卷数缩小时，drafts 里遗留的越界 volumeIndex 也必须阻塞（与主进程一致）
+      const outOfRange = c.drafts.chapters.filter(ch => ch.volumeIndex !== null && (ch.volumeIndex as number) >= finalVolumeCount);
+      if (outOfRange.length) blockReasons.push(`${c.name}：${outOfRange.length} 章卷归属越界（最终仅 ${finalVolumeCount} 卷），请重新选择`);
+    }
   }
 
   // 任一已选候选仍有最新一代 reparse 未返回 → 提交禁用
   const anyReparsing = candidates.some(c => selectedSet.has(c.relativePath) && guardRef.current.isReparsing(project?.id ?? '', c.relativePath));
+  // 任一已选候选最新一代 reparse 失败 → 持续阻塞提交，直到该候选重新发起并成功
+  const anyReparseFailed = candidates.some(c => selectedSet.has(c.relativePath) && guardRef.current.getReparseState(project?.id ?? '', c.relativePath) === 'failed');
+  if (anyReparseFailed && !blockReasons.some(r => r.includes('重新解析失败'))) {
+    blockReasons.push('部分候选重新解析失败，请修正后重试');
+  }
   void reparseTick; // 引用 tick，确保 pending 变化触发重渲染
 
-  const canCommit = !loading && !committing && !refreshPending && !!prepareResult && !anyReparsing && blockReasons.length === 0;
+  const canCommit = !loading && !committing && !refreshPending && !!prepareResult && !anyReparsing && !anyReparseFailed && blockReasons.length === 0;
   // 冻结：提交中或刷新 pending（写库已成功）时，禁用一切导入输入
   const frozen = committing || refreshPending;
 
@@ -329,9 +348,20 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             <Field label="核心冲突" value={d.master.centralConflict} />
             <Field label="人物弧" value={d.master.protagonistArc} />
             <Field label="结构模型" value={d.master.structureModel} />
-            <Field label="阶段" value={d.master.phases.map((p, i) => `${i + 1}.${p.title || '未命名'}（${p.chapterRange || '未标注章范围'}）${p.purpose ? '：' + p.purpose : ''}`).join('；')} />
             <Field label="副线" value={d.master.subplots.join('；')} />
             <Field label="故事承诺" value={d.master.storyPromises.join('；')} />
+            <div className="mt-2">
+              <p className="text-[11px] text-gray-400 mb-1">阶段（{d.master.phases.length}）：</p>
+              {d.master.phases.map((p, i) => (
+                <div key={i} className="ml-2 mb-1 border-l border-float-700 pl-2">
+                  <p className="text-xs text-gray-300">{i + 1}. {p.title || '未命名'}（{p.chapterRange || '未标注章范围'}）</p>
+                  <Field label="目的" value={p.purpose} />
+                  <Field label="关键事件" value={p.keyEvents.join('；')} />
+                  <Field label="转折点" value={p.turningPoint} />
+                  <Field label="情绪趋势" value={p.emotionTrend} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {d.volumes.length > 0 && (
@@ -361,6 +391,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                 <div key={pageStart + i} className="border-b border-float-800 last:border-0 pb-2">
                   <p className="text-xs text-gray-300">卷{ch.volumeIndex ?? '?'} 第{ch.chapterNumber ?? '?'}章 {ch.title || '未命名'}</p>
                   <Field label="来源标题" value={ch.sourceHeading} />
+                  <Field label="视角" value={ch.pov} />
                   <Field label="章目标" value={ch.chapterGoal} />
                   <Field label="开场处境" value={ch.openingSituation} />
                   <Field label="核心冲突" value={ch.centralConflict} />
@@ -525,10 +556,10 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                       ))}
                     </div>
                   </div>
-                  {/* 章纲卷归属 */}
-                  {selectedCandidate.slots.includes('chapter') && selectedCandidate.drafts.chapters.some(ch => ch.volumeIndex === null) && (
+                  {/* 章纲卷归属：只要有 chapter 槽位就显示，用户可随时修改归属 */}
+                  {selectedCandidate.slots.includes('chapter') && (
                     <div className="mb-4">
-                      <p className="text-xs text-gray-500 mb-1">未分配章纲的默认卷归属</p>
+                      <p className="text-xs text-gray-500 mb-1">章纲卷归属</p>
                       <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
                         onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
                         className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">

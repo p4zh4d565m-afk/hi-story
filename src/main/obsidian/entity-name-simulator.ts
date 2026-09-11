@@ -13,11 +13,10 @@ interface IncomingEntity { sourceName: string; name: string; overwrite: boolean 
  * 模拟「本次实际写入后的最终数据库状态」，检出三类冲突：
  * 两个来源改同名、覆盖 A 改名为 B、与现有记录归一化变体重名。
  *
- * 身份用归一化名称表示（名称本就唯一）。规则：
- * - sourceName 命中现有记录且 overwrite=false → skip，不改最终状态、不参与冲突。
- * - sourceName 命中且 overwrite=true → update：先释放自身旧名，再占用最终 name。
- * - sourceName 未命中 → create：占用最终 name。
- * - 任一 update/create 的最终名称被其他身份占用，返回 error。
+ * 身份用归一化名称表示（名称本就唯一）。两阶段算法（顺序无关）：
+ * 1. 先识别全部 skip/update/create，并一次性释放所有 update 的旧身份。
+ * 2. 再对全部 update/create 的最终名称统一占位和查重。
+ * 交换改名（A→B、B→A）与链式改名（A→B、B→C）都应判定为合法，不因输入顺序误报。
  */
 export function simulateFinalEntityNames(kind: '人物' | '世界观', existing: EntityRecord[], incoming: IncomingEntity[]): { error?: string } {
   // 归一化名 -> 身份（用归一化名自身表示）
@@ -27,26 +26,32 @@ export function simulateFinalEntityNames(kind: '人物' | '世界观', existing:
     if (k && !map.has(k)) map.set(k, k);
   }
 
+  // 阶段 0：空名校验（对所有 update/create 提前做，避免半途报错顺序敏感）
+  const ops: Array<{ kind: 'skip' | 'update' | 'create'; sourceKey: string; finalKey: string }> = [];
   for (const item of incoming) {
     const sourceKey = normalizeEntityName(item.sourceName);
     const isExisting = map.has(sourceKey);
-
-    if (isExisting && !item.overwrite) continue; // skip，不参与最终状态
-
+    if (isExisting && !item.overwrite) {
+      ops.push({ kind: 'skip', sourceKey, finalKey: sourceKey });
+      continue;
+    }
     const finalKey = normalizeEntityName(item.name);
     if (!finalKey) return { error: `${kind}导入名不能为空` };
-
-    if (isExisting) {
-      // update：先释放自身旧名，再占用最终名
-      map.delete(sourceKey);
-      if (map.has(finalKey)) return { error: `${kind}最终名称「${item.name}」与另一记录重名` };
-      map.set(finalKey, finalKey);
-    } else {
-      // create
-      if (map.has(finalKey)) return { error: `${kind}最终名称「${item.name}」与另一记录重名` };
-      map.set(finalKey, finalKey);
-    }
+    ops.push({ kind: isExisting ? 'update' : 'create', sourceKey, finalKey });
   }
+
+  // 阶段 1：一次性释放所有 update 的旧身份（不查重、不占位）
+  for (const op of ops) {
+    if (op.kind === 'update') map.delete(op.sourceKey);
+  }
+
+  // 阶段 2：对全部 update/create 统一占位和查重
+  for (const op of ops) {
+    if (op.kind === 'skip') continue;
+    if (map.has(op.finalKey)) return { error: `${kind}最终名称「${op.finalKey}」与另一记录重名` };
+    map.set(op.finalKey, op.finalKey);
+  }
+
   return {};
 }
 

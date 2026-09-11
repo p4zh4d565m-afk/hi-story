@@ -101,6 +101,24 @@ module.exports = function registerObsidianImportTestDb(ipcMain) {
         chapters: '[]', chapterStatus: 'empty', status: 'confirmed', selectedOption: 0,
       });
       write('完整大纲.md', ['# 完整大纲', '## 一、作品定位', '- 类型：BL'].join('\n'));
+    } else if (scenario === 'overwrite') {
+      // 数据库预置同名人物（带 profileOutline），源文件同名，用于覆盖保留 id 测试（单候选，默认选中+查看）
+      db.prepare(`INSERT INTO characters (id, project_id, name, aliases, appearance, personality, background, arc, profile_outline, sort_order, created_at, updated_at)
+        VALUES ('c1','project-a','沈屿','','','','','','[{"id":"node-a"}]',0,'t','t')`).run();
+      write('人物/沈屿.md', ['# 沈屿', '## 性格层次', '- 表面：高智商。'].join('\n'));
+    } else if (scenario === 'overwrite-world') {
+      // 数据库预置同名世界观（带 parentId），源文件同名，用于覆盖保留 id 测试（单候选）
+      db.prepare(`INSERT INTO world_entries (id, project_id, parent_id, category, name, description, sort_order, created_at, updated_at)
+        VALUES ('parent-w','project-a',NULL,'place','父场景','父描述',0,'t','t')`).run();
+      db.prepare(`INSERT INTO world_entries (id, project_id, parent_id, category, name, description, sort_order, created_at, updated_at)
+        VALUES ('w1','project-a','parent-w','place','主要场景','旧描述',1,'t','t')`).run();
+      write('世界观/主要场景.md', ['---', 'category: place', '---', '# 主要场景', '## 星海游轮', '- 新描述。'].join('\n'));
+    } else if (scenario === 'two-volumes') {
+      // 两个卷 + 章纲表格不含卷标题（volumeIndex=null），用于手动选择卷归属
+      write('完整大纲.md', ['# 完整大纲', '## 一、作品定位', '- 类型：BL', '完整设定：设定。'].join('\n'));
+      write('大纲_卷1.md', ['# 卷 1（第 1-10 章）', '## 本卷目标', '开端'].join('\n'));
+      write('大纲_卷2.md', ['# 卷 2（第 11-20 章）', '## 本卷目标', '发展'].join('\n'));
+      write('章节细纲.md', ['| 章 | 标题 | 核心事件 |', '|---|---|---|', '| 1 | 起点 | 开场。 |', '| 2 | 转折 | 冲突。 |'].join('\n'));
     } else {
       base();
     }

@@ -67,6 +67,32 @@ describe('reparse pending 提交门禁（R4）', () => {
     expect(onError).toHaveBeenCalled();
   });
 
+  it('reparse 失败后 getReparseState=failed，新代次成功才恢复', async () => {
+    let fail = true;
+    const invoke = vi.fn(() => Promise.resolve(fail ? { success: false, error: '解析失败' } : { success: true, data: { drafts: drafts0, issues: [] } }));
+    const guard = createObsidianImportGuard({ invoke, onApply: vi.fn(), onError: vi.fn() });
+
+    await guard.reparse({ projectId: 'p', relativePath: 'a.md', hash: 'h', slots: ['master'] });
+    expect(guard.getReparseState('p', 'a.md')).toBe('failed');
+
+    // 重新发起（成功），恢复 success
+    fail = false;
+    await guard.reparse({ projectId: 'p', relativePath: 'a.md', hash: 'h', slots: ['master'] });
+    expect(guard.getReparseState('p', 'a.md')).toBe('success');
+  });
+
+  it('invoke 直接 reject 时 pending 不残留，落为 failed', async () => {
+    const invoke = vi.fn(() => Promise.reject(new Error('网络错误')));
+    const onError = vi.fn();
+    const guard = createObsidianImportGuard({ invoke, onApply: vi.fn(), onError });
+
+    const r = await guard.reparse({ projectId: 'p', relativePath: 'a.md', hash: 'h', slots: ['master'] });
+    expect(r).toBeNull();
+    expect(guard.isReparsing('p', 'a.md')).toBe(false);
+    expect(guard.getReparseState('p', 'a.md')).toBe('failed');
+    expect(onError).toHaveBeenCalled();
+  });
+
   it('invalidate 清除所有 pending', async () => {
     let release!: (v: any) => void;
     const gate = new Promise<any>(res => { release = res; });
