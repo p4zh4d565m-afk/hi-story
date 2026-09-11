@@ -105,7 +105,7 @@ export function parseMaster(content: string, name: string): ParseResult<MasterOu
   outline.protagonistArc = findField(posLines, '人设定调');
 
   // phases：优先识别「## 阶段 N：标题（章范围）」heading + 小节列表；缺省回退「三卷大纲索引」扁平列表项
-  const phaseHeadings = blocks.filter(b => b.type === 'heading' && b.level === 2 && /^阶段\s*\d+/.test(b.text));
+  const phaseHeadings = blocks.filter((b): b is Extract<MarkdownBlock, { type: 'heading' }> => b.type === 'heading' && b.level === 2 && /^阶段\s*\d+/.test(b.text));
   if (phaseHeadings.length) {
     const phaseTitleRe = /^阶段\s*\d+\s*[:：]?\s*(.+?)\s*[（(](第\s*\d+[—-]\s*\d+\s*章)[）)]$/;
     for (const h of phaseHeadings) {
