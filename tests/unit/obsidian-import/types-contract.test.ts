@@ -10,10 +10,10 @@ import type {
 
 describe('Obsidian 导入类型契约', () => {
   it('导出稳定槽位并要求候选携带可编辑草稿', () => {
-    expect(OBSIDIAN_IMPORT_SLOTS).toEqual(['master', 'volume', 'chapter', 'character', 'world']);
+    expect(OBSIDIAN_IMPORT_SLOTS).toEqual(['master', 'volume', 'chapter', 'stage', 'character', 'world']);
     const candidate = {
       relativePath: '大纲/第一卷.md', hash: 'abc', name: '第一卷', kind: 'outline', slots: ['volume'],
-      drafts: { master: null, volumes: [], chapters: [], characters: [], worlds: [] }, issues: [],
+      drafts: { master: null, volumes: [], chapters: [], stages: [], characters: [], worlds: [] }, issues: [],
     } satisfies ObsidianImportCandidate;
     expect(candidate.drafts.volumes).toEqual([]);
   });

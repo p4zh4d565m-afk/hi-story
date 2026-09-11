@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  parseMaster, parseVolumes, parseChapters, parseCharacter, parseWorld,
+  parseMaster, parseVolumes, parseChapters, parseCharacter, parseWorld, parseStage,
   parseCandidateDrafts, stripWikiLinks,
 } from '../../../src/main/obsidian/import-parser';
 
@@ -270,5 +270,90 @@ describe('Obsidian 导入字段映射（真实格式）', () => {
     expect(drafts.characters[0].sourceName).toBe('沈屿');
     expect(drafts.master).toBeNull();
     expect(issues).toEqual([]);
+  });
+
+  // ===== 阶段文件解析（stage 落库）=====
+
+  const stageSrc = [
+    '# 阶段1：订婚与身份暴露（第1—15章）',
+    '',
+    '## 这一阶段做什么',
+    '',
+    '订婚与身份暴露，建立主线张力。',
+    '',
+    '## 关键推进',
+    '',
+    '- 第1—3章：黄金三章、恋爱订婚',
+    '- 第4—15章：[[../../人物/米尘|米尘]]身份暴露',
+    '',
+    '## 主要人物',
+    '',
+    '- [[../../人物/米尘|米尘]]：主动接近',
+    '',
+    '## 调用的世界观',
+    '',
+    '- [[../../世界观/ABO规则|ABO规则]]：伪信息素',
+    '',
+    '## 阶段出口',
+    '',
+    '身份暴露，被迫逃离。',
+    '',
+    '## 卷末钩子',
+    '',
+    '顾景打开牢房。',
+    '',
+    '## 查看逐章细纲',
+    '',
+    '[[../../我有一个妹妹_大纲_卷1|…]]',
+  ].join('\n');
+
+  it('解析阶段：各小节映射到 VolumeStage 字段，wiki 剥除，导航段忽略', () => {
+    const r = parseStage(stageSrc, '阶段1-订婚与身份暴露.md');
+    expect(r.value).toEqual({
+      title: '订婚与身份暴露',
+      chapterRange: '第 1-15 章',
+      goal: '订婚与身份暴露，建立主线张力。',
+      keyProgressions: ['第1—3章：黄金三章、恋爱订婚', '第4—15章：米尘身份暴露'],
+      characters: ['米尘：主动接近'],
+      worldRefs: ['ABO规则：伪信息素'],
+      exit: '身份暴露，被迫逃离。',
+      endingHook: '顾景打开牢房。',
+    });
+  });
+
+  it('解析阶段：无卷末钩子时 endingHook 为空串', () => {
+    const src = [
+      '# 阶段1：订婚（第1—15章）',
+      '',
+      '## 这一阶段做什么',
+      '推进。',
+      '',
+      '## 关键推进',
+      '- 第1章：a',
+      '',
+      '## 主要人物',
+      '- [[米尘]]',
+      '',
+      '## 调用的世界观',
+      '- [[ABO]]',
+      '',
+      '## 阶段出口',
+      '出口。',
+    ].join('\n');
+    const r = parseStage(src, '阶段1.md');
+    expect(r.value.endingHook).toBe('');
+  });
+
+  it('解析阶段：标题不完整命中时不猜文件名，title/chapterRange 留空并记 missing_field', () => {
+    const src = [
+      '## 阶段 1 草稿',
+      '',
+      '## 这一阶段做什么',
+      '推进。',
+    ].join('\n');
+    const r = parseStage(src, '阶段1-订婚.md');
+    expect(r.value.title).toBe('');
+    expect(r.value.chapterRange).toBe('');
+    expect(r.issues.some(i => i.code === 'missing_field')).toBe(true);
   });
 });

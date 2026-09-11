@@ -1,7 +1,7 @@
 import type {
-  MasterOutline, OutlinePhase, VolumeOutline,
+  MasterOutline, OutlinePhase, VolumeOutline, VolumeStage,
   ObsidianImportSlot, ObsidianImportDrafts, ObsidianImportIssue,
-  ImportChapterDraft, ImportCharacterInput, ImportWorldInput,
+  ImportChapterDraft, ImportStageDraft, ImportCharacterInput, ImportWorldInput,
 } from '../../renderer/types';
 import { parseMarkdownBlocks, parseMarkdownTable, type MarkdownBlock } from './markdown-blocks';
 
@@ -40,6 +40,17 @@ function parseNumberedHeading(text: string): { number: number; kind: 'chapter' |
   const num = /^[0-9]+$/.test(m[1]) ? parseInt(m[1], 10) : chineseNumberToInt(m[1]);
   if (!num) return null;
   return { number: num, kind: m[2] as 'chapter' | 'volume', tail: (m[3] || '').trim() };
+}
+
+/** 从目录段解析卷下标：`卷一`/`卷1`/`第3卷` → 0/0/2；对不上返回 null。 */
+export function volumeDirToIndex(segment: string): number | null {
+  const s = segment.trim();
+  let m = s.match(/^第\s*([0-9]+|[零一二两三四五六七八九十百千]+)\s*卷$/);
+  if (!m) m = s.match(/^卷\s*([0-9]+|[零一二两三四五六七八九十百千]+)\s*$/);
+  if (!m) return null;
+  const num = /^[0-9]+$/.test(m[1]) ? parseInt(m[1], 10) : chineseNumberToInt(m[1]);
+  if (!num || num <= 0) return null;
+  return num - 1;
 }
 
 /** 段落内所有 block 的纯文本（剥 wiki 链接）。 */
@@ -154,6 +165,41 @@ export function parseMaster(content: string, name: string): ParseResult<MasterOu
 
   if (!outline.premise) issues.push({ code: 'missing_field', severity: 'warning', message: '总纲缺少 premise' });
   return { value: outline, issues };
+}
+
+// ===== 阶段（卷内阶段文件，一文件一阶段）=====
+export function parseStage(content: string, name: string): ParseResult<VolumeStage> {
+  const blocks = parseMarkdownBlocks(content);
+  const stage: VolumeStage = {
+    title: '', chapterRange: '', goal: '', keyProgressions: [],
+    characters: [], worldRefs: [], exit: '', endingHook: '',
+  };
+  const issues: ObsidianImportIssue[] = [];
+
+  // 标题取 level 1 heading，完整命中「阶段 N：标题（第 x—y 章）」才拆 title/chapterRange
+  const stageTitleRe = /^阶段\s*(\d+)\s*[:：]\s*(.+?)\s*[（(]第\s*(\d+)\s*[—\-–]\s*(\d+)\s*章[）)]$/;
+  const h1 = blocks.find((b): b is Extract<MarkdownBlock, { type: 'heading' }> => b.type === 'heading' && b.level === 1);
+  if (h1) {
+    const m = h1.text.match(stageTitleRe);
+    if (m) {
+      stage.title = m[2].trim();
+      stage.chapterRange = `第 ${m[3]}-${m[4]} 章`;
+    } else {
+      issues.push({ code: 'missing_field', severity: 'warning', message: '阶段标题未命中「阶段 N：标题（第 x-y 章）」格式，标题与章范围留空' });
+    }
+  } else {
+    issues.push({ code: 'missing_field', severity: 'warning', message: '未识别到阶段一级标题' });
+  }
+
+  stage.goal = stripWikiLinks(blocksText(findSection(blocks, '这一阶段做什么', 2)).trim());
+  stage.keyProgressions = listText(findSection(blocks, '关键推进', 2));
+  stage.characters = listText(findSection(blocks, '主要人物', 2));
+  stage.worldRefs = listText(findSection(blocks, '调用的世界观', 2));
+  stage.exit = stripWikiLinks(blocksText(findSection(blocks, '阶段出口', 2)).trim());
+  stage.endingHook = stripWikiLinks(blocksText(findSection(blocks, '卷末钩子', 2)).trim());
+  // 「查看逐章细纲」是导航段，只忽略该小节本身，不混入任何字段；不额外丢弃其后的内容。
+
+  return { value: stage, issues };
 }
 
 // ===== 分卷 =====
@@ -314,7 +360,7 @@ const WORLD_CATEGORIES = ['place', 'faction', 'race', 'law', 'history', 'culture
 export function parseCandidateDrafts(
   content: string, frontmatter: Record<string, unknown>, slots: ObsidianImportSlot[], name: string, defaultVolumeIndex?: number | null,
 ): { drafts: ObsidianImportDrafts; issues: ObsidianImportIssue[] } {
-  const drafts: ObsidianImportDrafts = { master: null, volumes: [], chapters: [], characters: [], worlds: [] };
+  const drafts: ObsidianImportDrafts = { master: null, volumes: [], chapters: [], stages: [], characters: [], worlds: [] };
   const issues: ObsidianImportIssue[] = [];
 
   if (slots.includes('master')) {
@@ -330,6 +376,11 @@ export function parseCandidateDrafts(
   if (slots.includes('chapter')) {
     const r = parseChapters(content, defaultVolumeIndex ?? null);
     drafts.chapters = r.value;
+    issues.push(...r.issues);
+  }
+  if (slots.includes('stage')) {
+    const r = parseStage(content, name);
+    drafts.stages = [{ sourceHeading: name, volumeIndex: defaultVolumeIndex ?? null, stage: r.value }];
     issues.push(...r.issues);
   }
   if (slots.includes('character')) {

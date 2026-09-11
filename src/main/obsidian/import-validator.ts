@@ -5,7 +5,7 @@ export type ValidationResult<T> =
   | { valid: true; value: T }
   | { valid: false; error: string };
 
-const SLOTS: ObsidianImportSlot[] = ['master', 'volume', 'chapter', 'character', 'world'];
+const SLOTS: ObsidianImportSlot[] = ['master', 'volume', 'chapter', 'stage', 'character', 'world'];
 const LAYER_ACTIONS = ['keep', 'fill', 'replace', 'clear'];
 const WORLD_CATEGORIES = ['place', 'faction', 'race', 'law', 'history', 'culture'];
 const STORY_OPTION_FIELDS = ['title', 'logline', 'targetReader', 'corePromise', 'protagonist', 'centralConflict', 'differentiator', 'endingDirection'] as const;

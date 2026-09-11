@@ -529,6 +529,17 @@ export interface PlanningIdea {
   updatedAt: string;
 }
 
+export interface VolumeStage {
+  title: string;                 // 阶段标题，如「订婚与身份暴露」
+  chapterRange: string;          // 如「第 1-15 章」
+  goal: string;                  // 这一阶段做什么
+  keyProgressions: string[];     // 关键推进（列表，剥 wiki）
+  characters: string[];          // 主要人物（列表，剥 wiki；整条 list item，含冒号后说明）
+  worldRefs: string[];           // 调用的世界观（列表，剥 wiki）
+  exit: string;                  // 阶段出口
+  endingHook: string;            // 卷末钩子（可选，缺省 ''）
+}
+
 export interface VolumeOutline {
   title: string;
   chapterRange: string;
@@ -541,6 +552,8 @@ export interface VolumeOutline {
   endingState: string;
   promisesOpened: string[];
   promisesPaid: string[];
+  /** 卷内阶段（Obsidian 阶段文件导入），旧数据缺省为 undefined，消费处按 `?? []` 兜底 */
+  stages?: VolumeStage[];
 }
 
 export interface ChapterOutline {
@@ -580,7 +593,7 @@ export interface MasterOutline {
 }
 
 // ===== Obsidian 导入策划 =====
-export const OBSIDIAN_IMPORT_SLOTS = ['master', 'volume', 'chapter', 'character', 'world'] as const;
+export const OBSIDIAN_IMPORT_SLOTS = ['master', 'volume', 'chapter', 'stage', 'character', 'world'] as const;
 export type ObsidianImportSlot = typeof OBSIDIAN_IMPORT_SLOTS[number];
 
 export interface ObsidianImportIssue {
@@ -631,6 +644,12 @@ export interface ImportChapterDraft extends Omit<ChapterOutline, 'chapterNumber'
   sourceHeading: string;
 }
 
+export interface ImportStageDraft {
+  sourceHeading: string;          // 阶段标题来源（如「阶段1」文件名），同 ImportChapterDraft 风格
+  volumeIndex: number | null;     // 提交用；扫描预填来自 defaultVolumeIndex
+  stage: VolumeStage;
+}
+
 export interface ImportCharacterInput {
   sourceName: string;         // 覆盖身份键 = 扫描解析出的原始 name
   name: string;               // 作者可能修正后的 name
@@ -654,6 +673,7 @@ export interface ObsidianImportDrafts {
   master: MasterOutline | null;
   volumes: VolumeOutline[];
   chapters: ImportChapterDraft[];
+  stages: ImportStageDraft[];
   characters: ImportCharacterInput[];
   worlds: ImportWorldInput[];
 }

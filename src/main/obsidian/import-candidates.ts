@@ -2,7 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { createHash } from 'crypto';
 import { parseMarkdown, getKind, shouldIgnoreDirectory } from './markdown-vault';
-import { parseCandidateDrafts } from './import-parser';
+import { parseCandidateDrafts, volumeDirToIndex } from './import-parser';
 import type { ObsidianImportCandidate, ObsidianImportSlot, ObsidianImportIssue } from '../../renderer/types';
 
 export const IMPORT_LIMITS = { maxFileBytes: 2 * 1024 * 1024, maxCandidates: 500, maxTotalBytes: 50 * 1024 * 1024 };
@@ -28,31 +28,36 @@ export async function resolveInsideRoot(rootPath: string, relativePath: string):
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel)) ? targetReal : null;
 }
 
-const SLOT_ORDER: ObsidianImportSlot[] = ['chapter', 'master', 'volume'];
+const SLOT_ORDER: ObsidianImportSlot[] = ['chapter', 'master', 'volume', 'stage'];
 
-/** 大纲辅助文件：卷内阶段文件与分卷总览——它们不是「一个文件 = 一个卷」的真卷，导入时忽略，避免空卷/阶段噪音。 */
+/** 分卷总览：文件名本身含「分卷大纲」但非「大纲_卷N」形式（如「小说大纲_分卷大纲.md」），且不在卷目录内。 */
 export function isOutlineAuxiliary(relativePath: string): boolean {
-  const name = relativePath.toLowerCase();
   const base = path.basename(relativePath).toLowerCase();
-  // 卷目录（分卷大纲/卷N 或 第N卷）下的「阶段N」文件
   const dirSegs = relativePath.split('/').slice(0, -1).map(s => s.toLowerCase());
   const inVolumeDir = dirSegs.some(s => /分卷大纲|^第.{1,8}卷/.test(s));
-  const isStageFile = /^阶段\s*\d+/.test(base);
-  if (inVolumeDir && isStageFile) return true;
-  // 分卷总览：文件名本身含「分卷大纲」但非「大纲_卷N」形式（如「小说大纲_分卷大纲.md」），且不在卷目录内
   if (/分卷大纲/.test(base) && !/大纲_卷\d/.test(base) && !inVolumeDir) return true;
   return false;
 }
 
-/** 大纲细分：先排除大纲辅助文件，其次 role/roles，最后按文件名章纲→总纲→分卷特异性顺序与目录层级。 */
+/** 卷内阶段文件：basename 以「阶段N」开头，且任一父目录段命中卷目录。 */
+export function isStageFile(relativePath: string): boolean {
+  const base = path.basename(relativePath).toLowerCase();
+  if (!/^阶段\s*\d+/.test(base)) return false;
+  const dirSegs = relativePath.split('/').slice(0, -1).map(s => s.toLowerCase());
+  return dirSegs.some(s => /分卷大纲|^第.{1,8}卷|^卷([零一二两三四五六七八九十百千]+|\d+)$/.test(s));
+}
+
+/** 大纲细分：先排除分卷总览，其次阶段文件（先于 role 与 /分卷/ volume 规则），再 role/roles，最后按文件名特异性顺序与目录层级。 */
 export function identifySlots(relativePath: string, frontmatter: Record<string, unknown>): { slots: ObsidianImportSlot[]; issues: ObsidianImportIssue[] } {
   const issues: ObsidianImportIssue[] = [];
-  // 阶段文件与分卷总览显式排除（最优先），即使作者显式声明 role 也不当卷——只读导入的确定性保护
+  // 分卷总览显式排除（最优先）
   if (isOutlineAuxiliary(relativePath)) return { slots: [], issues };
+  // 阶段文件先于 role/roles 与 /分卷/ volume 规则判 stage（即使显式 role:volume 也保持 stage）
+  if (isStageFile(relativePath)) return { slots: ['stage'], issues };
 
   const role = frontmatter.role;
   const roles = frontmatter.roles;
-  const valid: ObsidianImportSlot[] = ['master', 'volume', 'chapter'];
+  const valid: ObsidianImportSlot[] = ['master', 'volume', 'chapter', 'stage'];
 
   if (Array.isArray(roles)) {
     const slots = roles.filter((r): r is ObsidianImportSlot => valid.includes(r as any));
@@ -139,7 +144,7 @@ export async function scanImportCandidates(rootPath: string): Promise<ImportScan
   for (const filePath of files) {
     const relativePath = path.relative(configuredPath, filePath).split(path.sep).join('/');
     if (isNavFile(relativePath)) continue;
-    // 大纲辅助文件（卷内阶段 / 分卷总览）不进入候选，避免空卷/阶段噪音
+    // 分卷总览不进入候选；卷内阶段文件重新进入候选（判 stage 槽位）
     if (isOutlineAuxiliary(relativePath)) continue;
     try {
       const stat = await fs.stat(filePath);
@@ -163,7 +168,12 @@ export async function scanImportCandidates(rootPath: string): Promise<ImportScan
 
       const frontmatterName = typeof parsed.frontmatter.name === 'string' ? parsed.frontmatter.name.trim() : '';
       const name = frontmatterName || path.basename(filePath, path.extname(filePath));
-      const parsedDrafts = parseCandidateDrafts(parsed.content, parsed.frontmatter, slots, name);
+      // 阶段候选按父目录段预填默认卷归属（卷一=0；对不上为 null）
+      const dirSegments = relativePath.split('/').slice(0, -1);
+      const defaultVolumeIndex = slots.includes('stage')
+        ? dirSegments.map(volumeDirToIndex).find(v => v !== null) ?? null
+        : null;
+      const parsedDrafts = parseCandidateDrafts(parsed.content, parsed.frontmatter, slots, name, defaultVolumeIndex);
 
       candidates.push({
         relativePath, hash: sha256(bytes), name, kind, slots,
