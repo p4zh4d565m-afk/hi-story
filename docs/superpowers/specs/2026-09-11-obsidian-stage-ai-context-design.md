@@ -1,10 +1,12 @@
 # stages 进 AI 上下文 Spec
 
-> 状态：**设计定稿（已过第三轮审查）**。范围收敛为「只做拆章 + 改总纲清空提示」；「重新生成分卷纲会清空 stages」定案选「不做 + 记风险」（见「遗留风险」）。本轮仅产出本文档，不写代码。
+> 状态：**设计定稿（终审已收口）**。范围：AI 上下文只做拆章；策划页补改总纲清空提示。写正文 / 普通对话不采纳。「重新生成分卷纲会清空 stages」定案选「不做 + 记风险」。本轮仅产出本文档，不写代码。
 >
-> 第二轮审查修正：R1 签名改为携带绝对卷号（原签名会把卷号标错并写进 prompt）、R2 补「当前卷无 stages 则整段不注入」、R6 改为独立 notice state 并在总纲区就地渲染（原 `setError` 方案渲染在页首、同样不可见，文案时序也错）、8.3 明确测试设施、8.4 单测基线实测为 42 文件 / 273 全过。
+> 第二轮审查修正：R1 签名改为携带绝对卷号、R2 补「当前卷无 stages 则整段不注入」、R6 改为独立 notice state 并在总纲区就地渲染、8.4 单测基线实测为 42 文件 / 273 全过。
 >
-> 第三轮审查修正：删掉「遗留风险」里残留的「本轮加 `setError` 提示」（与 R6 直接冲突）、8.1 补「部分卷有阶段部分无」分支（R1 改后新增的语义）、8.3.2 把不可执行的「`error` 状态未被写入」改成 DOM 可断言的表述并指明复用场景 N 的 fixture、删掉硬编码的「107/107」（实测该套件按 `check()` 计数，102 个 check 分布在 15 个场景，5 条场景级要求不等于 5 个 check）。
+> 第三轮审查修正：删掉遗留风险里残留的 `setError`、8.1 补「部分卷有阶段部分无」、删掉硬编码的「107/107」。
+>
+> 终审修正：8.3 测试程序按源码重写（场景 N 未挂策划页、`stage` fixture 缺 `phases`、textarea 须 `fireInput`、不得测 `generateVolumes`）；R6 文案区分本地清空与写库；R6 示例保留章纲清空；生产代码白名单改为最多两个文件。
 >
 > 基线提交：`eb2eab6`
 >
@@ -42,7 +44,12 @@
 
 ## 范围
 
-**改动文件白名单（只允许这三个）**：`src/renderer/services/ai-prompts/planning.ts`（R2）、新增的纯函数模块（R1）、`src/renderer/components/PlanningWorkspace.tsx`（R6）。测试文件另计。
+**生产代码白名单（可少，不可多出这两处之外的生产文件）**：
+
+- `src/renderer/services/ai-prompts/planning.ts`（R1 + R2）。`formatStagesContext` **优先放进此文件**，不必另开模块。
+- `src/renderer/components/PlanningWorkspace.tsx`（R6）。
+
+测试文件另计。禁止改 `App.tsx` / `ContextBuilder` / `AIWritePanel`。若实施者坚持把纯函数拆到 `src/renderer/services/ai-prompts/` 下的新文件，也允许，但不是硬性要求。
 
 本轮包含：
 
@@ -128,19 +135,25 @@ export function formatStagesContext(
 落地方式：
 
 - 新增独立 state `const [stageClearedNotice, setStageClearedNotice] = useState(false)`。
-- `updateOutlineField`（约 L225）与 `updatePhase`（约 L233）两处，在 `if (volumeOutlines.length)` 清空分支内置位：
+- `updateOutlineField`（约 L225）与 `updatePhase`（约 L233）两处，在现有清空分支内置位。**必须保留章纲清空两行**，不得用下面片段整段替换导致章纲残留：
   ```ts
   const hadStages = volumeOutlines.some(v => (v.stages ?? []).length > 0);
   if (volumeOutlines.length) {
     if (hadStages) setStageClearedNotice(true);
     setVolumeOutlines([]); setVolumeStatus('empty');
   }
+  if (chapterOutlines.length) {
+    setChapterOutlines([]); setChapterOutlineStatus('empty');
+  }
   ```
-- **在总纲区（`showMaster` 块）内**就地渲染，与「总纲尚未锁定」那行状态提示同区：
-  > 已导入的卷内阶段已随分卷纲一起清空。如需恢复，请重新从 Obsidian 导入。
+- **在总纲区（`showMaster` 块）内**就地渲染，与「总纲尚未锁定」那行状态提示同区。文案必须同时满足：
+  - **完成时**（`setStageClearedNotice` 与 `setVolumeOutlines([])` 在同一个同步函数里，作者读到时编辑区已经空了）。
+  - **区分本地清空与写库**：这两处函数**不调用 `save()`**，SQLite 里的 stages 还在；只有作者随后点「保存修改 / 锁定总纲」才会把空分卷写入数据库。
+  - **不得**写成「将被清空」；**不得**暗示「先重新导入再改总纲」（死循环）；**不得**把「尚未写库的本地清空」说成必须重新导入。
 
-  文案必须是**完成时**：`setStageClearedNotice` 与 `setVolumeOutlines([])` 在同一个同步函数里，作者读到时已经清空了。**不得**写成「将被清空」，更不得建议「先重新导入再改总纲」——那是死循环（再改一次总纲又清空）。
-- 清除时机：`loadPlanning` 成功、切换项目、`generateVolumes` 成功时置 `false`。
+  推荐原文：
+  > 分卷纲与已导入的卷内阶段已从当前编辑区清空（尚未写入数据库）。保存总纲会把清空写入数据库；如需恢复，请重新加载本项目，或重新从 Obsidian 导入。
+- 清除时机：`loadPlanning` 成功、切换项目（`useEffect([project?.id])` 重置分支）、`generateVolumes` 成功时置 `false`。产品代码仍应在 `generateVolumes` 成功时清除；**自动化测试不得依赖这条路径**（该函数会打真实 AI，本套件无 mock，见 8.3）。
 - 只加 state + 渲染，**不碰** `saveVolumes`、不做 stages 合并、不改对齐逻辑、不改清空行为本身。
 - `generateVolumes`（重新生成分卷纲）已有一行黄字提示（约 L455），本轮不改该处；本提示补的是「改总纲」这条之前完全无提示的静默清空路径。
 - `updateVolume`（编辑分卷字段，约 L274）用 `{ ...volume, [field]: value }` spread，**不会**丢 stages，本轮不改、不提示。
@@ -172,15 +185,22 @@ export function formatStagesContext(
 
 ### 8.3 改总纲清空阶段的就地提示
 
-**测试设施**：`updateOutlineField` / `updatePhase` 是组件内部闭包、不导出，vitest 纯函数测不到。本组挂在**真实 DOM 回归** `tests/ui/obsidian-import.tsx`（该套件的场景 M 已用 `mountPlanning()` 真实挂载 `PlanningWorkspace`），经 `node tests/ui/run-obsidian-import.cjs` 执行。
+**测试设施**：`updateOutlineField` / `updatePhase` 是组件内部闭包、不导出，vitest 纯函数测不到。本组挂在**真实 DOM 回归** `tests/ui/obsidian-import.tsx`，经 `node tests/ui/run-obsidian-import.cjs` 执行。必须用 **`mountPlanning()`**（场景 M 已有），**不得**接在场景 N 后面——场景 N 挂的是 `ObsidianImportPanel`，`onImported` 为空，屏幕上没有策划页，也没有总纲 textarea。
 
-**复用现成 fixture**：场景 N（勾阶段 + keep 分卷 → 归堆写入 stages）提交后，界面上已经同时有「总纲」与「带 stages 的分卷」，正是本组所需的前置状态。新场景直接沿用 N 的数据准备，在其后对总纲 textarea 触发 `fireChange` 即可，不必新建 fixture。（套件名虽是「obsidian-import」，但本组测的是导入产物在策划页被清空时的行为，属同一条链路的下游；另起套件需重复整套挂载设施，不值得。）
+**不得照搬现成 `stage` fixture 直接挂策划页**：`tests/ui/obsidian-import-test-db.cjs` 的 `stage` 种子总纲是 `{"premise":"旧前提"}`，没有 `phases`。`PlanningWorkspace` 会在 `masterOutline.phases.map` 炸掉。场景 N 能过，正是因为它从不渲染策划页。实施轮二选一：
 
-1. `volumeOutlines` 含非空 stages 时改总纲字段 → **总纲区内**出现完成时提示，文案含「已随分卷纲一起清空」与「重新从 Obsidian 导入」。
-2. **提示位置**：断言提示节点是总纲区（`showMaster` 块）的后代，而非页首第一步卡片的后代。可行做法——取总纲区的容器节点，断言 `container.textContent` 含提示文案；同时断言页首第一步卡片的 `textContent` **不含**该文案、且页面上没有新增 `⚠️` 前缀段落（`error` 通道未被占用；`error` 是内部 state，DOM 层只能这样间接断言，不要写白盒断言）。
-3. `volumeOutlines` 不含 stages 时改总纲字段 → 无提示（回归不破）。
-4. `updateVolume` 编辑分卷字段 → stages 保留、无提示（spread 保真）。
-5. 提示出现后 `generateVolumes` 成功 → 提示消失。
+- 给 `stage` 种子补上可渲染的 `phases: []` 及其余总纲必填字段；或
+- 新增仅供本组使用的 fixture（完整 `phases` + 至少一卷带 stages）。
+
+**触发方式**：套件已有 `setNativeValue` + `fireInput`。textarea 的 React `onChange` 听的是 `input`。**禁止**对总纲 textarea 只发 `fireChange`（那是给 `<select>` 的，`updateOutlineField` 很可能不会跑）。`HTMLTextAreaElement` 的 value setter 也要走 textarea 原型，不能复用目前只覆盖 `input/select` 的 `setNativeValue`。
+
+**禁止测 `generateVolumes` 成功。** 改总纲会把 `outlineStatus` 打回 `generated`，同时把分卷/章纲本地清空，`showVolumes` 变 false，分卷区（含「生成分卷纲」）从 DOM 消失；该按钮还要求总纲已锁定；函数本身会打真实 AI，本套件无 mock。提示消失改测 `loadPlanning`：重挂 `PlanningWorkspace` 即可，因为改总纲并不写库，重载会把 stages 从 SQLite 读回来。
+
+1. 策划页已加载带 stages 的分卷时，对总纲字段 `fireInput` → **总纲区内**出现完成时提示，文案含「当前编辑区清空」与「尚未写入数据库」（不得再断言「必须重新导入」这一句作为唯一恢复路径）。
+2. **提示位置**：断言总纲区容器的 `textContent` 含提示文案；页首第一步「你的故事想法」卡片的 `textContent` **不含**该文案。不要用「页面上没有 ⚠️」——页首若已有真实错误会被误伤；`error` 是内部 state，不要写白盒断言。
+3. 策划页已加载**不含** stages 的分卷时改总纲字段 → 无提示（回归不破）。
+4. `updateVolume` 编辑分卷字段 → stages 保留、无提示（spread 保真）。须在改总纲之前测，因为改总纲后分卷区会从 DOM 消失。
+5. 提示出现后**不点保存**，重挂 `mountPlanning()`（触发 `loadPlanning`）→ 分卷 stages 从数据库回来，提示消失。
 
 ### 8.4 回归
 
@@ -193,14 +213,14 @@ $env:ELECTRON_RUN_AS_NODE=1
 
 1. 273 单测不破；本轮新增 8.1 / 8.2 用例后总数上升，报告须写明新总数。
 2. `node tests/ui/run-obsidian-import.cjs`：基线 **102/102**。注意该套件**按 `check()` 调用计数**，不是按场景计数——现有 102 个 check 分布在 15 个场景（A—O），所以 8.3 的 5 条**场景级**要求会产出多于 5 个 check。**不要预设目标数字**；验收口径是「新总数 > 102、全部通过、且 8.3 的 5 条各自有对应 check」，实测数填入报告，不得沿用 102。
-3. `App.tsx`、`ContextBuilder`、`AIWritePanel` 无改动；改动文件只有 `planning.ts`、新增纯函数模块、`PlanningWorkspace.tsx`（用 git diff 自证范围）。
+3. `App.tsx`、`ContextBuilder`、`AIWritePanel` 无改动；生产代码只出现在白名单内的 `planning.ts` 与 `PlanningWorkspace.tsx`（若拆了纯函数文件则再加那一个）。用 git diff 自证。
 
 ## 建议实施顺序
 
 1. 提交本 Spec（含复审收敛）。
 2. 8.1 失败测试 → `formatStagesContext` → 通过。
 3. 8.2 失败测试 → 拆章注入 → 通过。
-4. 8.3 失败断言（加进 `tests/ui/obsidian-import.tsx`）→ R6 独立 notice state + 总纲区就地渲染 → 通过。
+4. 8.3 失败断言（`mountPlanning` + 可渲染总纲 fixture + `fireInput`；提示消失走 `loadPlanning` 重挂）→ R6 独立 notice state + 总纲区就地渲染 → 通过。
 5. 全量单测（Electron-as-Node）+ `npm run build:main` + `npx vite build` + `node tests/ui/run-obsidian-import.cjs`。
 6. 更新 `AGENTS.md` / `CLAUDE.md` 与开发报告。
 
@@ -211,8 +231,8 @@ $env:ELECTRON_RUN_AS_NODE=1
 - [ ] `formatStagesContext` 按 `StageContextEntry.index` 渲染绝对卷号，切片传入也不错位；分级有界输出；`full` 含 keyProgressions 与非空 endingHook，`brief` 不含；两者都不泄漏 characters/worldRefs；有单测。
 - [ ] 拆章当前卷注入完整形、相邻卷注入精简形；首末卷不越界；卷号端到端保真；**当前卷无 stages 时整段不注入**；AI 生成的卷（无 stages）不注入，回归不破。
 - [ ] 阶段内容不在卷 JSON 中重复出现。
-- [ ] 改总纲字段（`updateOutlineField` / `updatePhase`）带 stages 时在**总纲区内**就地显示**完成时**提示，未复用 `error` 通道；不带 stages 时无提示；`updateVolume` 编辑分卷不掉 stages。
-- [ ] 无迁移、不改 stages 落库结构、不写 outline_nodes；改动文件仅 `planning.ts` + 新增纯函数模块 + `PlanningWorkspace.tsx`，**不动 `App.tsx` / `ContextBuilder` / `AIWritePanel`**。
+- [ ] 改总纲字段（`updateOutlineField` / `updatePhase`）带 stages 时在**总纲区内**就地显示**完成时**提示，文案区分本地清空与写库，未复用 `error` 通道；不带 stages 时无提示；`updateVolume` 编辑分卷不掉 stages；不点保存即重载后 stages 回来、提示消失。
+- [ ] 无迁移、不改 stages 落库结构、不写 outline_nodes；生产代码仅 `planning.ts`（± 可选纯函数文件）+ `PlanningWorkspace.tsx`，**不动 `App.tsx` / `ContextBuilder` / `AIWritePanel`**。
 - [ ] 回归不破：单测 ≥ 273 全过（Electron-as-Node 跑法）；`run-obsidian-import.cjs` 新总数 > 102 且全过，8.3 五条各有对应 check。
 
 ## 报告模板
@@ -223,7 +243,7 @@ $env:ELECTRON_RUN_AS_NODE=1
 2. R1 / R2 / R6 各对应代码文件、测试名称与结果。
 3. 自动测试文件数、测试数与命令退出码；单测须用 Electron-as-Node 跑法（见 8.4），并同时给出 `run-obsidian-import.cjs` 的**实测** N/N（基线 102，新数实测填写、不得预设也不得沿用旧数字）。
 4. 是否新增迁移（应写「否」）；是否改动 stages 落库（应写「否」）；是否改动 `App.tsx`（应写「否」）。
-5. 如实说明：本轮只覆盖拆章；写正文与普通对话**明确不做**（不是「未完成」，是「不采纳」，理由见下）；阶段字段中 `characters / worldRefs` 不进任何上下文。
+5. 如实说明：本轮 **AI 上下文只覆盖拆章**；写正文与普通对话**明确不做**（不是「未完成」，是「不采纳」）；R6 是策划页提示，不是第三处 AI 注入。阶段字段中 `characters / worldRefs` 不进任何上下文。
 6. 如实说明「重新生成分卷纲会清空 stages」的处置：本轮选了「明确不做 + 记风险」，并补了「改总纲清空阶段」的提示；`重新生成保留 stages` 仍是独立 P2。
 
 ---
@@ -239,7 +259,7 @@ $env:ELECTRON_RUN_AS_NODE=1
 
 ## 复审结论（原「待独立复审确认」三问的答复）
 
-1. **范围**：**只做拆章**。写正文与普通对话不是「以后再做」，是按上述理由**不采纳**；若将来要做，须以新需求形式重新论证，不得引用本 Spec 作为既定计划。
+1. **范围**：AI 上下文**只做拆章**。写正文与普通对话不是「以后再做」，是按上述理由**不采纳**；若将来要做，须以新需求形式重新论证，不得引用本 Spec 作为既定计划。R6 是策划页就地提示，不是第四个 AI 场景。
 2. **`endingHook`**：**含**，但仅在 `full` 模式且非空时输出。理由：缺省即 `''`、真实数据中只有每卷末阶段有值，成本≈0；且同一 prompt 的卷 JSON 已全量携带 `climax / endingState / promisesPaid`，单独排除卷末钩子没有一致的理由。
 3. **普通对话**：**不引入**。
 
@@ -254,6 +274,6 @@ $env:ELECTRON_RUN_AS_NODE=1
 
 2. **真实 vault 未复跑**：真实数据仅卷 1 有 5 个阶段文件，卷 2/3 stages 为空。本轮不做真实 vault 烟测，fixture 须覆盖「当前卷有阶段、相邻卷无阶段」（8.2.2）与「当前卷无阶段、相邻卷有阶段」（8.2.3）两种真实形态。
 
-3. **改总纲一次按键即清空整份分卷纲与章纲**（不只是 stages）：`updateOutlineField` / `updatePhase` 在 textarea 的 `onChange` 里无条件执行 `setVolumeOutlines([])` 与 `setChapterOutlines([])`。这是既有行为，本轮**不改**，R6 只是给它补了一个可见提示。若认为该行为过于激进（例如应改成确认对话框或按 dirty 标记延迟失效），属独立需求，须另立。
+3. **改总纲一次按键即清空整份分卷纲与章纲**（不只是 stages）：`updateOutlineField` / `updatePhase` 在 textarea 的 `onChange` 里无条件执行 `setVolumeOutlines([])` 与 `setChapterOutlines([])`，**且不调用 `save()`**。这是既有行为，本轮**不改**。R6 只补可见提示，并必须写明「尚未写库」。若认为该行为过于激进（例如应改成确认对话框或按 dirty 标记延迟失效），属独立需求，须另立。
 
 4. **`error` 通道设计缺陷**：`PlanningWorkspace` 的 `error` 只有页首一处渲染（约 L377），下方各步骤的错误都要滚回顶部才看得到。R6 通过不复用该通道绕开了问题，但通道本身的缺陷仍在，属独立 P2。
