@@ -16,7 +16,7 @@ interface ObsidianImportPanelProps {
 }
 
 const SLOT_LABELS: Record<ObsidianImportSlot, string> = {
-  master: '总纲', volume: '分卷纲', chapter: '章纲', character: '人物', world: '世界观',
+  master: '总纲', volume: '分卷纲', chapter: '章纲', stage: '阶段', character: '人物', world: '世界观',
 };
 
 const WORLD_CATEGORIES = ['place', 'faction', 'race', 'law', 'history', 'culture'] as const;
@@ -83,8 +83,10 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
       for (const c of result.candidates) {
         chars[c.relativePath] = c.drafts.characters.map(ch => ({ sourceName: ch.sourceName, name: ch.name, overwrite: false }));
         worlds[c.relativePath] = c.drafts.worlds.map(w => ({ sourceName: w.sourceName, name: w.name, category: w.category as any, overwrite: false }));
-        vols[c.relativePath] = null;
-        edits[c.relativePath] = { slots: c.slots, defaultVolumeIndex: null };
+        // 阶段候选预填目录推导的归属卷；其余候选保持 null（章纲卷归属来自表格内卷标题）
+        const stageVol = c.drafts.stages[0]?.volumeIndex ?? null;
+        vols[c.relativePath] = stageVol;
+        edits[c.relativePath] = { slots: c.slots, defaultVolumeIndex: stageVol };
       }
       editStateRef.current = edits;
       setCharOverrides(chars);
@@ -231,6 +233,21 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
       // R3：最终卷数缩小时，drafts 里遗留的越界 volumeIndex 也必须阻塞（与主进程一致）
       const outOfRange = c.drafts.chapters.filter(ch => ch.volumeIndex !== null && (ch.volumeIndex as number) >= finalVolumeCount);
       if (outOfRange.length) blockReasons.push(`${c.name}：${outOfRange.length} 章卷归属越界（最终仅 ${finalVolumeCount} 卷），请重新选择`);
+    }
+  }
+
+  // 阶段归属/越界/clear/锁定拦截（与主进程 validateFinalState 一致）
+  {
+    const hasStage = candidates.some(c => selectedSet.has(c.relativePath) && c.drafts.stages.length > 0);
+    if (hasStage) {
+      if (layerChoices.volumes.action === 'clear') blockReasons.push('清空分卷纲时不能同时导入阶段');
+      if (target && target.layers.volumes.status === 'locked' && !layerChoices.volumes.unlockLocked) blockReasons.push('分卷纲已锁定，导入阶段需确认解锁');
+      for (const c of candidates) {
+        if (!selectedSet.has(c.relativePath)) continue;
+        const idx = volumeAssign[c.relativePath] ?? c.drafts.stages[0]?.volumeIndex ?? null;
+        if (idx === null) { blockReasons.push(`${c.name}：阶段未指定归属卷`); continue; }
+        if (idx >= finalVolumeCount) blockReasons.push(`${c.name}：阶段卷归属越界（最终仅 ${finalVolumeCount} 卷）`);
+      }
     }
   }
 
@@ -455,6 +472,22 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             )}
           </div>
         )}
+        {d.stages.length > 0 && (
+          <div className="rounded border border-float-700 p-3">
+            <p className="text-xs font-semibold text-gray-200 mb-2">阶段（{d.stages.length}）</p>
+            {d.stages.map((s, i) => (
+              <div key={i} className="mb-2 border-b border-float-800 last:border-0 pb-2">
+                <p className="text-xs text-gray-300">阶段 {s.stage.title || '未命名'}（{s.stage.chapterRange || '未标注章范围'}）</p>
+                <Field label="阶段目标" value={s.stage.goal} />
+                <Field label="关键推进" value={s.stage.keyProgressions.join('；')} />
+                <Field label="主要人物" value={s.stage.characters.join('；')} />
+                <Field label="调用的世界观" value={s.stage.worldRefs.join('；')} />
+                <Field label="阶段出口" value={s.stage.exit} />
+                <Field label="卷末钩子" value={s.stage.endingHook} />
+              </div>
+            ))}
+          </div>
+        )}
         {d.characters.length > 0 && (
           <div className="rounded border border-float-700 p-3">
             <p className="text-xs font-semibold text-gray-200 mb-2">人物（{d.characters.length}）</p>
@@ -600,7 +633,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                   <div className="mb-4">
                     <p className="text-xs text-gray-500 mb-1">槽位</p>
                     <div className="flex gap-2 flex-wrap">
-                      {(['master', 'volume', 'chapter', 'character', 'world'] as ObsidianImportSlot[]).map(slot => (
+                      {(['master', 'volume', 'chapter', 'stage', 'character', 'world'] as ObsidianImportSlot[]).map(slot => (
                         <label key={slot} className="text-xs text-gray-300 flex items-center gap-1">
                           <input type="checkbox" disabled={frozen} checked={selectedCandidate.slots.includes(slot)} onChange={e => setSlot(selectedCandidate, slot, e.target.checked)} />
                           {SLOT_LABELS[slot]}
@@ -612,6 +645,22 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
                   {selectedCandidate.slots.includes('chapter') && (
                     <div className="mb-4">
                       <p className="text-xs text-gray-500 mb-1">章纲卷归属</p>
+                      <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
+                        onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
+                        className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
+                        <option value="">选择卷…</option>
+                        {finalVolumes.length === 0 ? (
+                          <option value="" disabled>本次无分卷纲</option>
+                        ) : (
+                          finalVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
+                        )}
+                      </select>
+                    </div>
+                  )}
+                  {/* 阶段候选归属卷：value = 最终卷数组下标，未归属显示占位 */}
+                  {selectedCandidate.slots.includes('stage') && (
+                    <div className="mb-4">
+                      <p className="text-xs text-gray-500 mb-1">阶段归属卷</p>
                       <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
                         onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
                         className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
