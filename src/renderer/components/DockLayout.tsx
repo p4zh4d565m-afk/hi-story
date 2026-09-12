@@ -104,6 +104,8 @@ const SlotView: React.FC<{
   onDragStart: (panelId: PanelId) => void;
 }> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive, onDragStart }) => {
   const activeId = slot.activeId;
+  // 普通面板：槽内 panelIds 全挂载、display 切显隐，切标签不丢内部 state；关闭（从 panelIds 移除）才卸载。
+  const normalPanels = slot.panelIds.filter((pid) => !keepAlivePanels.includes(pid));
   return (
     <div className="h-full w-full flex flex-col min-h-0">
       <SlotTabs
@@ -112,20 +114,25 @@ const SlotView: React.FC<{
         activeId={activeId}
         onSetActive={onSetActive}
       />
-      {/* 普通面板：只渲染 active 那个 */}
-      {activeId && !keepAlivePanels.includes(activeId) && (
-        <PanelChrome
-          key={activeId}
-          panelId={activeId}
-          onClose={onClosePanel}
-          onDragStart={(pid, e) => { e.preventDefault(); onDragStart(pid); }}
+      {/* 普通面板：全部挂载，display 由是否 active 决定 */}
+      {normalPanels.map((pid) => (
+        <div
+          key={pid}
+          className="flex-1 min-h-0"
+          style={{ display: activeId === pid ? 'block' : 'none' }}
         >
-          <div className="h-full w-full" style={{ fontSize: '100%' }}>
-            {panelContent[activeId]}
-          </div>
-        </PanelChrome>
-      )}
-      {/* 保活面板：永远挂载，display 由是否 active 决定 */}
+          <PanelChrome
+            panelId={pid}
+            onClose={onClosePanel}
+            onDragStart={(p, e) => { e.preventDefault(); onDragStart(p); }}
+          >
+            <div className="h-full w-full">
+              {panelContent[pid]}
+            </div>
+          </PanelChrome>
+        </div>
+      ))}
+      {/* 保活面板：永远挂载，display 由是否 active 决定（关闭仍挂载） */}
       {keepAlivePanels.map((pid) => (
         <div
           key={pid}
