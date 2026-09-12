@@ -22,16 +22,39 @@ export class PlanningRepo {
 
   findByProject(projectId: string): IpcResult<PlanningIdea | null> {
     const row = this.db.prepare(
-      'SELECT * FROM planning_ideas WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1',
+      'SELECT * FROM planning_ideas WHERE project_id = ?',
     ).get(projectId) as Record<string, unknown> | undefined;
-    return { success: true, data: row ? this.rowToPlanningIdea(row) : null };
+    if (!row) return { success: true, data: null };
+    return this.parseRow(row);
   }
 
   save(input: SavePlanningIdeaInput): IpcResult<PlanningIdea> {
     const existing = this.db.prepare(
-      'SELECT id FROM planning_ideas WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1',
-    ).get(input.projectId) as { id: string } | undefined;
+      'SELECT * FROM planning_ideas WHERE project_id = ?',
+    ).get(input.projectId) as Record<string, unknown> | undefined;
     const now = new Date().toISOString();
+
+    // 读-改-写合并：JSON 字段未传（undefined）保留旧值；显式 null/[] 才清空。
+    // 严禁用 `??` —— 那会把「未传」与「想清空」都吞成默认值。
+    const pickJson = <T>(incoming: T | null | undefined, existingRaw: string | undefined): T | null => {
+      if (incoming === undefined) {
+        if (existingRaw === undefined || existingRaw === '') return null;
+        return JSON.parse(existingRaw) as T;
+      }
+      return incoming;
+    };
+
+    const idea = input.idea;
+    const requirements = input.requirements ?? '';
+    const generatedOptions = pickJson<StoryOption[]>(input.generatedOptions, existing?.generated_options as string | undefined);
+    const selectedOption = input.selectedOption === undefined ? (existing ? (existing.selected_option == null ? null : Number(existing.selected_option)) : null) : input.selectedOption;
+    const status = input.status ?? ((existing?.status as PlanningIdea['status']) ?? 'draft');
+    const masterOutline = pickJson<MasterOutline>(input.masterOutline, existing?.master_outline as string | undefined);
+    const outlineStatus = input.outlineStatus ?? ((existing?.outline_status as PlanningIdea['outlineStatus']) ?? 'empty');
+    const volumeOutlines = pickJson<VolumeOutline[]>(input.volumeOutlines, existing?.volume_outlines as string | undefined);
+    const volumeStatus = input.volumeStatus ?? ((existing?.volume_status as PlanningIdea['volumeStatus']) ?? 'empty');
+    const chapterOutlines = pickJson<ChapterOutline[]>(input.chapterOutlines, existing?.chapter_outlines as string | undefined);
+    const chapterOutlineStatus = input.chapterOutlineStatus ?? ((existing?.chapter_outline_status as PlanningIdea['chapterOutlineStatus']) ?? 'empty');
 
     if (existing) {
       this.db.prepare(`
@@ -41,21 +64,21 @@ export class PlanningRepo {
             chapter_outlines = ?, chapter_outline_status = ?, updated_at = ?
         WHERE id = ?
       `).run(
-        input.idea,
-        input.requirements ?? '',
-        JSON.stringify(input.generatedOptions ?? []),
-        input.selectedOption ?? null,
-        input.status ?? 'draft',
-        input.masterOutline ? JSON.stringify(input.masterOutline) : '',
-        input.outlineStatus ?? 'empty',
-        JSON.stringify(input.volumeOutlines ?? []),
-        input.volumeStatus ?? 'empty',
-        JSON.stringify(input.chapterOutlines ?? []),
-        input.chapterOutlineStatus ?? 'empty',
+        idea,
+        requirements,
+        JSON.stringify(generatedOptions ?? []),
+        selectedOption,
+        status,
+        masterOutline ? JSON.stringify(masterOutline) : '',
+        outlineStatus,
+        JSON.stringify(volumeOutlines ?? []),
+        volumeStatus,
+        JSON.stringify(chapterOutlines ?? []),
+        chapterOutlineStatus,
         now,
         existing.id,
       );
-      return this.findById(existing.id);
+      return this.findById(existing.id as string);
     }
 
     const id = uuidv4();
@@ -66,17 +89,17 @@ export class PlanningRepo {
     `).run(
       id,
       input.projectId,
-      input.idea,
-      input.requirements ?? '',
-      JSON.stringify(input.generatedOptions ?? []),
-      input.selectedOption ?? null,
-      input.status ?? 'draft',
-      input.masterOutline ? JSON.stringify(input.masterOutline) : '',
-      input.outlineStatus ?? 'empty',
-      JSON.stringify(input.volumeOutlines ?? []),
-      input.volumeStatus ?? 'empty',
-      JSON.stringify(input.chapterOutlines ?? []),
-      input.chapterOutlineStatus ?? 'empty',
+      idea,
+      requirements,
+      JSON.stringify(generatedOptions ?? []),
+      selectedOption,
+      status,
+      masterOutline ? JSON.stringify(masterOutline) : '',
+      outlineStatus,
+      JSON.stringify(volumeOutlines ?? []),
+      volumeStatus,
+      JSON.stringify(chapterOutlines ?? []),
+      chapterOutlineStatus,
       now,
       now,
     );
@@ -86,34 +109,42 @@ export class PlanningRepo {
   private findById(id: string): IpcResult<PlanningIdea> {
     const row = this.db.prepare('SELECT * FROM planning_ideas WHERE id = ?').get(id) as Record<string, unknown> | undefined;
     if (!row) return { success: false, error: '策划记录不存在' };
-    return { success: true, data: this.rowToPlanningIdea(row) };
+    return this.parseRow(row);
   }
 
-  private rowToPlanningIdea(row: Record<string, unknown>): PlanningIdea {
-    let generatedOptions: StoryOption[] = [];
-    let masterOutline: MasterOutline | null = null;
-    let volumeOutlines: VolumeOutline[] = [];
-    let chapterOutlines: ChapterOutline[] = [];
-    try { generatedOptions = JSON.parse(String(row.generated_options || '[]')); } catch {}
-    try { masterOutline = row.master_outline ? JSON.parse(String(row.master_outline)) : null; } catch {}
-    try { volumeOutlines = JSON.parse(String(row.volume_outlines || '[]')); } catch {}
-    try { chapterOutlines = JSON.parse(String(row.chapter_outlines || '[]')); } catch {}
-    return {
-      id: String(row.id),
-      projectId: String(row.project_id),
-      idea: String(row.idea || ''),
-      requirements: String(row.requirements || ''),
-      generatedOptions,
-      selectedOption: row.selected_option === null ? null : Number(row.selected_option),
-      status: row.status as PlanningIdea['status'],
-      masterOutline,
-      outlineStatus: (row.outline_status || 'empty') as PlanningIdea['outlineStatus'],
-      volumeOutlines,
-      volumeStatus: (row.volume_status || 'empty') as PlanningIdea['volumeStatus'],
-      chapterOutlines,
-      chapterOutlineStatus: (row.chapter_outline_status || 'empty') as PlanningIdea['chapterOutlineStatus'],
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
+  /** 解析一行策划。任一 JSON 列损坏即报错，绝不返回空纲冒充成功。 */
+  private parseRow(row: Record<string, unknown>): IpcResult<PlanningIdea> {
+    const parse = (raw: string | unknown, what: string): unknown => {
+      try {
+        const s = String(raw ?? '');
+        return s ? JSON.parse(s) : null;
+      } catch {
+        throw new Error(`策划数据损坏（${what}），请从备份或 Obsidian 重新导入`);
+      }
     };
+    try {
+      return {
+        success: true,
+        data: {
+          id: String(row.id),
+          projectId: String(row.project_id),
+          idea: String(row.idea || ''),
+          requirements: String(row.requirements || ''),
+          generatedOptions: (parse(row.generated_options, '故事方案') ?? []) as StoryOption[],
+          selectedOption: row.selected_option === null ? null : Number(row.selected_option),
+          status: row.status as PlanningIdea['status'],
+          masterOutline: parse(row.master_outline, '总纲') as MasterOutline | null,
+          outlineStatus: (row.outline_status || 'empty') as PlanningIdea['outlineStatus'],
+          volumeOutlines: (parse(row.volume_outlines, '分卷纲') ?? []) as VolumeOutline[],
+          volumeStatus: (row.volume_status || 'empty') as PlanningIdea['volumeStatus'],
+          chapterOutlines: (parse(row.chapter_outlines, '章纲') ?? []) as ChapterOutline[],
+          chapterOutlineStatus: (row.chapter_outline_status || 'empty') as PlanningIdea['chapterOutlineStatus'],
+          createdAt: String(row.created_at),
+          updatedAt: String(row.updated_at),
+        },
+      };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
   }
 }

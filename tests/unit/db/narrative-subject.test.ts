@@ -14,6 +14,7 @@ function v18(db: Database.Database) {
   db.exec(`CREATE TABLE _migrations (version INTEGER PRIMARY KEY);
     CREATE TABLE narrative_hooks (id TEXT PRIMARY KEY);
     CREATE TABLE narrative_debts (id TEXT PRIMARY KEY);
+    CREATE TABLE planning_ideas (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '');
     INSERT INTO narrative_hooks VALUES ('旧钩子');
     INSERT INTO narrative_debts VALUES ('旧债务');`);
   for (let i = 1; i <= 18; i++) db.prepare('INSERT INTO _migrations VALUES (?)').run(i);

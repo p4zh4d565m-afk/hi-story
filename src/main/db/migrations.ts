@@ -522,6 +522,26 @@ const MIGRATIONS = [
       ALTER TABLE narrative_debts ADD COLUMN subject TEXT NOT NULL DEFAULT '';
     `,
   },
+  // 020: planning_ideas 一项目一行（去重 + 唯一索引）
+  {
+    version: 20,
+    sql: `
+      -- 每个 project_id 只留 updated_at 最新（并列时 id 最大）的一行，其余删除
+      DELETE FROM planning_ideas
+      WHERE id NOT IN (
+        SELECT id FROM (
+          SELECT id, ROW_NUMBER() OVER (
+            PARTITION BY project_id ORDER BY updated_at DESC, id DESC
+          ) AS rn
+          FROM planning_ideas
+        ) WHERE rn = 1
+      );
+
+      DROP INDEX IF EXISTS idx_planning_ideas_project;
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_planning_ideas_project_id
+        ON planning_ideas(project_id);
+    `,
+  },
 ];
 
 export function runMigrations(db: Database.Database): void {

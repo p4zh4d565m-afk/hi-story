@@ -94,39 +94,4 @@ describe('Obsidian 导入事务', () => {
     expect(row.profile_outline).toBe('[{"id":"a"}]');
     expect(row.personality).toContain('高智商');
   });
-
-  it('项目存在多条策划记录时，策划导入被拒绝（A1），但人物导入不受影响', async () => {
-    db.prepare("INSERT INTO planning_ideas (id, project_id) VALUES ('pl1','p1')").run();
-    db.prepare("INSERT INTO planning_ideas (id, project_id) VALUES ('pl2','p1')").run();
-    await write('完整大纲.md', '# 完整大纲\n## 一、作品定位\n- 类型：BL');
-    await write('人物/沈屿.md', '# 沈屿\n## 性格层次\n- 表面：高智商。');
-    const repo = new ObsidianImportRepo(db);
-    setPath();
-    const prep = await repo.prepare('p1');
-    expect(prep.data!.target.planningRecordCount).toBe(2);
-
-    const masterSel = selectFrom(repo, prep.data, 'master');
-    const masterCommit = await repo.commit({
-      projectId: 'p1', operationId: 'op-m', selections: [masterSel],
-      layerChoices: {
-        master: { action: 'fill', unlockLocked: false },
-        volumes: { action: 'keep', unlockLocked: false },
-        chapters: { action: 'keep', unlockLocked: false },
-      },
-    });
-    expect(masterCommit.success).toBe(false);
-    expect(masterCommit.error).toContain('多条');
-
-    const charSel = selectFrom(repo, prep.data, 'character');
-    const charCommit = await repo.commit({
-      projectId: 'p1', operationId: 'op-c', selections: [charSel],
-      layerChoices: {
-        master: { action: 'keep', unlockLocked: false },
-        volumes: { action: 'keep', unlockLocked: false },
-        chapters: { action: 'keep', unlockLocked: false },
-      },
-    });
-    expect(charCommit.success).toBe(true);
-    expect(db.prepare("SELECT COUNT(*) AS n FROM characters WHERE name = '沈屿'").get()).toEqual({ n: 1 });
-  });
 });

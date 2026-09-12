@@ -80,6 +80,7 @@ function createV17DecisionTables(db: Database.Database): void {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    CREATE TABLE planning_ideas (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, updated_at TEXT NOT NULL DEFAULT '');
   `);
 
   const markApplied = db.prepare('INSERT INTO _migrations (version) VALUES (?)');
