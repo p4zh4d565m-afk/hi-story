@@ -9,17 +9,13 @@ import { PANEL_TITLES } from './layout-model';
 export interface PanelChromeProps {
   panelId: PanelId;
   onClose: (panelId: PanelId) => void;
-  /** 开始拖拽（pointerdown），父级决定是否进入 DropZones 高亮。 */
-  onDragStart: (panelId: PanelId, e: React.PointerEvent) => void;
   children: React.ReactNode;
 }
 
-const PanelChrome: React.FC<PanelChromeProps> = ({ panelId, onClose, onDragStart, children }) => (
+const PanelChrome: React.FC<PanelChromeProps> = ({ panelId, onClose, children }) => (
   <div className="h-full w-full flex flex-col min-h-0">
     <div
-      className="shrink-0 px-3 py-2 border-b border-gray-700 flex items-center justify-between cursor-move select-none"
-      onPointerDown={(e) => onDragStart(panelId, e)}
-      title={`拖拽移动 ${PANEL_TITLES[panelId]}`}
+      className="shrink-0 px-3 py-2 border-b border-gray-700 flex items-center justify-between select-none"
     >
       <span className="text-xs text-gray-400">{PANEL_TITLES[panelId]}</span>
       <button

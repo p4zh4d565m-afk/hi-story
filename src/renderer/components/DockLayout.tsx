@@ -7,7 +7,6 @@ import { applyTheme, loadTheme, persistTheme, type ThemeName } from '../theme/th
 import { type WorkspaceLayoutV1, type PanelId, type SlotId, isSlotVisible, PANEL_TITLES, KEEP_ALIVE_PANELS } from '../workspace/layout-model';
 import PanelChrome from '../workspace/PanelChrome';
 import SlotTabs from '../workspace/SlotTabs';
-import DropZones, { type DropTarget } from '../workspace/DropZones';
 
 // ============================================================
 // 可拖拽面板布局
@@ -101,8 +100,7 @@ const SlotView: React.FC<{
   keepAlivePanels: PanelId[];
   onClosePanel: (panelId: PanelId) => void;
   onSetActive: (slotId: SlotId, panelId: PanelId) => void;
-  onDragStart: (panelId: PanelId) => void;
-}> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive, onDragStart }) => {
+}> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive }) => {
   const activeId = slot.activeId;
   // 普通面板：槽内 panelIds 全挂载、display 切显隐，切标签不丢内部 state；关闭（从 panelIds 移除）才卸载。
   const normalPanels = slot.panelIds.filter((pid) => !keepAlivePanels.includes(pid));
@@ -124,7 +122,6 @@ const SlotView: React.FC<{
           <PanelChrome
             panelId={pid}
             onClose={onClosePanel}
-            onDragStart={(p, e) => { e.preventDefault(); onDragStart(p); }}
           >
             <div className="h-full w-full">
               {panelContent[pid]}
@@ -142,7 +139,6 @@ const SlotView: React.FC<{
           <PanelChrome
             panelId={pid}
             onClose={onClosePanel}
-            onDragStart={() => { /* 保活面板跨槽拖拒绝，不触发 drag */ }}
           >
             <div className="h-full w-full">
               {panelContent[pid]}
@@ -170,9 +166,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
     typeof localStorage === 'undefined' ? null : localStorage.getItem(PANEL_WIDTHS_KEY),
   ), []);
   const [theme, setTheme] = useState<ThemeName>(loadTheme);
-
-  // ===== P3 拖拽状态 =====
-  const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
 
   // panelId → 实际 ReactNode（功能面板内容，不含外壳；外壳由 PanelChrome 提供）
   const panelContent = useMemo<Record<PanelId, React.ReactNode>>(() => ({
@@ -649,7 +642,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 keepAlivePanels={KEEP_ALIVE_PANELS}
                 onClosePanel={onClosePanel}
                 onSetActive={onSetActive}
-                onDragStart={(pid) => setDraggingPanel(pid)}
               />
             </Panel>
           </Group>
@@ -669,20 +661,10 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               keepAlivePanels={[]}
               onClosePanel={onClosePanel}
               onSetActive={onSetActive}
-              onDragStart={(pid) => setDraggingPanel(pid)}
             />
           </Panel>
         )}
       </Group>
-
-      {/* ===== DropZones 拖放预览 ===== */}
-      <DropZones
-        draggingPanel={draggingPanel}
-        onDrop={(panelId, target) => {
-          onMovePanel(panelId, target === 'center' ? 'bottom' : target);
-          setDraggingPanel(null);
-        }}
-      />
 
       {/* ===== FLOATING MINDMAP ===== */}
       {panelState.mindmapOpen && (
