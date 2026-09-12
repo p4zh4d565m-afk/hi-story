@@ -1,6 +1,6 @@
 # Dockable Workspace 与主题系统：代码审查 + 实施方案
 
-> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0 已 commit（`cf9bbe0`）。P1 已 commit（`d9c83cb`）。P2 已编码未提交（下一步是验证后单独 commit）。P3/P4 未开始。文内「Spec 审查意见」已把终态与 P2 范围拆开，避免按终态示意图超做。**
+> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0 已 commit（`cf9bbe0`）。P1 已 commit（`d9c83cb`）。P2 已 commit（`0e4e125` + 修复 `30c08f1`）。P3/P4 未开始。文内「Spec 审查意见」已把终态与 P2 范围拆开，避免按终态示意图超做。**
 >
 > 日期：2026-09-12
 >
@@ -42,7 +42,7 @@
 |------|------|------|------|
 | P0 止血 | **已 commit** `cf9bbe0` | `docs/superpowers/plans/2026-09-12-workspace-p0-layout-bleed.md` | 单测 12/12、写作 UI 12/12 |
 | P1 主题 | **已 commit** `d9c83cb` | `docs/superpowers/plans/2026-09-12-workspace-p1-theme.md` | `theme.test` 4/4、`workspace-p0` 12/12、写作 UI 12/12、`npx vite build` 通过 |
-| P2 分隔条 + 折叠 | **已编码，未 commit** | `docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` | `workspace-p2` 3/3、`workspace-p0` 12/12、`theme` 4/4、写作 UI 12/12、`npx vite build` 通过 |
+| P2 分隔条 + 折叠 | **已 commit** `0e4e125` + 修复 `30c08f1` | `docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` | `workspace-p2` 3/3、`workspace-p0` 12/12、`theme` 4/4、写作 UI 12/12、`npx vite build` 通过；手测已过（见下） |
 | P3 拖进槽 | 未开始 | 等 P2 收口后再写计划 | — |
 | P4 预设 | 未开始 | 等 P3 | — |
 
@@ -62,18 +62,19 @@
 - MindMap Canvas hex 未改
 - 未在真实窗口做 2 分钟切主题手测
 
-### 下一步：P2（编码前先单独提交 P1）
+### 下一步：P3（拖放进槽 + `WorkspaceLayoutV1`）
 
-禁止把主题色和 splitter 混进同一次 commit。P2 只动几何。口径以 P2 计划审查锁定为准（`docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` L1–L3），不要按终态示意图一次做完：
+P2 已收口（`0e4e125` + 修复 `30c08f1`）。下一步是 P3——Spec 风险最高的一步（保活 + 拖放 + 抽布局模型），先写实施计划再编码。
 
-1. 加 `react-resizable-panels`（v4：`Group` / `Panel` / `Separator` / `useDefaultLayout`；下文若仍写 `autoSaveId` / `PanelGroup`，那是审查原文，编码用 v4 名）。
-2. 用库替换手写三条横向 splitter。视觉仍是今天的 `侧栏 | (顶栏 + 编辑器|AI) | 右栏`，**不**把 AI 并进 right 与灵感抢槽（那是 P3）。
-3. center 内加纵向 bottom **占位**：默认折叠，P2 **不渲染/禁用** 分隔条，防止拖出空白带。P3 才往里面放面板。
-4. **仅侧栏**关成 24px 边轨。AI 关闭/最小化、右栏关闭仍卸载（与今天一致）。
-5. `hi-story-panel-widths` 只作首次种子；之后 `useDefaultLayout` 为唯一写手。不引入 `hi-story-workspace-v1`（P3）。
-6. `WritingArea` 继续 `hidden` 保活；AI 写章/审稿/润色继续 `display:none`。
+### P2 收口记录（2026-09-12）
 
-P2 **不做**：拖放到槽、`WorkspaceLayoutV1`、扫第二批白字/灰底、改 Dark 色值、把浮窗改成默认入槽。
+- **commit**：`0e4e125`（主体）+ `30c08f1`（修复）。
+- **落地**：手写 splitter 换 `react-resizable-panels` v4；仅侧栏 24px 轨；AI/右栏关闭仍卸载；空 bottom 槽占位不露分隔条；`useDefaultLayout` 唯一写手，`hi-story-panel-widths` 只作首次种子。
+- **手测发现并修复的两个接线 bug**（几何无 DOM 回归锁，靠真人手测抓到）：
+  1. 侧栏点 ☰ 只 `hidden` 内容、未真 `collapse()` Panel → 点轨恢复宽度异常。修：`useEffect` 监听 `sidebarOpen` 双向同步 `expand()/collapse()`；`onResize` 对称回写状态。
+  2. AI/右栏条件渲染导致 `useDefaultLayout` 持久化 layout 与当前面板数对不上、刷新回默认。修：按当前组合传 `panelIds`（h/v/center 三组）。
+- **手测结论**：拖分隔条改占比、折叠侧栏出 24px 轨并恢复、刷新比例保留、空 bottom 拖不出空白带，均已过。
+- **未覆盖**：仍无 Electron 几何 E2E，几何行为靠库背书 + 手测，无自动回归锁。
 
 ---
 

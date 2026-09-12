@@ -123,7 +123,7 @@ resources/
 - **AI 流真实取消（一期，2026-09-12）** — 停止会 abort 主进程流；切项目作废映射并结束 for-await。复核补丁与下一步见工作区 `ai-stream-cancel-report.md`。
 - **工作区 P0 止血（2026-09-12）** — 灵感/参考/起名互斥；侧栏/AI/右栏宽度写入 `hi-story-panel-widths`；浮窗夹紧视口；顶栏 `flex-wrap`；AI 输入与润色区可拉高。未引入 docking 库，未改主题。核心在 `src/renderer/workspace/`。单测 `tests/unit/workspace-p0.test.ts` 12/12，写作 UI 12/12。
 - **工作区 P1 主题（2026-09-12）** — CSS 变量令牌 + 顶栏浅色/深色切换（`hi-story-theme`）；Dark 外观与旧色板一致。写章/审稿/润色灰底与按钮显式白字未扫。
-- **工作区 P2 分隔条与折叠（2026-09-12）** — 手写三条横向 splitter 换成 `react-resizable-panels` v4（`Group`/`Panel`/`Separator`/`useDefaultLayout`/`usePanelRef`）；仅侧栏折叠成 24px 边轨，AI/右栏关闭仍卸载；加纵向空 bottom 槽占位（P2 不渲染分隔条，P3 才放面板）。比例用 `useDefaultLayout` 持久化，P0 的 `hi-story-panel-widths` 只作首次种子不双写。核心在 `src/renderer/workspace/split-flags.ts`。单测 `tests/unit/workspace-p2.test.ts` 3/3，写作 UI 12/12。
+- **工作区 P2 分隔条与折叠（2026-09-12）** — 手写三条横向 splitter 换成 `react-resizable-panels` v4（`Group`/`Panel`/`Separator`/`useDefaultLayout`/`usePanelRef`）；仅侧栏折叠成 24px 边轨，AI/右栏关闭仍卸载；加纵向空 bottom 槽占位（P2 不渲染分隔条，P3 才放面板）。比例用 `useDefaultLayout` 持久化，P0 的 `hi-story-panel-widths` 只作首次种子不双写。核心在 `src/renderer/workspace/split-flags.ts`。单测 `tests/unit/workspace-p2.test.ts` 3/3，写作 UI 12/12。**手测修复两 bug（`30c08f1`）**：侧栏点 ☰ 未真 collapse 需双向同步 `expand/collapse`；条件渲染面板需给 `useDefaultLayout` 传 `panelIds` 否则刷新回默认。几何无 Electron E2E，靠手测，无自动回归锁。
 
 ## Git 远程仓库
 

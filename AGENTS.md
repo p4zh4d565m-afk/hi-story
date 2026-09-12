@@ -155,7 +155,7 @@ resources/
 - **AI 流真实取消（一期，2026-09-12）** — Spec 一期。`ChatOptions.signal` 贯穿 Claude / OpenAI 兼容路径；主进程 `stream-registry` + `ai:cancelStream`；渲染端 `streamId→projectId` 映射。**复核补丁：** `cancel` 后从注册表删除；`ignoreProjectStreams` 必须 wake 并抛 `AI_IGNORED_MESSAGE` 结束 for-await（否则 complete 会把旧草稿 yield 进新项目）；审稿主路径改为 `chatStream`，关审稿/润色面板会取消。切项目仍不 abort 主进程。踩坑：主进程取消后不再发事件，必须 wake generator；complete 与最后 token 同 tick 会丢尾巴，先 drain 再判 finished。单测 `tests/unit/stream-registry.test.ts`、`tests/unit/ai-stream-cancel.test.ts`。真实供应商烟测未做。详情见工作区 `ai-stream-cancel-report.md`。
 - **工作区 P0 止血（2026-09-12）** — 灵感/参考/起名互斥打开；三栏宽度 `localStorage['hi-story-panel-widths']`；浮窗 move/resize/窗口缩放夹紧视口；顶栏 `flex-wrap`；AI 输入 `resize-y`、润色区解除 340px 双锁。不上 docking 库、不改主题色。纯函数在 `src/renderer/workspace/`。单测 12/12，写作 UI 12/12。Spec：`docs/superpowers/specs/2026-09-12-dockable-workspace-theme-design.md`。
 - **工作区 P1 主题（2026-09-12）** — CSS 变量令牌 + 顶栏浅色/深色切换（`hi-story-theme`）；Dark 外观与旧色板一致。写章/审稿/润色灰底与按钮显式白字未扫。
-- **工作区 P2 分隔条与折叠（2026-09-12）** — 手写三条横向 splitter 换成 `react-resizable-panels` v4；仅侧栏折叠成 24px 边轨，AI/右栏关闭仍卸载；加纵向空 bottom 槽占位（P2 不渲染分隔条，P3 才放面板）。比例用 `useDefaultLayout` 持久化，P0 的 `hi-story-panel-widths` 只作首次种子不双写。核心在 `src/renderer/workspace/split-flags.ts`。单测 `tests/unit/workspace-p2.test.ts` 3/3，写作 UI 12/12。
+- **工作区 P2 分隔条与折叠（2026-09-12）** — 手写三条横向 splitter 换成 `react-resizable-panels` v4；仅侧栏折叠成 24px 边轨，AI/右栏关闭仍卸载；加纵向空 bottom 槽占位（P2 不渲染分隔条，P3 才放面板）。比例用 `useDefaultLayout` 持久化，P0 的 `hi-story-panel-widths` 只作首次种子不双写。核心在 `src/renderer/workspace/split-flags.ts`。单测 `tests/unit/workspace-p2.test.ts` 3/3，写作 UI 12/12。**手测修复两 bug（`30c08f1`）**：侧栏点 ☰ 未真 collapse 需双向同步 `expand/collapse`；条件渲染面板需给 `useDefaultLayout` 传 `panelIds` 否则刷新回默认。几何无 Electron E2E，靠手测，无自动回归锁。
 
 ## Git 远程仓库
 
