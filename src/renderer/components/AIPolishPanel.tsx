@@ -260,8 +260,6 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
     onClose();
   }, [projectId, onClose]);
 
-  if (!open) return null;
-
   return (
     <div className="h-full w-full bg-gray-950 flex flex-col overflow-hidden">
         {/* ── 主体 ── */}

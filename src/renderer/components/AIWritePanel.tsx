@@ -733,8 +733,6 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     setTimeout(() => setCopied(false), 2000);
   }, [generatedContent]);
 
-  if (!open) return null;
-
   const selectedOutline = outlineNodes.find(n => n.id === selectedOutlineId);
   const wordCount = generatedContent
     ? (generatedContent.replace(/<[^>]+>/g, '').match(/[一-鿿㐀-䶿]/g) || []).length

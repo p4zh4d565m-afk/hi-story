@@ -522,8 +522,6 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     return 'text-gray-400';
   }
 
-  if (!open) return null;
-
   const selectedChapter = chapters.find(ch => ch.id === selectedChapterId);
 
   return (

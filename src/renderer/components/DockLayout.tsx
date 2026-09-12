@@ -197,6 +197,8 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   // 槽展开判断：right 由 layout 决定（P3 后灵感/参考/起名走 movePanel），ai 仍由 panelState。
   // 侧栏始终挂载走 collapse，不参与 flags.left（侧栏 Panel 恒在，只折叠）。
   const rightVisible = isSlotVisible(layout, 'right');
+  // bottom 可见 = 有面板（含保活面板，选 A 后写章/审稿/润色打开即进 bottom.panelIds）。
+  const bottomVisible = isSlotVisible(layout, 'bottom');
   const aiVisible = panelState.aiLevel !== 'off' && panelState.aiChatOpen && !panelState.aiChatMinimized;
   // 供 horizontalPanelIds/centerPanelIds 纯函数用的 flags（left 恒 true，因为侧栏 Panel 始终挂载）
   const flags = useMemo(() => ({ left: true, ai: aiVisible, rightAux: rightVisible }), [aiVisible, rightVisible]);
@@ -243,6 +245,12 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       onToggleSidebar();
     }
   }, [panelState.sidebarOpen, onToggleSidebar]);
+
+  // bottom 槽双向同步：有面板 expand + 挂条 + 生效 minSize；无面板 collapse 到 0 + 不挂条（保住三个 AI 实例不卸）。
+  useEffect(() => {
+    if (bottomVisible) bottomRef.current?.expand();
+    else bottomRef.current?.collapse();
+  }, [bottomVisible, bottomRef]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -634,12 +642,13 @@ const DockLayout: React.FC<DockLayoutProps> = ({
         </Group>
       </main>
             </Panel>
+            {bottomVisible && <Separator className="h-1.5 bg-transparent hover:bg-accent/50" />}
             <Panel
               id="bottom"
               panelRef={bottomRef}
               collapsible
               collapsedSize={0}
-              minSize={BOTTOM_MIN_PX}
+              minSize={bottomVisible ? BOTTOM_MIN_PX : 0}
               defaultSize={0}
             >
               <SlotView

@@ -1084,13 +1084,13 @@ const App: React.FC = () => {
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
-        if (e.key === 'I') { e.preventDefault(); workspaceLayout.movePanel('inspiration', 'right'); }
-        if (e.key === 'N') { e.preventDefault(); workspaceLayout.movePanel('namegen', 'right'); }
+        if (e.key === 'I') { e.preventDefault(); workspaceLayout.openOrFocus('inspiration', 'right'); }
+        if (e.key === 'N') { e.preventDefault(); workspaceLayout.openOrFocus('namegen', 'right'); }
         if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
         if (e.key === 'W') { e.preventDefault(); workspaceLayout.openKeepAlive('aiWrite'); }
         if (e.key === 'R') { e.preventDefault(); workspaceLayout.openKeepAlive('aiReview'); }
-        if (e.key === 'F') { e.preventDefault(); workspaceLayout.movePanel('foreshadowing', DEFAULT_SLOT.foreshadowing!); }
+        if (e.key === 'F') { e.preventDefault(); workspaceLayout.openOrFocus('foreshadowing', DEFAULT_SLOT.foreshadowing!); }
       }
       if (e.key === 'Escape') {
         setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false }));
@@ -1147,16 +1147,16 @@ const App: React.FC = () => {
         onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
         onMinimizeAiChat={() => setPanelState(p => ({ ...p, aiChatMinimized: !p.aiChatMinimized }))}
         onToggleContext={() => { /* deprecated — no longer used */ }}
-        onToggleInspiration={() => workspaceLayout.movePanel('inspiration', 'right')}
+        onToggleInspiration={() => workspaceLayout.openOrFocus('inspiration', 'right')}
         onToggleMindmap={() => setPanelState(p => ({ ...p, mindmapOpen: !p.mindmapOpen }))}
-        onToggleMaterial={() => workspaceLayout.movePanel('material', DEFAULT_SLOT.material!)}
-        onToggleOutline={() => workspaceLayout.movePanel('outline', DEFAULT_SLOT.outline!)}
-        onToggleReference={() => workspaceLayout.movePanel('reference', 'right')}
-        onToggleNamegen={() => workspaceLayout.movePanel('namegen', 'right')}
+        onToggleMaterial={() => workspaceLayout.openOrFocus('material', DEFAULT_SLOT.material!)}
+        onToggleOutline={() => workspaceLayout.openOrFocus('outline', DEFAULT_SLOT.outline!)}
+        onToggleReference={() => workspaceLayout.openOrFocus('reference', 'right')}
+        onToggleNamegen={() => workspaceLayout.openOrFocus('namegen', 'right')}
         onToggleAiWrite={() => workspaceLayout.openKeepAlive('aiWrite')}
         onToggleAiReview={() => workspaceLayout.openKeepAlive('aiReview')}
         onToggleAiPolish={() => { setPolishSelection(null); workspaceLayout.openKeepAlive('aiPolish'); }}
-        onToggleForeshadowing={() => workspaceLayout.movePanel('foreshadowing', DEFAULT_SLOT.foreshadowing!)}
+        onToggleForeshadowing={() => workspaceLayout.openOrFocus('foreshadowing', DEFAULT_SLOT.foreshadowing!)}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
           aiLevel: level,
@@ -1222,11 +1222,11 @@ const App: React.FC = () => {
             onSetEditorFontSize={(p: FontSizePreset) => setFontSize('editor', p)}
             editorRef={editorRef}
             onSearchInInspiration={(text) => {
-              workspaceLayout.movePanel('inspiration', 'right');
+              workspaceLayout.openOrFocus('inspiration', 'right');
               localStorage.setItem('hi-story-pending-inspiration-search', text);
             }}
             onSearchInReference={(text) => {
-              workspaceLayout.movePanel('reference', 'right');
+              workspaceLayout.openOrFocus('reference', 'right');
               localStorage.setItem('hi-story-pending-reference-search', text);
             }}
             onAIPolish={(text, range) => {

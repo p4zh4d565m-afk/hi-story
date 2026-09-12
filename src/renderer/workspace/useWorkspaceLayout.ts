@@ -6,7 +6,7 @@ import { useCallback, useState } from 'react';
 import {
   DEFAULT_LAYOUT, type WorkspaceLayoutV1, type PanelId, type SlotId,
   movePanel as movePanelModel, closePanel as closePanelModel, setActive as setActiveModel,
-  openKeepAlive as openKeepAliveModel, closeKeepAlive as closeKeepAliveModel,
+  openKeepAlive as openKeepAliveModel, closeKeepAlive as closeKeepAliveModel, panelSlot,
 } from './layout-model';
 import { LAYOUT_KEY, parseLayout, serializeLayout } from './layout-storage';
 
@@ -71,5 +71,22 @@ export function useWorkspaceLayout() {
     });
   }, [persist]);
 
-  return { layout, movePanel, closePanel, setActive, openKeepAlive, closeKeepAlive };
+  // 顶栏「打开或聚焦」：已在 right/bottom → setActive 聚焦（已 active 则空操作）；未打开 → 进默认槽（保活面板 openKeepAlive）。
+  const openOrFocus = useCallback((panelId: PanelId, defaultSlot: SlotId) => {
+    setLayout((prev) => {
+      const slot = panelSlot(prev, panelId);
+      if (slot === 'right' || slot === 'bottom') {
+        const next = setActiveModel(prev, slot, panelId);
+        persist(next);
+        return next;
+      }
+      const next = panelId === 'aiWrite' || panelId === 'aiReview' || panelId === 'aiPolish'
+        ? openKeepAliveModel(prev, panelId)
+        : movePanelModel(prev, panelId, defaultSlot);
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  return { layout, movePanel, closePanel, setActive, openKeepAlive, closeKeepAlive, openOrFocus };
 }
