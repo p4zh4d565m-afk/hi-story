@@ -99,8 +99,9 @@ const SlotView: React.FC<{
   onClosePanel: (panelId: PanelId) => void;
   onSetActive: (slotId: SlotId, panelId: PanelId) => void;
   onDragStart: (panelId: PanelId) => void;
+  onDragEnd: () => void;
   onDrop: (panelId: PanelId, target: SlotId) => void;
-}> = ({ slotId, slot, panelContent, onClosePanel, onSetActive, onDragStart, onDrop }) => {
+}> = ({ slotId, slot, panelContent, onClosePanel, onSetActive, onDragStart, onDragEnd, onDrop }) => {
   const activeId = slot.activeId;
   return (
     <div
@@ -118,6 +119,7 @@ const SlotView: React.FC<{
         activeId={activeId}
         onSetActive={onSetActive}
         onDragStart={slot.panelIds.length > 0 ? onDragStart : undefined}
+        onDragEnd={onDragEnd}
       />
       {/* 槽内面板：全挂载、display 切显隐，切标签不丢内部 state；关闭（从 panelIds 移除）才卸载 */}
       {slot.panelIds.map((pid) => (
@@ -640,6 +642,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 onClosePanel={onClosePanel}
                 onSetActive={onSetActive}
                 onDragStart={(pid) => setDraggingPanel(pid)}
+                onDragEnd={() => setDraggingPanel(null)}
                 onDrop={(pid, target) => { onMovePanel(pid, target); setDraggingPanel(null); }}
               />
             </Panel>
@@ -660,11 +663,48 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               onClosePanel={onClosePanel}
               onSetActive={onSetActive}
               onDragStart={(pid) => setDraggingPanel(pid)}
+              onDragEnd={() => setDraggingPanel(null)}
               onDrop={(pid, target) => { onMovePanel(pid, target); setDraggingPanel(null); }}
             />
           </Panel>
         )}
       </Group>
+
+      {/* ===== 拖拽期间的 drop 热区（只在 draggingPanel 非空时渲染，dragend 拆掉；不把空 right/bottom 挂成常驻列）===== */}
+      {draggingPanel && (
+        <div className="absolute inset-0 z-30 pointer-events-none">
+          {/* 空 right 槽热区（right 无面板时才有意义） */}
+          {!rightVisible && (
+            <div
+              className="absolute top-0 bottom-0 right-0 pointer-events-auto border-2 border-dashed border-accent/60 bg-accent/10 flex items-center justify-center"
+              style={{ width: '18%', minWidth: '160px' }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const pid = e.dataTransfer.getData('text/plain') as PanelId;
+                if (pid) { onMovePanel(pid, 'right'); setDraggingPanel(null); }
+              }}
+            >
+              <span className="text-xs text-gray-200">拖到这里放入右侧槽</span>
+            </div>
+          )}
+          {/* 空 bottom 槽热区 */}
+          {!bottomVisible && (
+            <div
+              className="absolute left-0 right-0 bottom-0 pointer-events-auto border-2 border-dashed border-accent/60 bg-accent/10 flex items-center justify-center"
+              style={{ height: '14%', minHeight: '100px' }}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => {
+                e.preventDefault();
+                const pid = e.dataTransfer.getData('text/plain') as PanelId;
+                if (pid) { onMovePanel(pid, 'bottom'); setDraggingPanel(null); }
+              }}
+            >
+              <span className="text-xs text-gray-200">拖到这里放入底部槽</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* ===== 浮动 AI 面板（保活：display:none 不卸载，生成中的流不断）===== */}
       <div style={{ display: panelState.aiWriteOpen ? 'block' : 'none' }}>
