@@ -49,6 +49,8 @@ interface AIReviewPanelProps {
   obsidianContext?: string;
   /** 跳转到编辑器段落 */
   onNavigateToParagraph?: (searchText: string) => void;
+  /** 接受修订后回写章节内容到 App（让编辑器显示新正文） */
+  onChapterAccepted?: (chapterId: string, content: string) => void;
 }
 
 interface SavedConfig {
@@ -90,6 +92,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   typeTags,
   obsidianContext,
   onNavigateToParagraph,
+  onChapterAccepted,
 }) => {
   // ===== 状态 =====
   const [selectedChapterId, setSelectedChapterId] = useState<string | null>(activeChapterId);
@@ -473,6 +476,10 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   // ===== 接受修订 =====
   const handleAcceptRevision = useCallback(async () => {
     if (!selectedChapterId || !revisedContent) return;
+    if (!projectId) {
+      setError('当前项目无效，无法保存修订');
+      return;
+    }
     try {
       const res = await (window as any).electronAPI.invoke('db:chapter:update', {
         id: selectedChapterId,
@@ -480,8 +487,8 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       });
       if (res?.success) {
         setRevisionAccepted(true);
-        // 刷新章节列表
-        const refreshRes = await (window as any).electronAPI.invoke('db:chapter:findByProject', 'current');
+        // 回写 App，让打开的编辑器读到新正文（不再用字面量 'current' 刷新）
+        onChapterAccepted?.(selectedChapterId, revisedContent);
         setResult(null);
         setRevisedContent('');
         setActiveTab('review');
@@ -489,7 +496,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } catch (e) {
       setError(`保存修订失败：${(e as Error).message}`);
     }
-  }, [selectedChapterId, revisedContent]);
+  }, [selectedChapterId, revisedContent, projectId, onChapterAccepted]);
 
   // ===== 放弃修订 =====
   const handleDiscardRevision = useCallback(() => {

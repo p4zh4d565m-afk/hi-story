@@ -1395,6 +1395,10 @@ const App: React.FC = () => {
               // 触发 WritingArea 响应
               window.dispatchEvent(new CustomEvent('hi-story:jump-paragraph', { detail: searchText }));
             }}
+            onChapterAccepted={(chapterId, content) => {
+              // 接受修订后回写 App 的 chapters（与 handleSaveChapter 成功后的更新一致）
+              setChapters(prev => prev.map(ch => ch.id === chapterId ? { ...ch, content } : ch));
+            }}
           />
         }
         aiPolishPanel={
