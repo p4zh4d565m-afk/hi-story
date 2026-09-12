@@ -1,0 +1,169 @@
+:root,
+html[data-theme="dark"] {
+  --ui-sidebar-900: 30 31 28;      /* #1E1F1C */
+  --ui-sidebar-800: 38 39 36;      /* #262724 */
+  --ui-sidebar-700: 57 58 54;      /* #393A36 */
+  --ui-sidebar-600: 80 81 77;      /* #50514D */
+  --ui-sidebar-accent: 181 176 164;
+  --ui-sidebar-accent-hover: 158 153 140;
+  --ui-sidebar-hover: 38 39 36;
+  --ui-sidebar-active: 57 58 54;
+
+  --ui-editor-900: 29 36 31;       /* #1D241F */
+  --ui-editor-850: 32 39 34;       /* #202722 */
+  --ui-editor-800: 36 43 38;       /* #242B26 */
+  --ui-editor-700: 54 62 57;       /* #363E39 */
+  --ui-editor-600: 74 83 77;       /* #4A534D */
+  --ui-editor-accent: 140 191 160;
+  --ui-editor-accent-hover: 122 176 144;
+
+  --ui-aichat-900: 37 34 30;       /* #25221E */
+  --ui-aichat-800: 48 44 39;       /* #302C27 */
+  --ui-aichat-700: 74 68 60;       /* #4A443C */
+  --ui-aichat-600: 102 94 84;      /* #665E54 */
+  --ui-aichat-accent: 212 184 150;
+  --ui-aichat-accent-hover: 196 168 130;
+
+  --ui-context-900: 27 31 36;
+  --ui-context-800: 34 39 44;
+  --ui-context-700: 54 61 68;
+  --ui-context-600: 78 86 95;
+  --ui-context-accent: 140 165 187;
+  --ui-context-accent-hover: 122 149 172;
+
+  --ui-inspiration-900: 36 34 25;
+  --ui-inspiration-800: 48 45 34;
+  --ui-inspiration-700: 76 71 54;
+  --ui-inspiration-600: 107 100 77;
+  --ui-inspiration-accent: 196 184 124;
+  --ui-inspiration-accent-hover: 180 168 108;
+
+  --ui-float-900: 36 31 33;
+  --ui-float-800: 48 41 43;
+  --ui-float-700: 74 63 66;
+  --ui-float-600: 102 87 91;
+  --ui-float-accent: 196 160 168;
+  --ui-float-accent-hover: 180 140 150;
+
+  --ui-accent: 126 200 155;        /* #7EC89B */
+  --ui-accent-hover: 110 184 139;
+  --ui-accent-blue: 140 165 187;
+  --ui-accent-blue-hover: 122 149 172;
+  --ui-accent-warm: 212 168 144;
+  --ui-accent-warm-hover: 196 152 128;
+
+  /* 本项目 gray-100 = 主文字，gray-950 = 最深底。Light 翻转语义，不跟 Tailwind 默认 50=最浅 */
+  --ui-gray-50: 245 242 237;
+  --ui-gray-100: 232 227 218;
+  --ui-gray-200: 209 203 192;
+  --ui-gray-300: 181 174 163;
+  --ui-gray-400: 147 139 128;
+  --ui-gray-500: 120 112 101;
+  --ui-gray-600: 95 87 78;
+  --ui-gray-700: 72 65 58;
+  --ui-gray-800: 50 45 40;
+  --ui-gray-900: 31 28 24;
+  --ui-gray-950: 22 21 19;
+
+  --ui-bg: var(--ui-gray-950);
+  --ui-surface: var(--ui-editor-800);
+  --ui-editor: var(--ui-editor-900);
+  --ui-text: var(--ui-gray-100);
+  --ui-text-muted: var(--ui-gray-400);
+  --ui-border: var(--ui-editor-700);
+  --ui-divider: var(--ui-editor-700);
+  --ui-input: var(--ui-editor-800);
+  --ui-hover: var(--ui-editor-700);
+  --ui-active: var(--ui-editor-600);
+  --ui-selected: var(--ui-accent);
+  --ui-disabled: var(--ui-gray-600);
+  --ui-warning: 212 168 80;
+  --ui-error: 196 96 96;
+  --ui-success: 110 184 139;
+  --ui-selection-bg: 126 200 155;
+  --ui-on-accent: 255 255 255;
+}
+
+html[data-theme="light"] {
+  --ui-sidebar-900: 236 230 220;
+  --ui-sidebar-800: 228 221 209;
+  --ui-sidebar-700: 206 196 180;
+  --ui-sidebar-600: 176 164 146;
+  --ui-sidebar-accent: 92 84 72;
+  --ui-sidebar-accent-hover: 74 66 56;
+  --ui-sidebar-hover: 228 221 209;
+  --ui-sidebar-active: 214 204 188;
+
+  --ui-editor-900: 247 242 232;
+  --ui-editor-850: 242 236 224;
+  --ui-editor-800: 236 229 214;
+  --ui-editor-700: 214 204 184;
+  --ui-editor-600: 186 174 154;
+  --ui-editor-accent: 46 120 82;
+  --ui-editor-accent-hover: 36 102 70;
+
+  --ui-aichat-900: 245 238 226;
+  --ui-aichat-800: 236 226 210;
+  --ui-aichat-700: 214 198 176;
+  --ui-aichat-600: 186 166 142;
+  --ui-aichat-accent: 138 96 48;
+  --ui-aichat-accent-hover: 116 78 36;
+
+  --ui-context-900: 232 236 240;
+  --ui-context-800: 220 226 232;
+  --ui-context-700: 190 200 210;
+  --ui-context-600: 150 164 176;
+  --ui-context-accent: 56 92 120;
+  --ui-context-accent-hover: 40 74 100;
+
+  --ui-inspiration-900: 245 240 220;
+  --ui-inspiration-800: 236 228 200;
+  --ui-inspiration-700: 210 196 150;
+  --ui-inspiration-600: 176 160 110;
+  --ui-inspiration-accent: 120 100 32;
+  --ui-inspiration-accent-hover: 96 80 24;
+
+  --ui-float-900: 242 234 236;
+  --ui-float-800: 232 220 224;
+  --ui-float-700: 206 186 192;
+  --ui-float-600: 176 152 160;
+  --ui-float-accent: 128 72 84;
+  --ui-float-accent-hover: 108 56 68;
+
+  --ui-accent: 46 120 82;
+  --ui-accent-hover: 36 102 70;
+  --ui-accent-blue: 56 92 120;
+  --ui-accent-blue-hover: 40 74 100;
+  --ui-accent-warm: 168 88 56;
+  --ui-accent-warm-hover: 148 72 44;
+
+  --ui-gray-50: 250 247 241;
+  --ui-gray-100: 44 39 34;
+  --ui-gray-200: 62 55 48;
+  --ui-gray-300: 90 80 70;
+  --ui-gray-400: 110 100 88;
+  --ui-gray-500: 130 118 104;
+  --ui-gray-600: 168 158 144;
+  --ui-gray-700: 206 196 180;
+  --ui-gray-800: 228 221 209;
+  --ui-gray-900: 236 230 220;
+  --ui-gray-950: 247 242 232;
+
+  --ui-bg: var(--ui-gray-950);
+  --ui-surface: var(--ui-editor-800);
+  --ui-editor: var(--ui-editor-900);
+  --ui-text: var(--ui-gray-100);
+  --ui-text-muted: var(--ui-gray-400);
+  --ui-border: var(--ui-editor-700);
+  --ui-divider: var(--ui-editor-700);
+  --ui-input: var(--ui-editor-800);
+  --ui-hover: var(--ui-editor-700);
+  --ui-active: var(--ui-editor-600);
+  --ui-selected: var(--ui-accent);
+  --ui-disabled: var(--ui-gray-600);
+  --ui-warning: 160 112 24;
+  --ui-error: 176 56 48;
+  --ui-success: 36 102 70;
+  --ui-selection-bg: 46 120 82;
+  --ui-on-accent: 255 255 255;
+}

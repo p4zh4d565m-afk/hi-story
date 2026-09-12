@@ -1,3 +1,5 @@
+@import './tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -16,11 +18,11 @@ html, body, #root {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #4A534D;
+  background: rgb(var(--ui-editor-600));
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #5B655E;
+  background: rgb(var(--ui-editor-700));
 }
 
 /* ===== 中文小说排版：首行缩进两字符，段落间无额外间距 ===== */
@@ -55,10 +57,14 @@ html, body, #root {
   text-indent: 0;
 }
 
-/* ===== 选中文字颜色 · 柔和鼠尾草绿 ===== */
+.ProseMirror {
+  color: rgb(var(--ui-gray-100));
+}
+
+/* ===== 选中文字颜色 · 柔和鼠尾草绿；color 用正文色，禁止 on-accent ===== */
 ::selection {
-  background: rgba(126, 200, 155, 0.30);
-  color: #E8E3DA;
+  background: rgb(var(--ui-selection-bg) / 0.30);
+  color: rgb(var(--ui-gray-100));
 }
 
 /* ===== 编辑器字号预设（不缩放边距，仅改字号）===== */

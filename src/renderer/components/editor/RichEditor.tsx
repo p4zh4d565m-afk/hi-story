@@ -317,7 +317,7 @@ const RichEditor = forwardRef<RichEditorHandle, RichEditorProps>(({
         <Divider />
         <button
           onClick={handleSmartFormat}
-          className="px-2 py-1 rounded text-[10px] text-gray-400 hover:bg-editor-700 hover:text-white transition-colors flex items-center gap-1"
+          className="px-2 py-1 rounded text-[10px] text-gray-400 hover:bg-editor-700 hover:text-gray-100 transition-colors flex items-center gap-1"
           title="智能排版 — 自动按段落整理内容"
         >
           📐 排版
@@ -360,7 +360,7 @@ const ToolbarButton: React.FC<{
     title={title}
     className={`
       w-8 h-8 rounded text-sm flex items-center justify-center transition-colors
-      ${active ? 'bg-accent text-white' : 'text-gray-400 hover:bg-editor-700 hover:text-white'}
+      ${active ? 'bg-accent text-white' : 'text-gray-400 hover:bg-editor-700 hover:text-gray-100'}
       ${italic ? 'italic' : ''}
       ${underline ? 'underline' : ''}
     `}

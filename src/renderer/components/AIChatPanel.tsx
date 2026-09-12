@@ -803,7 +803,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           {projectId && (
             <button
               onClick={() => setShowDecisionPanel(true)}
-              className="text-gray-400 hover:text-white transition-colors text-xs"
+              className="text-gray-400 hover:text-gray-100 transition-colors text-xs"
               title="打开创作决策账本"
             >
               决策{creativeDecisions.filter(item => item.status === 'proposed').length > 0
@@ -813,14 +813,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           )}
           <button
             onClick={() => setShowNewThread(!showNewThread)}
-            className="text-gray-400 hover:text-white transition-colors text-xs"
+            className="text-gray-400 hover:text-gray-100 transition-colors text-xs"
             title="新建对话线程"
           >
             +新对话
           </button>
           <button
             onClick={() => setShowChatSearch(!showChatSearch)}
-            className="text-gray-400 hover:text-white transition-colors text-xs"
+            className="text-gray-400 hover:text-gray-100 transition-colors text-xs"
             title="搜索对话历史"
           >
             🔍
@@ -829,7 +829,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             onClick={() => {
               setShowSettings(!showSettings);
             }}
-            className="text-gray-400 hover:text-white transition-colors text-sm"
+            className="text-gray-400 hover:text-gray-100 transition-colors text-sm"
             title="管理 AI 配置"
           >
             ⚙️
@@ -849,7 +849,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                 className={`px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors ${
                   t.id === activeThreadId
                     ? 'bg-accent text-white'
-                    : 'text-gray-400 hover:bg-aichat-700 hover:text-white'
+                    : 'text-gray-400 hover:bg-aichat-700 hover:text-gray-100'
                 }`}
                 title={`${THREAD_CATEGORY_LABELS[t.category]} — ${t.name}`}
               >
@@ -876,7 +876,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             onChange={(e) => setNewThreadName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') handleCreateThread(); if (e.key === 'Escape') setShowNewThread(false); }}
             placeholder="对话名称..."
-            className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+            className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                        focus:outline-none focus:border-accent placeholder-gray-500"
             autoFocus
           />
@@ -884,7 +884,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             <select
               value={newThreadCategory}
               onChange={(e) => setNewThreadCategory(e.target.value as Thread['category'])}
-              className="flex-1 px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-[10px]
+              className="flex-1 px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-[10px]
                          focus:outline-none focus:border-accent"
             >
               {(Object.entries(THREAD_CATEGORY_LABELS) as [Thread['category'], string][]).map(([k, v]) => (
@@ -900,7 +900,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             </button>
             <button
               onClick={() => setShowNewThread(false)}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-white"
+              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-100"
             >
               取消
             </button>
@@ -932,12 +932,12 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                 if (e.key === 'Escape') { setShowChatSearch(false); setChatSearchResults([]); }
               }}
               placeholder="搜索所有对话..."
-              className="flex-1 px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+              className="flex-1 px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                          focus:outline-none focus:border-accent placeholder-gray-500"
             />
             <button
               onClick={() => { setShowChatSearch(false); setChatSearchResults([]); }}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-white"
+              className="px-2 py-1 text-xs text-gray-400 hover:text-gray-100"
             >
               关闭
             </button>
@@ -1025,7 +1025,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         <div className="px-4 py-3 border-b border-aichat-700 bg-aichat-800/50 space-y-2 text-[10px] max-h-[200px] overflow-y-auto">
           <div className="flex items-center justify-between">
             <span className="text-gray-400 font-medium">📊 用量统计</span>
-            <button onClick={() => setShowUsage(false)} className="text-gray-500 hover:text-white text-xs">✕</button>
+            <button onClick={() => setShowUsage(false)} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <div className="bg-aichat-900 rounded p-2 text-center">
@@ -1113,7 +1113,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   value={editingLabel}
                   onChange={(e) => setEditingLabel(e.target.value)}
                   placeholder="如: 我的豆包 / 公司DeepSeek..."
-                  className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                  className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                              focus:outline-none focus:border-accent placeholder-gray-500"
                 />
               </div>
@@ -1134,7 +1134,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                       }
                     }
                   }}
-                  className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                  className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                              focus:outline-none focus:border-accent"
                 >
                   {PROVIDERS.map(p => (
@@ -1166,7 +1166,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   value={editingApiKey}
                   onChange={(e) => setEditingApiKey(e.target.value)}
                   placeholder="sk-..."
-                  className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                  className="w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                              focus:outline-none focus:border-accent placeholder-gray-500 font-mono"
                 />
               </div>
@@ -1176,7 +1176,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   <select
                     value={editingModel}
                     onChange={(e) => setEditingModel(e.target.value)}
-                    className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                    className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                                focus:outline-none focus:border-accent"
                   >
                     {currentProviderModels.map(m => (
@@ -1192,7 +1192,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   <select
                     value={editingModel}
                     onChange={(e) => setEditingModel(e.target.value)}
-                    className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                    className="w-full px-2 py-1.5 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                                focus:outline-none focus:border-accent"
                   >
                     {currentProviderModels.map(m => (
@@ -1211,7 +1211,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                   placeholder={currentProviderModels.length > 0
                     ? '或输入其他模型名 / ep- 接入点 ID...'
                     : '输入模型名（必填）...'}
-                  className={`${currentProviderModels.length > 0 ? 'mt-1 ' : ''}w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-white text-xs
+                  className={`${currentProviderModels.length > 0 ? 'mt-1 ' : ''}w-full px-2 py-1 bg-aichat-700 border border-aichat-600 rounded text-gray-100 text-xs
                              focus:outline-none focus:border-accent placeholder-gray-500`}
                 />
               </div>
@@ -1298,7 +1298,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         {error && (
           <div className="text-center text-red-400 text-xs py-2">
             ⚠ {error}
-            <button onClick={() => setError(null)} className="ml-2 text-gray-500 hover:text-white">关闭</button>
+            <button onClick={() => setError(null)} className="ml-2 text-gray-500 hover:text-gray-100">关闭</button>
           </div>
         )}
 
@@ -1314,7 +1314,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={savedConfigs.length > 0 ? '和 AI 讨论你的小说...' : '请先点击 ⚙️ 添加 AI 配置...'}
             rows={2}
-            className="flex-1 resize-y min-h-[2.5rem] max-h-40 rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white
+            className="flex-1 resize-y min-h-[2.5rem] max-h-40 rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-gray-100
                        focus:outline-none focus:border-accent placeholder-gray-600"
             disabled={isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
           />

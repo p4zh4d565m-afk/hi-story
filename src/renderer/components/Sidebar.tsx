@@ -107,7 +107,7 @@ const Sidebar: React.FC<SidebarProps> = ({
           {activeProjectId && (
             <button
               onClick={onOpenObsidian}
-              className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+              className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-gray-100 transition-colors"
               title="Obsidian 资料"
             >
               📚
@@ -115,14 +115,14 @@ const Sidebar: React.FC<SidebarProps> = ({
           )}
           <button
             onClick={onImportNovel}
-            className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+            className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-gray-100 transition-colors"
             title="导入小说"
           >
             📥
           </button>
           <button
             onClick={onCreateProject}
-            className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-white transition-colors"
+            className="w-7 h-7 rounded hover:bg-sidebar-hover flex items-center justify-center text-gray-400 hover:text-gray-100 transition-colors"
             title="新建小说"
           >
             +
@@ -184,7 +184,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">角色</span>
                   <button
                     onClick={onCreateCharacter}
-                    className="text-xs text-gray-400 hover:text-white transition-colors"
+                    className="text-xs text-gray-400 hover:text-gray-100 transition-colors"
                   >
                     + 新角色
                   </button>
@@ -222,7 +222,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             if (e.key === 'Escape') setRenamingCharId(null);
                           }}
                           onBlur={() => { onRenameCharacter(ch.id, renameCharName.trim() || ch.name); setRenamingCharId(null); }}
-                          className="flex-1 px-1 py-0 bg-sidebar-700 border border-sidebar-700 rounded text-white text-xs
+                          className="flex-1 px-1 py-0 bg-sidebar-700 border border-sidebar-700 rounded text-gray-100 text-xs
                                      focus:outline-none focus:border-accent"
                           autoFocus
                           onClick={(e) => e.stopPropagation()}
@@ -269,7 +269,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                   <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">世界观</span>
                   <button
                     onClick={() => onCreateWorldEntry('place')}
-                    className="text-xs text-gray-400 hover:text-white transition-colors"
+                    className="text-xs text-gray-400 hover:text-gray-100 transition-colors"
                   >
                     + 新条目
                   </button>
@@ -307,7 +307,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             if (e.key === 'Escape') setRenamingWeId(null);
                           }}
                           onBlur={() => { onRenameWorldEntry(entry.id, renameWeName.trim() || entry.name); setRenamingWeId(null); }}
-                          className="flex-1 px-1 py-0 bg-sidebar-700 border border-sidebar-700 rounded text-white text-xs
+                          className="flex-1 px-1 py-0 bg-sidebar-700 border border-sidebar-700 rounded text-gray-100 text-xs
                                      focus:outline-none focus:border-accent"
                           autoFocus
                           onClick={(e) => e.stopPropagation()}

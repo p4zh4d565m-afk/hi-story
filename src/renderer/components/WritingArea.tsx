@@ -328,7 +328,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           <div className="flex items-center justify-center gap-3 mt-4">
             <button
               onClick={onCreateProject}
-              className="px-4 py-2 text-sm border border-editor-600 text-gray-400 rounded hover:bg-editor-800 hover:text-white transition-colors"
+              className="px-4 py-2 text-sm border border-editor-600 text-gray-400 rounded hover:bg-editor-800 hover:text-gray-100 transition-colors"
             >
               + 新建项目
             </button>
@@ -417,7 +417,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
             <div className="relative" ref={historyPanelRef}>
               <button
                 onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs text-gray-400 hover:text-white hover:bg-editor-700 transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded text-xs text-gray-400 hover:text-gray-100 hover:bg-editor-700 transition-colors"
                 title="查看历史版本"
               >
                 📋 历史
@@ -491,7 +491,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
                   if (e.key === 'Escape') { setRenamingChapterId(null); setRenameTitle(''); }
                 }}
                 onBlur={handleRenameConfirm}
-                className="px-2 py-0.5 bg-editor-700 border border-accent rounded text-xs text-white
+                className="px-2 py-0.5 bg-editor-700 border border-accent rounded text-xs text-gray-100
                            focus:outline-none min-w-[80px] max-w-[180px]"
               />
             </div>
@@ -505,7 +505,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
                 flex items-center gap-1 px-3 py-1 rounded text-xs whitespace-nowrap transition-colors
                 ${ch.id === activeChapter?.id
                   ? 'bg-accent text-white'
-                  : 'text-gray-400 hover:bg-editor-700 hover:text-white'
+                  : 'text-gray-400 hover:bg-editor-700 hover:text-gray-100'
                 }
               `}
             >
@@ -518,7 +518,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
             const nextNum = chapters.length + 1;
             onCreateChapter(`第${nextNum}章`);
           }}
-          className="px-2 py-1 rounded text-xs text-gray-500 hover:bg-editor-700 hover:text-white transition-colors"
+          className="px-2 py-1 rounded text-xs text-gray-500 hover:bg-editor-700 hover:text-gray-100 transition-colors"
           title="快速新建章节"
         >
           +

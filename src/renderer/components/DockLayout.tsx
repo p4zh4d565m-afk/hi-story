@@ -1,6 +1,7 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { clampFloatingRect } from '../workspace/floating-rect';
 import { PANEL_WIDTHS_KEY, parsePanelWidths, serializePanelWidths } from '../workspace/panel-widths';
+import { applyTheme, loadTheme, persistTheme, type ThemeName } from '../theme/theme';
 
 // ============================================================
 // 可拖拽面板布局
@@ -107,6 +108,11 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   const [sidebarWidth, setSidebarWidth] = useState(initialWidths.sidebar);
   const [aiChatWidth, setAiChatWidth] = useState(initialWidths.aiChat);
   const [inspWidth, setInspWidth] = useState(initialWidths.insp);
+  const [theme, setTheme] = useState<ThemeName>(loadTheme);
+
+  useEffect(() => {
+    applyTheme(theme);
+  }, [theme]);
 
   // 当前缩放值（通过 fontSize 实现，避免 CSS zoom 干扰输入框）
   const panelsZoom = PANEL_ZOOM_VALUES[fontSizes.panels];
@@ -318,19 +324,19 @@ const DockLayout: React.FC<DockLayoutProps> = ({
           style={{ fontSize: `${uiZoom * 100}%` }}>
           {/* Sidebar toggle */}
           <button onClick={onToggleSidebar}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.sidebarOpen ? 'text-gray-400 hover:text-white' : 'text-accent bg-accent/10'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.sidebarOpen ? 'text-gray-400 hover:text-gray-100' : 'text-accent bg-accent/10'}`}
             title="切换侧栏">
             ☰
           </button>
 
           <div className="flex bg-editor-700 rounded overflow-hidden ml-1">
             <button onClick={() => onSetWorkspaceMode('planning')}
-              className={`px-3 py-1 text-xs transition-colors ${workspaceMode === 'planning' ? 'bg-accent text-white' : 'text-gray-400 hover:text-white'}`}
+              className={`px-3 py-1 text-xs transition-colors ${workspaceMode === 'planning' ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-100'}`}
               title="从创意生成故事方案、大纲和章纲">
               🧭 策划
             </button>
             <button onClick={() => onSetWorkspaceMode('writing')}
-              className={`px-3 py-1 text-xs transition-colors ${workspaceMode === 'writing' ? 'bg-accent text-white' : 'text-gray-400 hover:text-white'}`}
+              className={`px-3 py-1 text-xs transition-colors ${workspaceMode === 'writing' ? 'bg-accent text-white' : 'text-gray-400 hover:text-gray-100'}`}
               title="自己写作或使用 AI 起草、续写">
               ✍️ 写作
             </button>
@@ -346,6 +352,18 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             <span className="text-[10px] text-gray-500 ml-1" title="界面字体">🖥界面</span>
             <FontSizeSelect value={fontSizes.ui}
               onChange={(v) => onSetFontSize('ui', v as FontSizePreset)} title="界面字体" />
+            <button
+              onClick={() => {
+                const next = theme === 'dark' ? 'light' : 'dark';
+                applyTheme(next);
+                persistTheme(next);
+                setTheme(next);
+              }}
+              className="px-2 py-1 rounded text-xs text-gray-400 hover:text-gray-100 hover:bg-editor-700"
+              title="切换浅色/深色主题"
+            >
+              {theme === 'dark' ? '☀️ 浅色' : '🌙 深色'}
+            </button>
           </div>
 
           {/* AI participation level */}
@@ -360,7 +378,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 className={`px-2 py-1 text-[10px] transition-colors ${
                   panelState.aiLevel === level
                     ? 'bg-accent text-white'
-                    : 'text-gray-400 hover:text-white'
+                    : 'text-gray-400 hover:text-gray-100'
                 }`}
                 title={title}
               >
@@ -371,21 +389,21 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
           {/* Inspiration toggle */}
           <button onClick={onToggleInspiration}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.inspirationOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.inspirationOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="灵感搜索 (Ctrl+Shift+I)">
             🔍 灵感
           </button>
 
           {/* Outline toggle */}
           <button onClick={onToggleOutline}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.outlineOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.outlineOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="大纲面板">
             📋 大纲
           </button>
 
           {/* Mindmap toggle */}
           <button onClick={onToggleMindmap}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.mindmapOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.mindmapOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="角色思维导图">
             🧠 导图
           </button>
@@ -393,49 +411,49 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
           {/* Material panel toggle */}
           <button onClick={onToggleMaterial}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.materialOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.materialOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="素材管理">
             📦 素材
           </button>
 
           {/* Reference toggle — 参考库匹配面板 */}
           <button onClick={onToggleReference}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.referenceOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.referenceOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="参考匹配">
             📚 参考
           </button>
 
           {/* Name Generator toggle — 起名助手 */}
           <button onClick={onToggleNamegen}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.namegenOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.namegenOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="起名助手">
             🧙 起名
           </button>
 
           {/* AI Write toggle — AI 写章 */}
           <button onClick={onToggleAiWrite}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiWriteOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiWriteOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="AI 写章 (Ctrl+Shift+W)">
             🤖 写章
           </button>
 
           {/* AI Review toggle — AI 审稿 */}
           <button onClick={onToggleAiReview}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiReviewOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiReviewOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="AI 审稿 (Ctrl+Shift+R)">
             🔍 审稿
           </button>
 
           {/* AI Polish toggle — 去 AI 味润色 */}
           <button onClick={onToggleAiPolish}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiPolishOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiPolishOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="去 AI 味润色">
             ✨ 润色
           </button>
 
           {/* Foreshadowing toggle — 伏笔追踪 */}
           <button onClick={onToggleForeshadowing}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.foreshadowingOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.foreshadowingOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="伏笔追踪 (Ctrl+Shift+F)">
             🪢 伏笔
           </button>
@@ -450,7 +468,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             </button>
           ) : (
             <button onClick={onToggleAiChat}
-              className={`px-2 py-1 rounded text-xs transition-colors ml-1 ${panelState.aiChatOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-white'}`}
+              className={`px-2 py-1 rounded text-xs transition-colors ml-1 ${panelState.aiChatOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
               title="AI 对话">
               💬 AI
             </button>
@@ -476,7 +494,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 <div className="h-full relative zoom-container" style={{ fontSize: `${panelsZoom * 100}%` }}>
                   {/* Minimize button — positioned below the AI header so it doesn't cover ⚙️ */}
                   <button onClick={onMinimizeAiChat}
-                    className="absolute top-2 left-2 w-6 h-6 rounded bg-aichat-700 text-gray-400 hover:text-white hover:bg-aichat-600 text-xs z-10"
+                    className="absolute top-2 left-2 w-6 h-6 rounded bg-aichat-700 text-gray-400 hover:text-gray-100 hover:bg-aichat-600 text-xs z-10"
                     title="最小化 AI 对话">
                     _
                   </button>
@@ -546,7 +564,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               onMouseDown={e => startFloatingDrag('mindmap', 'move', '', mindmapRect, e)}
             >
               <span className="text-xs text-gray-400">🧠 角色思维导图</span>
-              <button onClick={onToggleMindmap} className="text-gray-500 hover:text-white text-xs">✕</button>
+              <button onClick={onToggleMindmap} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
             </div>
             <div className="flex-1 overflow-hidden p-2">
               {mindmapPanel}
@@ -572,7 +590,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               onMouseDown={e => startFloatingDrag('material', 'move', '', materialRect, e)}
             >
               <span className="text-xs text-gray-400">📦 素材管理</span>
-              <button onClick={onToggleMaterial} className="text-gray-500 hover:text-white text-xs">✕</button>
+              <button onClick={onToggleMaterial} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
             </div>
             <div className="flex-1 overflow-hidden" style={{ fontSize: `${panelsZoom * 100}%` }}>
               {materialPanel}
@@ -597,7 +615,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               onMouseDown={e => startFloatingDrag('outline', 'move', '', outlineRect, e)}
             >
               <span className="text-xs text-gray-400">📋 大纲面板</span>
-              <button onClick={onToggleOutline} className="text-gray-500 hover:text-white text-xs">✕</button>
+              <button onClick={onToggleOutline} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
             </div>
             <div className="flex-1 overflow-hidden outline-panel-container" style={{ fontSize: `${panelsZoom * 100}%` }}>
               {outlinePanel}
@@ -637,7 +655,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               onMouseDown={e => startFloatingDrag('foreshadowing', 'move', '', foreshadowingRect, e)}
             >
               <span className="text-xs text-gray-400">🪢 伏笔追踪</span>
-              <button onClick={onToggleForeshadowing} className="text-gray-500 hover:text-white text-xs">✕</button>
+              <button onClick={onToggleForeshadowing} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
             </div>
             <div className="flex-1 overflow-hidden" style={{ fontSize: `${panelsZoom * 100}%` }}>
               {foreshadowingPanel}

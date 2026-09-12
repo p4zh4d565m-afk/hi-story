@@ -1,106 +1,81 @@
 /** @type {import('tailwindcss').Config} */
+const ink = (token) => `rgb(var(${token}) / <alpha-value>)`;
+
 module.exports = {
   content: ['./src/renderer/**/*.{ts,tsx,html}'],
   theme: {
     extend: {
       colors: {
-        // ============================================================
-        // 🌿 林间稿纸 · 护眼暖绿主题
-        // 设计理念：模拟暖光台灯下稿纸写作的感觉
-        // - 底色偏暖橄榄绿，降低蓝光辐射
-        // - 文字暖灰调，降低对比度减少眼部肌肉紧张
-        // - 强调色柔和鼠尾草绿，不刺眼但足够清晰
-        // ============================================================
-
-        // 🟤 侧栏 — 暖棕灰 (低调不抢眼，减少蓝光)
         sidebar: {
-          DEFAULT: '#1E1F1C',
-          900: '#1E1F1C',
-          800: '#262724',
-          700: '#393A36',
-          600: '#50514D',
-          accent: '#B5B0A4',
-          'accent-hover': '#9E998C',
-          hover: '#262724',
-          active: '#393A36',
+          DEFAULT: ink('--ui-sidebar-900'),
+          900: ink('--ui-sidebar-900'),
+          800: ink('--ui-sidebar-800'),
+          700: ink('--ui-sidebar-700'),
+          600: ink('--ui-sidebar-600'),
+          accent: ink('--ui-sidebar-accent'),
+          'accent-hover': ink('--ui-sidebar-accent-hover'),
+          hover: ink('--ui-sidebar-hover'),
+          active: ink('--ui-sidebar-active'),
         },
-
-        // 🫒 编辑器 — 深苔绿灰 (核心打字区，最温和的底色)
         editor: {
-          900: '#1D241F',
-          850: '#202722',
-          800: '#242B26',
-          700: '#363E39',
-          600: '#4A534D',
-          accent: '#8CBFA0',
-          'accent-hover': '#7AB090',
+          900: ink('--ui-editor-900'),
+          850: ink('--ui-editor-850'),
+          800: ink('--ui-editor-800'),
+          700: ink('--ui-editor-700'),
+          600: ink('--ui-editor-600'),
+          accent: ink('--ui-editor-accent'),
+          'accent-hover': ink('--ui-editor-accent-hover'),
         },
-
-        // 🟠 AI 对话 — 暖杏色 (温暖不刺眼)
         aichat: {
-          900: '#25221E',
-          800: '#302C27',
-          700: '#4A443C',
-          600: '#665E54',
-          accent: '#D4B896',
-          'accent-hover': '#C4A882',
+          900: ink('--ui-aichat-900'),
+          800: ink('--ui-aichat-800'),
+          700: ink('--ui-aichat-700'),
+          600: ink('--ui-aichat-600'),
+          accent: ink('--ui-aichat-accent'),
+          'accent-hover': ink('--ui-aichat-accent-hover'),
         },
-
-        // 🔵 详情面板 — 雾蓝灰 (降低饱和度)
         context: {
-          900: '#1B1F24',
-          800: '#22272C',
-          700: '#363D44',
-          600: '#4E565F',
-          accent: '#8CA5BB',
-          'accent-hover': '#7A95AC',
+          900: ink('--ui-context-900'),
+          800: ink('--ui-context-800'),
+          700: ink('--ui-context-700'),
+          600: ink('--ui-context-600'),
+          accent: ink('--ui-context-accent'),
+          'accent-hover': ink('--ui-context-accent-hover'),
         },
-
-        // 🟡 灵感面板 — 暖麦色 (柔和不刺眼)
         inspiration: {
-          900: '#242219',
-          800: '#302D22',
-          700: '#4C4736',
-          600: '#6B644D',
-          accent: '#C4B87C',
-          'accent-hover': '#B4A86C',
+          900: ink('--ui-inspiration-900'),
+          800: ink('--ui-inspiration-800'),
+          700: ink('--ui-inspiration-700'),
+          600: ink('--ui-inspiration-600'),
+          accent: ink('--ui-inspiration-accent'),
+          'accent-hover': ink('--ui-inspiration-accent-hover'),
         },
-
-        // 🩷 浮动面板 — 灰粉调 (降低饱和度)
         float: {
-          900: '#241F21',
-          800: '#30292B',
-          700: '#4A3F42',
-          600: '#66575B',
-          accent: '#C4A0A8',
-          'accent-hover': '#B48C96',
+          900: ink('--ui-float-900'),
+          800: ink('--ui-float-800'),
+          700: ink('--ui-float-700'),
+          600: ink('--ui-float-600'),
+          accent: ink('--ui-float-accent'),
+          'accent-hover': ink('--ui-float-accent-hover'),
         },
-
-        // ===== 全局通用 =====
-        // 主强调色 — 柔和鼠尾草绿 (护眼但足够醒目)
-        accent: '#7EC89B',
-        'accent-hover': '#6EB88B',
-        // 次要强调色 — 柔蓝灰 (链接/交互)
-        'accent-blue': '#8CA5BB',
-        'accent-blue-hover': '#7A95AC',
-        // 暖色点缀 — 柔和杏 (删除/警告)
-        'accent-warm': '#D4A890',
-        'accent-warm-hover': '#C49880',
-
-        // ===== 暖灰文字系统 =====
-        // 暖底色文字：在深暖底上保持清晰但不刺眼
+        accent: ink('--ui-accent'),
+        'accent-hover': ink('--ui-accent-hover'),
+        'accent-blue': ink('--ui-accent-blue'),
+        'accent-blue-hover': ink('--ui-accent-blue-hover'),
+        'accent-warm': ink('--ui-accent-warm'),
+        'accent-warm-hover': ink('--ui-accent-warm-hover'),
         gray: {
-          50:  '#F5F2ED',   // 最亮 — 极少量使用
-          100: '#E8E3DA',
-          200: '#D1CBC0',
-          300: '#B5AEA3',
-          400: '#938B80',
-          500: '#787065',
-          600: '#5F574E',
-          700: '#48413A',
-          800: '#322D28',
-          900: '#1F1C18',
-          950: '#161513',   // 最暗 — 全局最深底色
+          50: ink('--ui-gray-50'),
+          100: ink('--ui-gray-100'),
+          200: ink('--ui-gray-200'),
+          300: ink('--ui-gray-300'),
+          400: ink('--ui-gray-400'),
+          500: ink('--ui-gray-500'),
+          600: ink('--ui-gray-600'),
+          700: ink('--ui-gray-700'),
+          800: ink('--ui-gray-800'),
+          900: ink('--ui-gray-900'),
+          950: ink('--ui-gray-950'),
         },
       },
     },
