@@ -2,6 +2,14 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { ChapterOutline, IpcResult, MasterOutline, PlanningIdea, StoryOption, VolumeOutline } from '../../../renderer/types';
 
+/**
+ * 保存策划输入的字段语义（读-改-写合并，见 save）：
+ * - JSON 列（generatedOptions/masterOutline/volumeOutlines/chapterOutlines）：
+ *   **省略（undefined）= 保留库中旧值**；显式传 `null`（对象型）或 `[]`（数组型）= 清空。
+ *   严禁把「漏传」误当「想清空」——这两个语义由 `=== undefined` 区分，`??` 会吞掉 null。
+ * - 标量列（requirements/status/selectedOption）省略时仍会写成默认值（''/draft/null），
+ *   当前调用方（PlanningWorkspace.save）总是整包提交，暂不打中；新增调用方勿依赖「省略=保留」。
+ */
 export interface SavePlanningIdeaInput {
   projectId: string;
   idea: string;

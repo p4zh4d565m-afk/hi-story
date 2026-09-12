@@ -9,7 +9,14 @@ import type { Chapter, Project } from '../../src/renderer/types';
 // 使用真实布局和 TipTap，仅用内存存储替代数据库，避免接触用户小说。
 const noop = () => {};
 const initial = { id: 'a', projectId: 'project', title: '第一章', content: '<p>原文</p>', wordCount: 2, status: 'draft' } as Chapter;
-let control: { edit: (html: string) => void; select: (id: string) => void };
+let control: {
+  edit: (html: string) => void;
+  select: (id: string) => void;
+  /** 模拟 App.onChapterAccepted 的「只 setChapters 不 setContent」——M3 初版 bug 行为 */
+  acceptRevisionWithoutSetContent: (id: string, html: string) => void;
+  /** 模拟修复后：setChapters + 当前章 setContent */
+  acceptRevisionWithSetContent: (id: string, html: string) => void;
+};
 let writes: Array<{ id: string; content: string }>;
 let stored: Map<string, string>;
 let saveDelay = 0;
@@ -21,7 +28,19 @@ function Fixture() {
   const [activeId, setActiveId] = useState('a');
   const [saving, setSaving] = useState(false);
   const editorRef = useRef<RichEditorHandle>(null);
-  control = { edit: html => editorRef.current!.setContent(html), select: setActiveId };
+  control = {
+    edit: html => editorRef.current!.setContent(html),
+    select: setActiveId,
+    acceptRevisionWithoutSetContent: (id, html) => {
+      // M3 初版 bug：只更新 chapters state，不主动 setContent。同 key 下 TipTap 仍是旧正文。
+      setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content: html } : ch));
+    },
+    acceptRevisionWithSetContent: (id, html) => {
+      // M3 修复后：setChapters + 当前打开章节主动 setContent（与 App.tsx onChapterAccepted 一致）
+      setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content: html } : ch));
+      if (activeId === id) editorRef.current!.setContent(html);
+    },
+  };
   const save = async (id: string, content: string) => {
     writes.push({ id, content });
     setSaving(true);
@@ -180,6 +199,17 @@ const cases: Array<[string, () => Promise<void>]> = [
     await until(() => stored.get('a') === '<p>数据库尚未保存的正文</p>');
     await until(() => Boolean(document.querySelector<HTMLButtonElement>('button[title="已保存"]')));
     assert(writes.length === 2, '重试应仅新增一次保存请求');
+  }],
+  ['M3 只 setChapters 不 setContent 时当前章正文不刷新（锁定回归）', async () => {
+    // 同 key 下 chapters state 变了，但 TipTap 不重渲染 → 编辑器仍是旧正文
+    flushSync(() => control.acceptRevisionWithoutSetContent('a', '<p>审稿修订后的新正文</p>'));
+    await tick();
+    assert(text() === '原文', '只更新 chapters 时编辑器被错误刷新了（不该如此）');
+  }],
+  ['M3 修复后：setChapters + 当前章 setContent 才刷新正文', async () => {
+    flushSync(() => control.acceptRevisionWithSetContent('a', '<p>审稿修订后的新正文</p>'));
+    await tick();
+    assert(text() === '审稿修订后的新正文', '接受修订后编辑器未刷新为新正文');
   }],
 ];
 
