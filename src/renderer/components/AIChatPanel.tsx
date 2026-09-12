@@ -1314,7 +1314,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             onKeyDown={handleKeyDown}
             placeholder={savedConfigs.length > 0 ? '和 AI 讨论你的小说...' : '请先点击 ⚙️ 添加 AI 配置...'}
             rows={2}
-            className="flex-1 resize-none rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white
+            className="flex-1 resize-y min-h-[2.5rem] max-h-40 rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-white
                        focus:outline-none focus:border-accent placeholder-gray-600"
             disabled={isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
           />

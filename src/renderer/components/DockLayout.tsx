@@ -1,4 +1,6 @@
 import React, { useState, useRef, useCallback, useEffect } from 'react';
+import { clampFloatingRect } from '../workspace/floating-rect';
+import { PANEL_WIDTHS_KEY, parsePanelWidths, serializePanelWidths } from '../workspace/panel-widths';
 
 // ============================================================
 // 可拖拽面板布局
@@ -99,9 +101,12 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   workspaceMode, onSetWorkspaceMode,
   fontSizes, onSetFontSize,
 }) => {
-  const [sidebarWidth, setSidebarWidth] = useState(280);
-  const [aiChatWidth, setAiChatWidth] = useState(380);
-  const [inspWidth, setInspWidth] = useState(360);
+  const initialWidths = parsePanelWidths(
+    typeof localStorage === 'undefined' ? null : localStorage.getItem(PANEL_WIDTHS_KEY),
+  );
+  const [sidebarWidth, setSidebarWidth] = useState(initialWidths.sidebar);
+  const [aiChatWidth, setAiChatWidth] = useState(initialWidths.aiChat);
+  const [inspWidth, setInspWidth] = useState(initialWidths.insp);
 
   // 当前缩放值（通过 fontSize 实现，避免 CSS zoom 干扰输入框）
   const panelsZoom = PANEL_ZOOM_VALUES[fontSizes.panels];
@@ -172,15 +177,16 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
       const setRect = d.panel === 'mindmap' ? setMindmapRect : d.panel === 'material' ? setMaterialRect : d.panel === 'outline' ? setOutlineRect : setForeshadowingRect;
 
+      const vp = { width: window.innerWidth, height: window.innerHeight };
       if (d.type === 'move') {
-        setRect({ x: r.x + dx, y: r.y + dy, w: r.w, h: r.h });
+        setRect(clampFloatingRect({ x: r.x + dx, y: r.y + dy, w: r.w, h: r.h }, vp, MIN_FLOAT_W, MIN_FLOAT_H));
       } else {
         let { x, y, w, h } = r;
         if (d.edge.includes('e')) w = Math.max(MIN_FLOAT_W, r.w + dx);
         if (d.edge.includes('w')) { const nw = Math.max(MIN_FLOAT_W, r.w - dx); x = r.x + r.w - nw; w = nw; }
         if (d.edge.includes('s')) h = Math.max(MIN_FLOAT_H, r.h + dy);
         if (d.edge.includes('n')) { const nh = Math.max(MIN_FLOAT_H, r.h - dy); y = r.y + r.h - nh; h = nh; }
-        setRect({ x, y, w, h });
+        setRect(clampFloatingRect({ x, y, w, h }, vp, MIN_FLOAT_W, MIN_FLOAT_H));
       }
     };
 
@@ -198,6 +204,28 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
     };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(PANEL_WIDTHS_KEY, serializePanelWidths({
+        sidebar: sidebarWidth, aiChat: aiChatWidth, insp: inspWidth,
+      }));
+    } catch { /* 隐私模式等写失败时保持内存宽度 */ }
+  }, [sidebarWidth, aiChatWidth, inspWidth]);
+
+  useEffect(() => {
+    const onResize = () => {
+      const vp = { width: window.innerWidth, height: window.innerHeight };
+      const clamp = (rect: { x: number; y: number; w: number; h: number }) =>
+        clampFloatingRect(rect, vp, MIN_FLOAT_W, MIN_FLOAT_H);
+      setMindmapRect(clamp);
+      setMaterialRect(clamp);
+      setOutlineRect(clamp);
+      setForeshadowingRect(clamp);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, []);
 
   // ===== Draggable resize =====
@@ -286,7 +314,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       {/* ===== MAIN WRITING AREA ===== */}
       <main className="flex-1 min-w-0 flex flex-col">
         {/* Top toolbar (UI domain zoom) */}
-        <div className="flex items-center gap-1 px-2 py-1 bg-editor-800 border-b border-editor-700"
+        <div className="flex items-center gap-1 px-2 py-1 bg-editor-800 border-b border-editor-700 flex-wrap"
           style={{ fontSize: `${uiZoom * 100}%` }}>
           {/* Sidebar toggle */}
           <button onClick={onToggleSidebar}

@@ -1,0 +1,596 @@
+# Dockable Workspace 与主题系统：代码审查 + 实施方案
+
+> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0 已实现并验证（单测 12/12、写作 UI 12/12、vite build 通过），计划 checkbox 已勾选；仓库尚未 commit。P1 尚未开始。**
+>
+> 日期：2026-09-12
+>
+> 本文档可以修改，不是不可变合同。实施中若与真实代码冲突，先改 Spec 再编码。P0 计划：`docs/superpowers/plans/2026-09-12-workspace-p0-layout-bleed.md`。
+
+## 一句话目标
+
+在不重写 UI、不碰 SQLite 业务数据、不拆掉写作区挂载与 AI 流状态的前提下，把现有「半固定 + 半悬浮」工作区升级为可停靠、可调尺寸、可折叠、可恢复的结构化布局，并补上统一的 Light / Dark 主题令牌。
+
+## 范围边界
+
+本轮设计覆盖用户提出的四块需求，但**禁止一次做完**：
+
+| 纳入 | 明确不做（本期或延后） |
+|------|------------------------|
+| 结构化停靠槽位（左 / 右 / 下 / 中央辅助） | VS Code 级任意嵌套拆分、自由悬浮覆盖层作为主模式 |
+| 相邻面板 Splitter + min/max | 把确认类弹窗改成可停靠面板 |
+| 辅助面板折叠 | 工作区预设（写作 / 策划 / AI / 审稿）— 基础稳定后再做 |
+| 布局持久化（位置、尺寸、折叠、比例） | 把布局写入 SQLite / 项目库 |
+| 窗口缩放时的溢出与挤压修复 | 原生标题栏 / 无边框窗口改造 |
+| 长文本区跟随父级或可调高度 | 重写 TipTap 编辑器 |
+| CSS 变量 + Light/Dark 两套令牌 | 一次扫完所有硬编码颜色（分批迁移） |
+
+硬约束（来自现有生产路径，实施不得破坏）：
+
+1. `WritingArea` 在策划 / 写作切换时必须保持挂载（`hidden` 而非卸载），否则待保存正文和 2 秒防抖会丢。
+2. `AIWritePanel` / `AIReviewPanel` / `AIPolishPanel` 当前用 `display:none` 保活，关闭面板不能卸载，否则进行中的流会断。
+3. 不新增数据库迁移；不改章节保存、决策账本、策划 IPC。
+4. 真实 UI 回归继续走 `node tests/ui/run-writing-workspace.cjs` 等现有脚本。
+
+---
+
+## 0. 现状总览（审查结论）
+
+HiStower 已经有一个名叫 `DockLayout` 的布局壳，但**不是**可停靠系统。它是：
+
+- 左侧固定槽：侧栏（可关、可横向拖宽）
+- 中央固定槽：策划 / 写作（写作区用 `hidden` 保活）
+- 中央右侧槽：AI 对话（可关、可最小化、可横向拖宽）
+- 最右侧一排：灵感 / 参考 / 起名（可关，宽度状态互相绑死）
+- 其余工具：绝对定位的浮动窗（大纲、素材、伏笔、导图、写章、审稿、润色）
+
+用户痛点与代码一一对应：多数工具不在结构布局里，而是盖在编辑器上；宽度重启即丢；多开右侧面板会把正文挤没；没有主题切换。
+
+---
+
+## 1. 当前相关 UI 架构是如何实现的？
+
+### 1.1 所有权
+
+`App.tsx` 是唯一的工作区编排器：
+
+- 拥有全部业务状态（章节、人物、策划、AI 上下文）。
+- 拥有 `panelState`（各面板开关、AI 参与级别）。
+- 把子树作为 `ReactNode` 注入 `DockLayout`。
+- 面板开关只活在 React state，**刷新丢失**。唯一已持久化的 UI 偏好是字号：`localStorage['hi-story-font-sizes']`。
+
+`DockLayout.tsx`（约 625 行）负责几何：侧栏/AI/灵感宽度、浮动窗矩形、顶栏按钮、字体缩放。它**不**管理业务数据。
+
+`Layout.tsx`、`MainArea.tsx`、`ContextPanel.tsx` 是更早的三栏布局，**当前无引用**，属于死代码。人物编辑已改走 `CharacterEditDialog` 模态框。
+
+### 1.2 面板三类形态
+
+| 形态 | 组件 | 行为 |
+|------|------|------|
+| 结构停靠（假 docking） | Sidebar、WritingArea / PlanningWorkspace、AIChatPanel、Inspiration / Reference / NameGenerator | 在 Flex 行里占固定像素宽 |
+| 浮动窗 | MindMap、MaterialPanel、OutlinePanel、ForeshadowingPanel | `fixed` 层 + 绝对定位矩形，标题栏拖动，8 向缩放 |
+| 自管浮动窗 | AIWritePanel、AIReviewPanel、AIPolishPanel | 组件内部自己做 position/size，DockLayout 只控制显示 |
+| 模态 / 对话框 | CreativeDecisionPanel、CharacterEditDialog、ImportDialog、ObsidianPanel、DatabaseBrowser、ObsidianImportPanel | `fixed inset-0` 遮罩，不参与工作区 |
+
+顶栏是全局开关集合，按钮很多，窄窗口会挤在一行。
+
+### 1.3 关键实现细节（必须保留）
+
+```438:440:src/renderer/components/DockLayout.tsx
+            <div className="h-full" hidden={workspaceMode !== 'writing'}>{writingArea}</div>
+            {workspaceMode === 'planning' && planningArea}
+```
+
+```582:595:src/renderer/components/DockLayout.tsx
+      <div style={{ display: panelState.aiWriteOpen ? 'block' : 'none' }}>
+        {aiWritePanel}
+      </div>
+      ...
+```
+
+任何新布局必须继续「写作区保活 + AI 写章/审稿/润色保活」。停靠库若默认卸载不可见图，不能直接套。
+
+---
+
+## 2. 当前布局使用 Flex、Grid、绝对定位还是其他方案？
+
+以 **Flex 为主，绝对定位为辅，Grid 仅局部**：
+
+| 区域 | 方案 |
+|------|------|
+| 根工作区 `DockLayout` | `h-full flex` 横向 Flex |
+| 主列 | `flex-1 min-w-0 flex flex-col` |
+| 写作区 | `h-full flex flex-col`；编辑器容器 `flex-1 overflow-hidden` |
+| RichEditor | 内部再套 `h-full flex flex-col`，正文 `flex-1 overflow-y-auto` |
+| 策划页 | 外层 `h-full overflow-y-auto`；内层 `max-w-6xl mx-auto`；局部 `grid`（想法区 / 阶段字段） |
+| 施工卡 | `grid grid-cols-1 lg:grid-cols-2` |
+| 浮动工具 | `fixed inset-0` + `absolute` + 像素 `left/top/width/height` |
+| 分隔条 | 手写 `w-1.5 cursor-col-resize`，**没有**纵向 splitter |
+| Electron 窗 | 默认 1400×900，`minWidth: 1000`，`minHeight: 600` |
+
+没有 CSS Grid 工作区、没有容器查询、没有 `react-resizable-panels` / Allotment 一类库。`package.json` 里布局相关依赖为零。
+
+---
+
+## 3. 哪些组件存在固定尺寸？
+
+### 3.1 结构宽度（内存，不持久）
+
+| 值 | 默认 | 限制 | 位置 |
+|----|------|------|------|
+| 侧栏 | 280 | 200–420 | `DockLayout` |
+| AI 对话 | 380 | 300–700 | `DockLayout` |
+| 灵感/参考/起名 | 360 | 300–600 | **三个面板共用同一个 `inspWidth`** |
+| 人物卡 / 世界观卡 | 360 | 拖拽改宽 | `CharacterCard` / `WorldEntryCard`（人物卡已不在主路径） |
+| 旧 `Layout.tsx` | 侧栏 280 / 上下文 320 | 220–400 / 240–600 | 未使用 |
+
+### 3.2 浮动窗矩形
+
+打开时按 `window.innerWidth/Height` 算一次，之后不跟随窗口缩放：
+
+- 导图：约 500 × (窗口高 − 96)
+- 素材 / 大纲 / 伏笔：接近全屏的大矩形
+- 写章：680×500，缩放 480–1400 × 300–900
+- 审稿 / 润色：同类右下角缩放
+
+最小浮动：300×200。
+
+### 3.3 文本区固定高度
+
+| 区域 | 现状 | 问题 |
+|------|------|------|
+| 正文 RichEditor | 跟随父级 `flex-1`，文档 `min-h-[200px]` | 主路径合理；父级被挤小时仍可滚 |
+| AI 对话输入 | `rows={2}` + `resize-none` | 长 prompt 无法拉高 |
+| 润色对比 | `min-h-[340px] max-h-[340px]` | 等于写死高度 |
+| 策划想法 | `rows={7}` + `resize-y` | 已可拉，但不跟面板 |
+| 策划总纲/卷纲/章纲 | 多为 `rows={2}` | 长字段局促 |
+| 决策账本 textarea | `rows={2}` + 部分 `resize-y` | 模态内可接受 |
+| 世界观内容 | `rows` 随面板宽度估算 | 宽了行数变多，语义奇怪 |
+
+### 3.4 其它固定像素
+
+- 顶栏按钮组无换行策略（工具栏本身 `flex`，按钮持续增加）。
+- 施工卡 `mx-6` 固定边距。
+- 导入/资料库等对话框 `w-[600px]` / `w-[800px]`。
+- 决策账本 `max-w-3xl max-h-[90vh]`。
+- Electron `minWidth: 1000` 挡不住**内部**多面板叠加溢出。
+
+### 3.5 审查时发现的布局缺陷（应在早期阶段修）
+
+1. **灵感 / 参考 / 起名共用 `inspWidth`**，拖一个改三个；同时打开则横向并排，轻松吃掉 900px+。
+2. **没有纵向分割**，不能把 AI 对话放到编辑器下方。
+3. **浮动窗不随窗口 resize 夹紧**，最大化后再缩小可能把面板留在视口外。
+4. **顶栏按钮溢出**，1000px 宽 + 侧栏 + AI 时，开关会被裁切且不可滚动。
+5. `useResize` 写在组件体内，每次宽度变化重建监听；能用，但不是稳定的 splitter 抽象。
+
+---
+
+## 4. 当前是否已经存在 Panel / Layout 抽象？
+
+**有壳，没有模型。**
+
+已有：
+
+- `DockLayout`：硬编码槽位 + 手写 resize + 手写浮动窗。
+- `panelState`：布尔开关，不是布局树。
+- 各功能组件：自己画标题栏 / 关闭按钮 / 内部滚动。
+
+没有：
+
+- 面板 ID 注册表（`ai-chat` / `outline` / …）
+- 槽位（slot）或布局树（layout tree）
+- Drop Zone / Dock Preview
+- 统一 `PanelChrome`（标题、折叠、拖动手柄）
+- 持久化用的布局 schema
+- 面板与几何解耦（AI 写章把业务和窗口几何写在同一个文件）
+
+渐进改造的切入点正是：**先抽出布局模型，再改 `DockLayout` 的渲染，不改面板内部业务。**
+
+---
+
+## 5–6. 引入 Docking 是否需要第三方库？最适合的方案？
+
+### 三种路线
+
+**A. 完整 Docking 库（dockview / flexlayout-react / rc-dock）**
+
+- 优点：拖放、预览、标签页、嵌套拆分一次齐。
+- 缺点：默认卸载隐藏面板，和写作区 / AI 流保活冲突；样式与现有 Tailwind 主题两套；学习与回归成本高；一次换壳风险大。
+- 结论：**一期不上。** 若二期槽位模型不够用，再评估 dockview（TypeScript 优先），且必须配置 keep-alive。
+
+**B. 只引入 Splitter 库 + 自研槽位（推荐）**
+
+- 引入 `react-resizable-panels`（约 10kb，支持 collapse、`autoSaveId` 持久化比例）。
+- 自研 4 个固定槽：`left` / `center` / `right` / `bottom`。
+- 槽内多面板用标签页，不支持无限嵌套。
+- 拖动面板标题 → 四边/中央辅助 Drop Zone 高亮 → 放入目标槽。
+- 优点：符合「结构化停靠」；可渐进替换现有 Flex；写作区永远在 `center` 且不卸载。
+- 缺点：达不到 VS Code 那种任意拆分；要自己做拖放预览。
+
+**C. 零新依赖，继续加手写 splitter**
+
+- 优点：无新包。
+- 缺点：纵向分割、持久化、多槽比例、窗口变小时的 min 约束都要自写；`DockLayout` 会继续膨胀。
+- 结论：只适合「先持久化现有宽度」的预热补丁，不适合作为目标架构。
+
+**推荐：B。** Allotment 是可替换的 splitter（VS Code 风格），但 `react-resizable-panels` 更轻、collapse API 更贴「可折叠面板」。
+
+---
+
+## 7. 是否能够在现有结构上渐进式改造？
+
+**能，而且必须。** 路径：
+
+```
+现有 DockLayout 渲染
+    ↓ ① 抽出 WorkspaceLayoutModel（纯数据）+ localStorage
+    ↓ ② 用 PanelGroup 替换三条横向 splitter，视觉不变
+    ↓ ③ 浮动窗改为「仍可打开，但可拖进槽」
+    ↓ ④ 去掉浮动作为默认形态（导图等可保留「弹出到浮动」作为高级动作，非默认）
+    ↓ ⑤ 主题令牌并行，不挡布局
+```
+
+每一步用户都能用；任一步可单独回归写作 UI。禁止先删 `DockLayout` 再重写。
+
+组件侧约定：
+
+- 功能面板只渲染**内容**，外壳（标题、拖动手柄、关闭、折叠）由 `PanelChrome` 提供。
+- 迁移期允许旧浮动窗与新槽位并存：未入槽的面板仍用现在的浮动实现。
+
+---
+
+## 8. 哪些模块应该支持 Docking？
+
+可停靠 = 可在 `left | right | bottom` 之间移动，槽内以标签页共存。
+
+| 面板 | 默认槽 | 说明 |
+|------|--------|------|
+| 侧栏（项目/章节/人物/世界观） | left | 可停到 right；不进 bottom（列表过矮难用） |
+| AI 对话 | right | 最需要和编辑器并排或放到下方 |
+| 灵感 / 参考 / 起名 | right | 改为标签页，禁止再横向叠三个 |
+| 大纲 | right 或 bottom | 现在是挡编辑器的大浮窗 |
+| 素材 | right | 同上 |
+| 伏笔 / 钩子追踪 | right 或 bottom | 同上 |
+| AI 写章 | right 或 bottom | 几何从组件内抽到布局；**实例保活** |
+| AI 审稿 | right 或 bottom | 同上 |
+| 润色 | right | 需要对照正文，默认右侧 |
+| Obsidian 只读浏览 | right | 现在是模态，可改为可停靠；导入向导仍用模态 |
+| 角色思维导图 | bottom 或 right | 需要较大画布；允许「弹出浮动」作为例外 |
+
+中央 `center` 只放写作区或策划页，**不能被其它模块占领**。其它模块拖到中央时，实际进入「中央下方 `bottom`」或「覆盖为标签」——推荐进入 `bottom`，避免正文变成其中一个 tab。
+
+---
+
+## 9. 哪些模块只应该 Resize，而不应该 Dock？
+
+| 模块 | 原因 |
+|------|------|
+| 正文编辑器 / 策划工作台 | 主工作面，必须占 `center` |
+| 顶栏（策划/写作切换、字号、面板开关） | 应用铬，不是内容面板 |
+| 写作目标条、状态栏 | 编辑器附属 |
+| 章节标签条、施工卡 | 属于写作区内部，随编辑器 |
+| 创作决策确认账本 | 确认事务 + 请求中禁止关闭，必须是模态 |
+| 新建项目 / 导入小说 / 人物编辑 / 关系编辑 | 任务型对话框 |
+| Obsidian 导入向导 | 多步提交，已有冻结控件语义 |
+| 资料库浏览器 | 低频调试，保持模态即可 |
+| Toast / 右键菜单 | 瞬态 |
+
+这些区域内部仍可调高度（见第 3 节），只是不能拖到别的槽。
+
+---
+
+## 10. Layout Persistence 应该存在哪里？
+
+**渲染进程 `localStorage`，键名 `hi-story-workspace-v1`，不要进 SQLite。**
+
+理由：
+
+- 布局是应用铬，不是小说数据；切项目不应走 IPC。
+- 现有字号、AI 配置、写作目标已在 `localStorage`，Electron 会写到 `userData`。
+- SQLite 会逼出迁移、仓库、失败回退，和「UI 几何」不成比例。
+
+建议 schema（版本字段必带，坏数据回退默认布局）：
+
+```ts
+interface WorkspaceLayoutV1 {
+  version: 1;
+  slots: {
+    left: { size: number; collapsed: boolean; panelIds: string[]; activeId: string | null };
+    right: { size: number; collapsed: boolean; panelIds: string[]; activeId: string | null };
+    bottom: { size: number; collapsed: boolean; panelIds: string[]; activeId: string | null };
+  };
+  openPanelIds: string[];          // 允许关闭（从槽中移除但仍记尺寸）
+  aiLevel: 'off' | 'assist';
+  floating?: Record<string, { x: number; y: number; w: number; h: number }>; // 仅导图等例外
+}
+```
+
+比例由 `react-resizable-panels` 的 `autoSaveId` 另存一份亦可，但**面板归属**必须由我们的 JSON 管，不能只靠库。
+
+持久化粒度：
+
+- 应用级一份（所有项目共用）。用户换项目通常希望同一套工作区。
+- **不做**每项目布局，除非后续明确要。
+- Electron 窗口位置/大小：主进程另存（`window.bounds`），与面板布局分开，一期可先不做。
+
+失败策略：JSON 坏了 → 静默回默认，不弹错误、不写库。
+
+工作区预设（延后）：在同一 schema 上存 4 份命名快照。默认布局可内置：
+
+- 写作：left=侧栏，center=编辑器，right=关或 AI
+- 策划：left=侧栏，center=策划，right 关
+- AI 讨论：left=侧栏，right=AI 对话
+- 审查：right 或 bottom=审稿 + 伏笔
+
+一期只提供「恢复默认」，不提供命名预设 UI。
+
+---
+
+## 11. Theme System 当前基础如何？
+
+### 已有
+
+`tailwind.config.js` 已有一套**仅暗色**的语义色：
+
+- `sidebar` / `editor` / `aichat` / `context` / `inspiration` / `float` 各 900–600 + accent
+- 全局 `accent` / `accent-blue` / `accent-warm`
+- 自定义暖灰 `gray.50–950`
+
+设计意图明确（「林间稿纸」护眼暖绿），所以不是「完全没有设计系统」，而是 **token 只覆盖 Dark，且只活在 Tailwind 配置里**。
+
+### 没有
+
+- `data-theme` / `class="dark"` 切换
+- CSS 变量
+- Light 色板
+- 运行时主题状态
+- Tailwind `darkMode` 配置（文件中未开）
+
+`index.css` 几乎只有滚动条、ProseMirror 缩进、选区色、编辑器字号。滚动条和 `::selection` 仍是硬编码 hex。
+
+### 硬编码情况
+
+- 无 `--color-*` CSS 变量。
+- 大量 `bg-gray-*` / `text-white` / `border-gray-*` 与语义色混用。
+- 写章 / 审稿 / 润色大量 `bg-gray-950`，绕开了 `aichat` / `editor` token。
+- `RichEditor` 使用 `prose-invert`（暗色散文），Light 下会反。
+- `MindMap` Canvas 直接画 hex，主题切换不会自动跟着走。
+- 语义色本身也是 Tailwind 编译期常量，不能运行时换 Light。
+
+### 主题改造原则
+
+1. 把现有 Dark 色板**原样**变成 CSS 变量默认值，视觉一期不变。
+2. `tailwind.config.js` 的颜色改为 `rgb(var(--ui-editor-900) / <alpha-value>)` 或 `var(--ui-editor-900)`。
+3. `html[data-theme="light"]` 覆盖同一组变量。
+4. 先换壳（DockLayout、侧栏、编辑器、AI 对话），再扫功能面板，最后才是 Canvas / 图表。
+5. 对比度：Light 正文不低于深灰上浅纸；Dark 保持现有暖绿，不改成纯黑白。
+
+不建议用 Tailwind 默认 `dark:` 前缀铺一遍 —— 现有 class 已经是「暗色语义名」，再加 `dark:` 会双倍 class。CSS 变量换值更适合「同一套 class 两套主题」。
+
+---
+
+## 12. 这些修改是否会影响现有业务逻辑、SQLite 数据或编辑器状态？
+
+| 层 | 影响 |
+|----|------|
+| SQLite / 迁移 | **无。** 布局和主题不进库。 |
+| IPC / Repository | **无。** |
+| 章节保存 / TipTap | **有风险，但可隔离。** 只要 `WritingArea` 继续按 `activeChapter.id` 挂载、策划切换继续 `hidden`、不要把编辑器放进会卸载的 tab，保存链路不变。 |
+| AI 流 | **有风险。** 写章/审稿/润色必须保活；停靠后只改外壳几何。切槽不得 `key=` 重置面板。 |
+| 决策账本 | 保持模态。不要并进 docking，避免「请求中禁止关闭」与面板关闭按钮冲突。 |
+| 策划工作台 | 仍在 `center`。只修内部 textarea 高度与小窗溢出。 |
+| 项目加载守卫 | 不改。 |
+
+回归最低集：`node tests/ui/run-writing-workspace.cjs`（保活 + 保存）、决策账本 UI、策划 Obsidian 导入 UI。布局单测以纯函数（slot 移动、非法停靠拒绝、坏 JSON 回退）为主。
+
+---
+
+## 推荐技术方案
+
+### 布局模型
+
+固定四槽，不允许任意嵌套：
+
+```
+┌─────────── Toolbar（不可停靠）────────────┐
+│ left │     center（写作/策划）    │ right │
+│      │────────────────────────────│      │
+│      │         bottom             │      │
+└──────────────────────────────────────────┘
+```
+
+- 槽之间：`react-resizable-panels` 的纵向 + 横向 Group。
+- 槽内部：标签页；同一槽多面板不并排占宽（修复当前灵感/参考/起名叠宽）。
+- 拖放：面板标题 `pointerdown` → 幽灵 + 四边 Drop Zone；释放后更新 `WorkspaceLayoutV1`。
+- 折叠：槽 `collapsed` 后显示一条 24px 边轨，点击恢复。
+- 中央永不折叠。
+
+### 默认布局（与现在尽量接近，降低迁移惊吓）
+
+- left: 侧栏，280
+- center: 写作或策划
+- right: 空；打开 AI 对话时进入 right
+- bottom: 空
+- 大纲 / 素材 / 伏笔 / 写章 / 审稿 / 润色 / 导图：从「默认浮动」改为「默认进入 right 或 bottom 的标签」
+- 导图额外提供「弹出浮动」，浮动几何仍可 persist
+
+### 主题
+
+- `src/renderer/styles/tokens.css`：`--ui-bg`、`--ui-surface`、`--ui-editor`、`--ui-text`、`--ui-text-muted`、`--ui-border`、`--ui-divider`、`--ui-input`、`--ui-hover`、`--ui-active`、`--ui-selected`、`--ui-accent`、`--ui-disabled`、`--ui-warning`、`--ui-error`、`--ui-success`，以及现有 sidebar/editor/aichat 色阶。
+- `document.documentElement.dataset.theme = 'dark' | 'light'`
+- 顶栏增加一个切换，存 `localStorage['hi-story-theme']`
+- 跟随系统：一期不做，避免和手动选择打架。
+
+### 长文本
+
+- 主编辑器：继续填满 `center`。
+- AI 输入：`resize-y`，min 2 行，max 占对话面板 40%。
+- 润色：取消 340px 双锁，改为 `flex-1 min-h-[160px]`。
+- 策划：保持 `resize-y`，大字段 min-h 提到 6 行。
+
+---
+
+## 涉及文件
+
+### 新增
+
+| 文件 | 职责 |
+|------|------|
+| `src/renderer/workspace/layout-model.ts` | 类型、默认布局、移动面板、校验 |
+| `src/renderer/workspace/layout-storage.ts` | localStorage 读写、坏数据回退 |
+| `src/renderer/workspace/useWorkspaceLayout.ts` | React hook |
+| `src/renderer/workspace/PanelChrome.tsx` | 统一标题栏 / 拖动 / 关闭 / 折叠 |
+| `src/renderer/workspace/DropZones.tsx` | 拖动时的停靠预览 |
+| `src/renderer/workspace/SlotTabs.tsx` | 槽内标签 |
+| `src/renderer/styles/tokens.css` | 设计令牌 |
+| `src/renderer/theme/theme.ts` | 读写主题 |
+| `tests/unit/workspace-layout.test.ts` | 纯函数测试 |
+
+### 大改（行为向后兼容）
+
+| 文件 | 改什么 |
+|------|--------|
+| `src/renderer/components/DockLayout.tsx` | 改为消费 layout model + PanelGroup |
+| `src/renderer/App.tsx` | panelState 迁到 layout hook；顶栏加主题切换 |
+| `tailwind.config.js` | 颜色改指向 CSS 变量 |
+| `src/renderer/styles/index.css` | 引入 tokens，滚动条/选区用变量 |
+| `src/renderer/index.html` | 可在载入前用一小段脚本读 theme，防闪白 |
+
+### 小改（外壳，不改业务）
+
+`AIWritePanel.tsx` / `AIReviewPanel.tsx` / `AIPolishPanel.tsx`：剥离内部 `panelPos/panelSize`，改为填满父级。
+`AIChatPanel.tsx`：输入区可拉高。
+`WritingArea.tsx` / `RichEditor.tsx`：Light 下去掉死写 `prose-invert`，改为 token。
+`PlanningWorkspace.tsx`：小窗溢出、textarea min-height。
+`MindMap.tsx`：二期再接 Canvas 色（一期可仍用暗色画布）。
+
+### 不动
+
+主进程、preload、所有 `db/*`、IPC、保存链路、决策账本事务、策划生成。
+`Layout.tsx` / `MainArea.tsx` / `ContextPanel.tsx`：一期可标废弃，不顺手大删，除非确认无测试引用。
+
+### 测试
+
+- 单测：槽位移动、拒绝停到 center、折叠、坏 JSON、主题读写。
+- UI：扩展 `tests/ui/writing-workspace.tsx`：侧栏折叠后写作区仍挂载；切策划再切回正文还在；关写章面板后再打开流状态仍在（若该测试已覆盖保活，保持断言）。
+- 不要求新的 Electron 窗口几何测试除非手动验收清单。
+
+---
+
+## 实施阶段与优先级
+
+按风险从低到高。每一阶段单独可交付、可回归。
+
+### P0 — 响应式与现有 splitter 止血（不引入 docking）
+
+**优先级：最高。改动小，立刻缓解「空间无法用」。**
+
+1. 灵感 / 参考 / 起名改为互斥或同槽标签（哪怕先做成「同时只显示一个」）。
+2. 顶栏溢出：`flex-wrap` 或「更多」菜单。
+3. 浮动窗 `resize` 时夹紧到视口。
+4. AI 输入 `resize-y`；润色区解除 340px 锁死。
+5. 侧栏 / AI / 右栏宽度写入 `localStorage`（现有三个数字即可，不必等完整 model）。
+
+验收：1000×600 可操作；1400×900 与最大化编辑器能吃到多出来的宽高。
+
+### P1 — 主题令牌 + Light/Dark 切换
+
+**优先级：高，且与布局正交，可并行。**
+
+1. `tokens.css` + Dark 默认等于今天的色。
+2. Light 色板（暖纸 + 墨字，不要纯白刺眼）。
+3. Tailwind 改变量；顶栏切换。
+4. 迁移 DockLayout / Sidebar / WritingArea / AIChat 的壳。
+5. `prose-invert` 按主题切换。
+
+验收：切换后主写作路径对比度可读；不要求所有面板第一天完美（写章灰底可第二批）。
+
+### P2 — Splitter 库替换 + 折叠
+
+**优先级：高。**
+
+1. 加 `react-resizable-panels`。
+2. left | center | right 可拖比例，带 minSize。
+3. 增加 bottom 槽（可 0 高度 / collapsed）。
+4. 侧栏、AI、右侧辅助可折叠成边轨。
+5. 比例持久化。
+
+验收：拖分隔条改编辑器占比；折叠 AI 后编辑器立刻变宽；重启恢复。
+
+### P3 — 结构化停靠（拖放到槽）
+
+**优先级：中高，依赖 P2 的槽。**
+
+1. `WorkspaceLayoutV1` 成为唯一布局源，替换 `panelState` 布尔森林。
+2. `PanelChrome` + Drop Zone 预览。
+3. 把大纲 / 素材 / 伏笔 / 写章 / 审稿 / 润色从默认浮动改为入槽。
+4. 保活：center 的 WritingArea、display 隐藏的 AI 三面板。
+5. 导图允许浮动例外。
+
+验收：把「审稿」拖到下方，编辑器变矮、审稿变高；刷新后仍在下方；切策划再回来正文未丢。
+
+### P4 — 工作区预设
+
+**优先级：低，用户已标明非第一优先。**
+
+内置 4 套快照 + 「恢复默认」。自定义命名预设可再后。
+
+---
+
+## 改动范围估计
+
+| 阶段 | 量级 | 风险 |
+|------|------|------|
+| P0 | S：DockLayout + 2–3 个面板 | 低。可能误伤右栏同时开三面板的用户（应视为 bugfix）。 |
+| P1 | M：css + tailwind + 高频组件 | 中。漏改硬编码会在 Light 下「暗色块」。分批可接受。 |
+| P2 | M：DockLayout 重排 | 中。minSize 与窗口过窄时的策略要手测。 |
+| P3 | L：新 workspace 模块 + 多个面板去浮动化 | 高。保活与拖放是主风险。必须写作 UI 回归。 |
+| P4 | S | 低。 |
+
+整体不碰 SQLite。预计不改 `package.json` 以外的主进程依赖；P2 只加一条 renderer 依赖。
+
+---
+
+## 风险
+
+1. **卸载写作区** → 丢稿。缓解：center 只改 CSS 几何，禁止 tab 化写作区。
+2. **卸载 AI 写章/审稿/润色** → 流停不住或状态清零。缓解：关闭 = 从槽隐藏但仍 mount（与今天 `display:none` 同构）。
+3. **停靠库默认行为** → 不用完整 docking 库。
+4. **Light 主题对比度** → 先做壳，Canvas/图表第二批；提供一键回 Dark。
+5. **布局 JSON 升级** → `version` 字段，未知版本回默认。
+6. **测试脆弱** → 写作回归以「仍挂载 / 仍保存」为断言，不要对像素坐标写死。
+7. **DockLayout 继续膨胀** → P3 起把模型文件拆出，组件只负责渲染。
+
+---
+
+## 手动验收清单（开发开始后）
+
+- [ ] 1000×600：侧栏可关，顶栏可点到写章/AI，无遮挡死区
+- [ ] 最大化：编辑器变高变宽，不是中间一条
+- [ ] 拖 AI 对话到下方：编辑器在上、对话在下，分隔条可拉
+- [ ] 折叠侧栏再打开：宽度恢复
+- [ ] 重启应用：槽位、尺寸、折叠、主题与上次一致
+- [ ] 策划 ↔ 写作：未保存正文仍在，自动保存仍触发
+- [ ] 写章生成中把面板拖到另一槽：流继续，停止键仍可用
+- [ ] Light / Dark 切换：侧栏、编辑器、AI 对话、顶栏一致；无需重启
+- [ ] 决策账本仍是模态，请求中关不掉
+- [ ] 同时打开灵感+参考：以标签切换，而不是并排吃掉正文
+
+---
+
+## 请确认的决策（已确认，2026-09-12）
+
+第二人复核后，7 条全部按默认走，不再为用户增加选项。逐条确认如下，其中第 6 条补一处工程纪律澄清：
+
+1. **停靠形态**：采用四槽结构化停靠，不上 VS Code 级嵌套。正文是主面 + 写作区不可卸载的硬约束，嵌套 docking 一上来就撞。
+2. **依赖**：P2 引入 `react-resizable-panels`（小、支持 collapse、可渐进替换 Flex）；不上 dockview/flexlayout。完整 docking 库默认卸载隐藏面板，与写作区 / AI 流保活冲突。
+3. **持久化**：`localStorage` 应用级一份，不进 SQLite、不做每项目布局。布局是窗口铬，不是小说数据；进库要迁移 + IPC + 切项目等待，纯亏。
+4. **浮动**：工具面板默认入槽；仅思维导图保留「弹出浮动」（导图要画布）。大纲 / 审稿 / 写章盖正文正是空间被占的根因，浮窗应降为例外。
+5. **预设**：P4 再做。没有稳定槽位模型，预设只是四套易过期的硬编码；先「拖完能记住」再给快照。
+6. **主题**：P1 与 P0 可并行（正交、互不阻塞）；Light 用暖纸墨字，Dark 保持现有林间稿纸。**澄清：并行 ≠ 混改。** P0 动 DockLayout 几何、P1 动 tailwind 颜色，两者都碰 DockLayout；每个 P 内部仍一步一提交，P0 收口 commit 完再开 P1 颜色改，避免回滚时互相牵连。
+7. **死代码**：`Layout.tsx` / `MainArea.tsx` / `ContextPanel.tsx` 一期保留，不强制删除。不在主路径，顺手删会把范围扯进无测试旧组件；P3 稳定后再标废弃或删。
+
+**开工顺序**：P0 止血（已实现并验证，待 commit）→ P1 主题令牌（须 P0 commit 后再开颜色改）→ P2 分隔条与折叠 → P3 拖进槽 → P4 预设。
+
+**P3 备忘：** `applyRightAuxExclusive` 的 `T extends Record<RightAuxKey, boolean>` 绑的是当前 `panelState` 三字段；抽 `WorkspaceLayoutV1` 时一并改泛型，P0 不提前重构。
+
+下一阶段写 `docs/superpowers/plans/2026-09-12-workspace-p1-theme.md` 后再编码。

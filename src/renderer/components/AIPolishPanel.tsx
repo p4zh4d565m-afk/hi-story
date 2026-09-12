@@ -462,7 +462,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
                   <textarea
                     value={editablePolishText}
                     onChange={e => { setEditablePolishText(e.target.value); setApplied(false); }}
-                    className="w-full p-3 bg-gray-900/50 border border-green-800/50 rounded text-[15px] text-gray-200 leading-relaxed max-h-[340px] min-h-[340px] overflow-y-auto resize-y focus:outline-none focus:border-accent"
+                    className="w-full p-3 bg-gray-900/50 border border-green-800/50 rounded text-[15px] text-gray-200 leading-relaxed min-h-[160px] max-h-[70vh] overflow-y-auto resize-y focus:outline-none focus:border-accent"
                     spellCheck={false}
                   />
                 </div>

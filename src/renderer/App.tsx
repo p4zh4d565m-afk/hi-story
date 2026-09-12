@@ -40,6 +40,7 @@ import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './s
 import { createPlanningLoader } from './services/planning-loader';
 import { factsToHookDrafts, type ChapterExtractionFact } from './services/chapter-extraction-proposals';
 import { formatPlanningAuthorityContext } from './services/ai-prompts/planning';
+import { applyRightAuxExclusive, toggleRightAux } from './workspace/right-aux-panels';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -1083,8 +1084,8 @@ const App: React.FC = () => {
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
-        if (e.key === 'I') { e.preventDefault(); setPanelState(p => ({ ...p, inspirationOpen: !p.inspirationOpen })); }
-        if (e.key === 'N') { e.preventDefault(); setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen })); }
+        if (e.key === 'I') { e.preventDefault(); setPanelState(p => toggleRightAux(p, 'inspirationOpen')); }
+        if (e.key === 'N') { e.preventDefault(); setPanelState(p => toggleRightAux(p, 'namegenOpen')); }
         if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
         if (e.key === 'W') { e.preventDefault(); setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen })); }
@@ -1146,12 +1147,12 @@ const App: React.FC = () => {
         onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
         onMinimizeAiChat={() => setPanelState(p => ({ ...p, aiChatMinimized: !p.aiChatMinimized }))}
         onToggleContext={() => { /* deprecated — no longer used */ }}
-        onToggleInspiration={() => setPanelState(p => ({ ...p, inspirationOpen: !p.inspirationOpen }))}
+        onToggleInspiration={() => setPanelState(p => toggleRightAux(p, 'inspirationOpen'))}
         onToggleMindmap={() => setPanelState(p => ({ ...p, mindmapOpen: !p.mindmapOpen }))}
         onToggleMaterial={() => setPanelState(p => ({ ...p, materialOpen: !p.materialOpen }))}
         onToggleOutline={() => setPanelState(p => ({ ...p, outlineOpen: !p.outlineOpen }))}
-        onToggleReference={() => setPanelState(p => ({ ...p, referenceOpen: !p.referenceOpen }))}
-        onToggleNamegen={() => setPanelState(p => ({ ...p, namegenOpen: !p.namegenOpen }))}
+        onToggleReference={() => setPanelState(p => toggleRightAux(p, 'referenceOpen'))}
+        onToggleNamegen={() => setPanelState(p => toggleRightAux(p, 'namegenOpen'))}
         onToggleAiWrite={() => setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen }))}
         onToggleAiReview={() => setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen }))}
         onToggleAiPolish={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: !p.aiPolishOpen })); }}
@@ -1217,14 +1218,11 @@ const App: React.FC = () => {
             onSetEditorFontSize={(p: FontSizePreset) => setFontSize('editor', p)}
             editorRef={editorRef}
             onSearchInInspiration={(text) => {
-              setPanelState(p => ({ ...p, inspirationOpen: true }));
-              // The inspiration panel will receive the search query via a ref or global state
-              // For now we can store it in localStorage for the panel to pick up
+              setPanelState(p => applyRightAuxExclusive(p, 'inspirationOpen', true));
               localStorage.setItem('hi-story-pending-inspiration-search', text);
             }}
             onSearchInReference={(text) => {
-              // 打开检索面板并将选中文字传入，由 ReferencePanel 自动触发 AI 精排搜索
-              setPanelState(p => ({ ...p, referenceOpen: true }));
+              setPanelState(p => applyRightAuxExclusive(p, 'referenceOpen', true));
               localStorage.setItem('hi-story-pending-reference-search', text);
             }}
             onAIPolish={(text, range) => {
