@@ -36,7 +36,8 @@ function Fixture() {
       setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content: html } : ch));
     },
     acceptRevisionWithSetContent: (id, html) => {
-      // M3 修复后：setChapters + 当前打开章节主动 setContent（与 App.tsx onChapterAccepted 一致）
+      // M3 修复后：setChapters + 当前打开章节主动 setContent（与 App.tsx onChapterAccepted 一致）。
+      // 同步义务：改 App.tsx 的 onChapterAccepted 行为时，必须同步改这里，否则本回归锁不住生产回调。
       setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content: html } : ch));
       if (activeId === id) editorRef.current!.setContent(html);
     },
