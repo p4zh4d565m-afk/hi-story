@@ -112,25 +112,49 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   // ===== P2：分隔条换库，比例用 useDefaultLayout 持久化；P0 像素只作首次 defaultSize 种子（L3，不双写）=====
   const leftRef = usePanelRef();
   const bottomRef = usePanelRef();
-  const { defaultLayout: hLayout, onLayoutChanged: onHLayout } = useDefaultLayout({
-    id: 'hi-story-split-h',
-    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
-  });
-  const { defaultLayout: vLayout, onLayoutChanged: onVLayout } = useDefaultLayout({
-    id: 'hi-story-split-v',
-    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
-  });
-  const { defaultLayout: cLayout, onLayoutChanged: onCLayout } = useDefaultLayout({
-    id: 'hi-story-split-center',
-    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
-  });
 
   // 槽展开判断（AI/右栏关闭=卸载；侧栏始终挂载走 collapse）
   const flags = splitOpenFlags(panelState);
 
-  // 侧栏拖过 minSize 被库自动折叠时，同步回 panelState.sidebarOpen（防「折叠状态双源」分叉）
+  // 条件渲染的 panel 组合会变（AI/右栏开关），useDefaultLayout 必须按「当前组合」传 panelIds，
+  // 否则刷新后持久化的 layout（含 right/AI）对不上当前渲染的 panel 数，defaultLayout 整体作废 → 回 defaultSize。
+  const hPanelIds = useMemo<string[]>(
+    () => (flags.rightAux ? ['left', 'center', 'right'] : ['left', 'center']),
+    [flags.rightAux],
+  );
+  const vPanelIds = useMemo<string[]>(() => ['main', 'bottom'], []);
+  const cPanelIds = useMemo<string[]>(
+    () => (flags.ai ? ['editor', 'ai'] : ['editor']),
+    [flags.ai],
+  );
+
+  const { defaultLayout: hLayout, onLayoutChanged: onHLayout } = useDefaultLayout({
+    id: 'hi-story-split-h',
+    panelIds: hPanelIds,
+    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  });
+  const { defaultLayout: vLayout, onLayoutChanged: onVLayout } = useDefaultLayout({
+    id: 'hi-story-split-v',
+    panelIds: vPanelIds,
+    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  });
+  const { defaultLayout: cLayout, onLayoutChanged: onCLayout } = useDefaultLayout({
+    id: 'hi-story-split-center',
+    panelIds: cPanelIds,
+    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  });
+
+  // 双向同步 sidebarOpen ↔ Panel collapse：点 ☰ 要真 collapse Panel（否则只是内容 hidden，宽度没变）。
+  // 防循环靠「状态已是目标值时 onResize 不再 toggle」，expand/collapse 触发的 onResize 不会二次 toggle。
+  useEffect(() => {
+    if (panelState.sidebarOpen) leftRef.current?.expand();
+    else leftRef.current?.collapse();
+  }, [panelState.sidebarOpen, leftRef]);
+
+  // 库先动、状态没跟上时（拖过 minSize 折叠 / 从轨拖出展开）同步回 sidebarOpen，对称处理两个方向
   const onSidebarResize = useCallback((size: { asPercentage: number; inPixels: number }) => {
-    if (panelState.sidebarOpen && size.inPixels <= RAIL_PX) {
+    const collapsed = size.inPixels <= RAIL_PX;
+    if (panelState.sidebarOpen === collapsed) {
       onToggleSidebar();
     }
   }, [panelState.sidebarOpen, onToggleSidebar]);
