@@ -4,6 +4,7 @@ import { decrypt } from '../services/crypto';
 import { aiService } from '../services/ai.service';
 import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
 import { createProjectSelectionGuard } from '../services/project-data-loader';
+import { shouldApplyPlanningResult } from '../services/planning-generation-guard';
 import ObsidianImportPanel from './ObsidianImportPanel';
 
 interface PlanningWorkspaceProps {
@@ -154,11 +155,39 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     } finally { setSaving(false); }
   };
 
+  // 只写库、不改 UI 的后台持久化：长任务完成但已切走项目时，把结果写回启动时的项目，
+  // 不浪费已生成内容，也不污染当前界面（不 setState、不 setSaving）。
+  const persistPlanning = async (
+    projectId: string,
+    payload: {
+      idea: string;
+      requirements: string;
+      status: PlanningIdea['status'];
+      selectedOption: number | null;
+      generatedOptions: StoryOption[];
+      masterOutline: MasterOutline | null;
+      outlineStatus: PlanningIdea['outlineStatus'];
+      volumeOutlines: VolumeOutline[];
+      volumeStatus: PlanningIdea['volumeStatus'];
+      chapterOutlines: ChapterOutline[];
+      chapterOutlineStatus: PlanningIdea['chapterOutlineStatus'];
+    },
+  ): Promise<boolean> => {
+    try {
+      const res = await window.electronAPI.invoke('db:planning:save', { projectId, ...payload }) as any;
+      if (!res?.success) throw new Error(res?.error || '保存策划内容失败');
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   const generate = async () => {
     if (!project || idea.trim().length < 10) {
       setError('请先写下至少 10 个字的故事想法');
       return;
     }
+    const startedId = project.id;
     setLoading(true); setError('');
     try {
       const aiConfig = await configureFirstAi();
@@ -169,13 +198,22 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
         if (detail?.success) fullSkills.push(detail.data);
       }
-      setMatchedSkills(routed.data);
       const raw = await aiService.chat(buildStoryOptionsPrompt(project, idea, requirements, fullSkills), {
         model: aiConfig.model,
         maxTokens: 4096,
         temperature: 0.8,
       });
       const generated = parseStoryOptions(raw);
+      // 长任务期间切走项目：结果后台写回 startedId，不污染当前 UI
+      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        await persistPlanning(startedId, {
+          idea, requirements, status: 'generated', selectedOption: null,
+          generatedOptions: generated, masterOutline: null, outlineStatus: 'empty',
+          volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
+        });
+        return;
+      }
+      setMatchedSkills(routed.data);
       setOptions(generated);
       setSelectedOption(null);
       setMasterOutline(null); setOutlineStatus('empty');
@@ -183,7 +221,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       setChapterOutlines([]); setChapterOutlineStatus('empty');
       await save('generated', null, generated, null, 'empty', [], 'empty', [], 'empty');
     } catch (err) {
-      setError((err as Error).message);
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     } finally { setLoading(false); }
   };
 
@@ -198,6 +236,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
 
   const generateMasterOutline = async () => {
     if (!project || selectedOption === null || !options[selectedOption]) return;
+    const startedId = project.id;
     setOutlineLoading(true); setError('');
     try {
       const aiConfig = await configureFirstAi();
@@ -212,17 +251,27 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
         if (detail?.success) fullSkills.push(detail.data);
       }
-      setMatchedSkills(routed.data);
       const raw = await aiService.chat(
         buildMasterOutlinePrompt(project, options[selectedOption], requirements, fullSkills),
         { model: aiConfig.model, maxTokens: 8192, temperature: 0.65 },
       );
       const outline = parseMasterOutline(raw);
+      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        await persistPlanning(startedId, {
+          idea, requirements, status: 'confirmed', selectedOption,
+          generatedOptions: options, masterOutline: outline, outlineStatus: 'generated',
+          volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
+        });
+        return;
+      }
+      setMatchedSkills(routed.data);
       setMasterOutline(outline);
       setVolumeOutlines([]); setVolumeStatus('empty');
       setChapterOutlines([]); setChapterOutlineStatus('empty');
       await save('confirmed', selectedOption, options, outline, 'generated', [], 'empty', [], 'empty');
-    } catch (err) { setError((err as Error).message); }
+    } catch (err) {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
+    }
     finally { setOutlineLoading(false); }
   };
 
@@ -258,6 +307,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
 
   const generateVolumes = async () => {
     if (!project || selectedOption === null || !masterOutline || outlineStatus !== 'locked') return;
+    const startedId = project.id;
     setVolumeLoading(true); setError('');
     try {
       const aiConfig = await configureFirstAi();
@@ -270,17 +320,28 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
         if (detail?.success) fullSkills.push(detail.data);
       }
-      setMatchedSkills(routed.data);
       const raw = await aiService.chat(
         buildVolumeOutlinesPrompt(project, options[selectedOption], masterOutline, requirements, fullSkills),
         { model: aiConfig.model, maxTokens: 8192, temperature: 0.6 },
       );
       const volumes = parseVolumeOutlines(raw);
+      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        await persistPlanning(startedId, {
+          idea, requirements, status: 'confirmed', selectedOption,
+          generatedOptions: options, masterOutline, outlineStatus: 'locked',
+          volumeOutlines: volumes, volumeStatus: 'generated',
+          chapterOutlines: [], chapterOutlineStatus: 'empty',
+        });
+        return;
+      }
+      setMatchedSkills(routed.data);
       setVolumeOutlines(volumes);
       setChapterOutlines([]); setChapterOutlineStatus('empty');
       setStageClearedNotice(false);
       await save('confirmed', selectedOption, options, masterOutline, 'locked', volumes, 'generated', [], 'empty');
-    } catch (err) { setError((err as Error).message); }
+    } catch (err) {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
+    }
     finally { setVolumeLoading(false); }
   };
 
@@ -301,6 +362,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
 
   const generateChapters = async (volumeIndex: number) => {
     if (!project || selectedOption === null || !masterOutline || volumeStatus !== 'locked') return;
+    const startedId = project.id;
     setChapterLoadingVolume(volumeIndex); setError('');
     try {
       const aiConfig = await configureFirstAi();
@@ -313,7 +375,6 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
         if (detail?.success) fullSkills.push(detail.data);
       }
-      setMatchedSkills(routed.data);
       const raw = await aiService.chat(
         buildChapterOutlinesPrompt(project, options[selectedOption], masterOutline, volumeOutlines, volumeIndex, requirements, fullSkills),
         { model: aiConfig.model, maxTokens: 16384, temperature: 0.55 },
@@ -321,10 +382,22 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       const generated = parseChapterOutlines(raw, volumeIndex);
       const merged = [...chapterOutlines.filter(chapter => chapter.volumeIndex !== volumeIndex), ...generated]
         .sort((a, b) => a.chapterNumber - b.chapterNumber);
+      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        await persistPlanning(startedId, {
+          idea, requirements, status: 'confirmed', selectedOption,
+          generatedOptions: options, masterOutline, outlineStatus: 'locked',
+          volumeOutlines, volumeStatus: 'locked',
+          chapterOutlines: merged, chapterOutlineStatus: 'generated',
+        });
+        return;
+      }
+      setMatchedSkills(routed.data);
       setChapterOutlines(merged);
       setActiveVolume(volumeIndex);
       await save('confirmed', selectedOption, options, masterOutline, 'locked', volumeOutlines, 'locked', merged, 'generated');
-    } catch (err) { setError((err as Error).message); }
+    } catch (err) {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
+    }
     finally { setChapterLoadingVolume(null); }
   };
 
