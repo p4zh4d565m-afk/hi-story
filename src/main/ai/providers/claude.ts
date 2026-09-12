@@ -1,5 +1,6 @@
 import type { AIProvider, ChatMessage, ChatOptions, StreamCallbacks, ProviderConfig } from '../provider';
 import { AIError } from '../provider';
+import { mergeSystemPrompt } from '../merge-system-prompt';
 
 export class ClaudeProvider implements AIProvider {
   readonly name = 'claude';
@@ -30,16 +31,14 @@ export class ClaudeProvider implements AIProvider {
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
     const client = this.getClient();
     try {
-      const systemMessages = messages.filter(m => m.role === 'system').map(m => m.content);
-      const userAssistantMessages = messages.filter(m => m.role !== 'system').map(m => ({
+      const merged = mergeSystemPrompt(messages, options?.systemPrompt);
+      const systemMessages = merged.filter(m => m.role === 'system').map(m => m.content);
+      const userAssistantMessages = merged.filter(m => m.role !== 'system').map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
       }));
 
-      let systemPrompt = systemMessages.join('\n\n');
-      if (options?.systemPrompt) {
-        systemPrompt = options.systemPrompt + '\n\n' + systemPrompt;
-      }
+      const systemPrompt = systemMessages.join('\n\n');
 
       const response = await client.messages.create({
         model: options?.model || this.defaultModel,
@@ -69,16 +68,14 @@ export class ClaudeProvider implements AIProvider {
     let stream: any = null;
     try {
       const client = this.getClient();
-      const systemMessages = messages.filter(m => m.role === 'system').map(m => m.content);
-      const userAssistantMessages = messages.filter(m => m.role !== 'system').map(m => ({
+      const merged = mergeSystemPrompt(messages, options?.systemPrompt);
+      const systemMessages = merged.filter(m => m.role === 'system').map(m => m.content);
+      const userAssistantMessages = merged.filter(m => m.role !== 'system').map(m => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
       }));
 
-      let systemPrompt = systemMessages.join('\n\n');
-      if (options?.systemPrompt) {
-        systemPrompt = options.systemPrompt + '\n\n' + systemPrompt;
-      }
+      const systemPrompt = systemMessages.join('\n\n');
 
       stream = await client.messages.stream({
         model: options?.model || this.defaultModel,

@@ -1,5 +1,6 @@
 import type { AIProvider, ChatMessage, ChatOptions, StreamCallbacks, ProviderConfig, EmbedOptions } from '../provider';
 import { AIError } from '../provider';
+import { mergeSystemPrompt } from '../merge-system-prompt';
 
 /**
  * Generic OpenAI-compatible provider.
@@ -43,11 +44,12 @@ export class GenericOpenAIProvider implements AIProvider {
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
     const client = this.getClient();
     try {
+      const merged = mergeSystemPrompt(messages, options?.systemPrompt);
       const response = await client.chat.completions.create({
         model: options?.model || this.defaultModel,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.7,
-        messages: messages.map(m => ({
+        messages: merged.map(m => ({
           role: m.role as 'system' | 'user' | 'assistant',
           content: m.content,
         })),
@@ -74,6 +76,7 @@ export class GenericOpenAIProvider implements AIProvider {
     const maxTokens = options?.maxTokens || 2048;  // 降低默认 max_tokens 加速响应
     const temperature = options?.temperature ?? 0.7;
     const url = `${this.baseUrl}/chat/completions`;
+    const merged = mergeSystemPrompt(messages, options?.systemPrompt);
 
     // 构建 AbortController 用于超时保护
     const abortController = new AbortController();
@@ -92,7 +95,7 @@ export class GenericOpenAIProvider implements AIProvider {
           model,
           max_tokens: maxTokens,
           temperature,
-          messages: messages.map(m => ({
+          messages: merged.map(m => ({
             role: m.role as 'system' | 'user' | 'assistant',
             content: m.content,
           })),
