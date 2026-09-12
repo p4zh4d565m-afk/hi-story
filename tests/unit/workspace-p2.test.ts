@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { isAiChatVisible, isRightAuxOpen, splitOpenFlags } from '../../src/renderer/workspace/split-flags';
+import {
+  isAiChatVisible, isRightAuxOpen, splitOpenFlags,
+  horizontalPanelIds, centerPanelIds, verticalPanelIds,
+} from '../../src/renderer/workspace/split-flags';
 
 describe('split-flags（槽展开判断）', () => {
   it('left 跟随 sidebarOpen', () => {
@@ -25,5 +28,21 @@ describe('split-flags（槽展开判断）', () => {
     expect(isRightAuxOpen({ inspirationOpen: true, referenceOpen: false, namegenOpen: false })).toBe(true);
     expect(isRightAuxOpen({ inspirationOpen: false, referenceOpen: true, namegenOpen: false })).toBe(true);
     expect(isRightAuxOpen({ inspirationOpen: false, referenceOpen: false, namegenOpen: true })).toBe(true);
+  });
+});
+
+describe('panelIds（P2 修复 30c08f1 的回归锚点）', () => {
+  it('horizontal：无右栏只有 left+center，有右栏加 right', () => {
+    expect(horizontalPanelIds({ left: true, ai: false, rightAux: false })).toEqual(['left', 'center']);
+    expect(horizontalPanelIds({ left: true, ai: false, rightAux: true })).toEqual(['left', 'center', 'right']);
+  });
+
+  it('center：无 AI 只有 editor，有 AI 加 ai', () => {
+    expect(centerPanelIds({ left: true, ai: false, rightAux: false })).toEqual(['editor']);
+    expect(centerPanelIds({ left: true, ai: true, rightAux: false })).toEqual(['editor', 'ai']);
+  });
+
+  it('vertical：恒为 main+bottom', () => {
+    expect(verticalPanelIds()).toEqual(['main', 'bottom']);
   });
 });

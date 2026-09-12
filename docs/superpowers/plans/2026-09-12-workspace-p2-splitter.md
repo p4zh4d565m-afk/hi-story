@@ -328,11 +328,28 @@ npx vite build
 
 ### Task 4: 文档
 
-- Spec「实施进度」P2 改为已编码/已验证之后，才能写「P2 已落地」。禁止报告超前。
-- `CLAUDE.md` / `AGENTS.md` 补一句：分隔条换库 + 边轨折叠 + 空 bottom；浮窗未入槽。
-- 本计划 checkbox 与验证结果同步。
+- [x] Spec「实施进度」P2 改为已编码/已验证之后，才能写「P2 已落地」。禁止报告超前。
+- [x] `CLAUDE.md` / `AGENTS.md` 补一句：分隔条换库 + 边轨折叠 + 空 bottom；浮窗未入槽。
+- [x] 计划 checkbox 与验证结果同步。
 
-不提交。等用户发话。
+### 验证结果（实现者，2026-09-12）
+
+- `workspace-p2.test.ts` 6/6（含 `splitPanelIds` 纯函数锚点）；`workspace-p0` 12/12；`theme` 4/4；写作 UI 12/12；`npx vite build` 通过
+- 主体 `0e4e125`，手测接线修复 `30c08f1`，文档 `b3fb979`
+- 手测：拖条、侧栏 24px 轨并恢复、刷新比例、空 bottom 拖不出空白带
+- **复核建议第 2 条已落地**：`splitPanelIds`（`horizontalPanelIds`/`centerPanelIds`/`verticalPanelIds`）抽成纯函数并加 3 条单测，锁「有/无右栏、有/无 AI」组合。关 AI/关右栏/1000 宽顶栏三项手测**待补**。
+
+**P2 已落地。**
+
+### 第二人复核建议（2026-09-12，给实现者看）
+
+完整条文在 Spec「P2 收口第二人复核」。摘要：
+
+1. **先写 P3 计划再编码**，不要接着拖放。
+2. 把 `panelIds` 组合抽纯函数补进 `workspace-p2.test.ts`，锁住 `30c08f1` 的刷新丢比例。
+3. P3 才给 bottom 挂 Separator / `minSize={120}`；无面板时不要让 `BOTTOM_MIN_PX` 生效。`bottomRef` 目前从未 `collapse()`。
+4. 手测若还没做：关 AI、关右栏、约 1000 宽顶栏仍可点——补测或补记录。
+5. P3 仍以 `node tests/ui/run-writing-workspace.cjs` 为门。
 
 ---
 

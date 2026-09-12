@@ -2,7 +2,7 @@ import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 import { clampFloatingRect } from '../workspace/floating-rect';
 import { PANEL_WIDTHS_KEY, parsePanelWidths, PANEL_WIDTH_LIMITS } from '../workspace/panel-widths';
-import { splitOpenFlags, RAIL_PX, BOTTOM_MIN_PX } from '../workspace/split-flags';
+import { splitOpenFlags, horizontalPanelIds, centerPanelIds, verticalPanelIds, RAIL_PX, BOTTOM_MIN_PX } from '../workspace/split-flags';
 import { applyTheme, loadTheme, persistTheme, type ThemeName } from '../theme/theme';
 
 // ============================================================
@@ -118,15 +118,10 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
   // 条件渲染的 panel 组合会变（AI/右栏开关），useDefaultLayout 必须按「当前组合」传 panelIds，
   // 否则刷新后持久化的 layout（含 right/AI）对不上当前渲染的 panel 数，defaultLayout 整体作废 → 回 defaultSize。
-  const hPanelIds = useMemo<string[]>(
-    () => (flags.rightAux ? ['left', 'center', 'right'] : ['left', 'center']),
-    [flags.rightAux],
-  );
-  const vPanelIds = useMemo<string[]>(() => ['main', 'bottom'], []);
-  const cPanelIds = useMemo<string[]>(
-    () => (flags.ai ? ['editor', 'ai'] : ['editor']),
-    [flags.ai],
-  );
+  // 推导抽到 split-flags 的纯函数，单测锁四种组合。
+  const hPanelIds = useMemo<string[]>(() => horizontalPanelIds(flags), [flags]);
+  const vPanelIds = useMemo<string[]>(() => verticalPanelIds(), []);
+  const cPanelIds = useMemo<string[]>(() => centerPanelIds(flags), [flags]);
 
   const { defaultLayout: hLayout, onLayoutChanged: onHLayout } = useDefaultLayout({
     id: 'hi-story-split-h',
