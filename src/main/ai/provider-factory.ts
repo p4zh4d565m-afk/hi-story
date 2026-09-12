@@ -116,9 +116,7 @@ class ProviderCache {
   private cache = new Map<string, AIProvider>();
 
   key(config: ProviderConfig): string {
-    // Include apiKey in the cache key so config changes take effect immediately
-    const apiKey = config.apiKey || '';
-    return `${config.name}:${config.model}|${apiKey.slice(0, 8)}`;
+    return providerCacheKey(config);
   }
 
   get(key: string): AIProvider | undefined {
@@ -133,6 +131,17 @@ class ProviderCache {
   clear(): void {
     this.cache.clear();
   }
+}
+
+/**
+ * 生成 Provider 缓存键。必须包含 baseUrl 与完整 apiKey：
+ * - 改自定义 endpoint 不得复用旧实例（name+model 相同也可能命中旧 URL）。
+ * - 完整 apiKey 避免两把 Key 前 8 位相同撞车（进程内 Map，不落盘，不新增泄露面）。
+ */
+export function providerCacheKey(config: ProviderConfig): string {
+  const apiKey = config.apiKey || '';
+  const baseUrl = config.baseUrl || '';
+  return `${config.name}:${config.model}|${baseUrl}|${apiKey}`;
 }
 
 const providerCache = new ProviderCache();
