@@ -6,6 +6,7 @@ import { useCallback, useState } from 'react';
 import {
   DEFAULT_LAYOUT, type WorkspaceLayoutV1, type PanelId, type SlotId,
   movePanel as movePanelModel, closePanel as closePanelModel, setActive as setActiveModel,
+  openKeepAlive as openKeepAliveModel, closeKeepAlive as closeKeepAliveModel,
 } from './layout-model';
 import { LAYOUT_KEY, parseLayout, serializeLayout } from './layout-storage';
 
@@ -54,5 +55,21 @@ export function useWorkspaceLayout() {
     });
   }, [persist]);
 
-  return { layout, movePanel, closePanel, setActive };
+  const openKeepAlive = useCallback((panelId: PanelId) => {
+    setLayout((prev) => {
+      const next = openKeepAliveModel(prev, panelId);
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  const closeKeepAlive = useCallback((panelId: PanelId) => {
+    setLayout((prev) => {
+      const next = closeKeepAliveModel(prev, panelId);
+      persist(next);
+      return next;
+    });
+  }, [persist]);
+
+  return { layout, movePanel, closePanel, setActive, openKeepAlive, closeKeepAlive };
 }

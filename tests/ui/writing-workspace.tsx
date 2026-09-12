@@ -59,6 +59,8 @@ function Fixture() {
   return <DockLayout
     {...Object.fromEntries(['onToggleSidebar', 'onToggleAiChat', 'onMinimizeAiChat', 'onToggleInspiration', 'onToggleMindmap', 'onToggleMaterial', 'onToggleOutline', 'onToggleReference', 'onToggleNamegen', 'onToggleAiWrite', 'onToggleAiReview', 'onToggleAiPolish', 'onToggleForeshadowing', 'onSetAiLevel', 'onSetFontSize'].map(key => [key, noop])) as any}
     panelState={{ aiLevel: 'off' } as any}
+    layout={{ version: 1, slots: { left: { panelIds: ['sidebar'], activeId: 'sidebar' }, right: { panelIds: [], activeId: null }, bottom: { panelIds: [], activeId: null } }, floating: [] } as any}
+    onMovePanel={noop} onClosePanel={noop} onSetActive={noop}
     fontSizes={{ editor: 1, panels: 1, ui: 1 }}
     workspaceMode={mode} onSetWorkspaceMode={setMode}
     planningArea={<div data-planning>策划内容</div>}

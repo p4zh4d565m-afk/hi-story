@@ -4,6 +4,10 @@ import { clampFloatingRect } from '../workspace/floating-rect';
 import { PANEL_WIDTHS_KEY, parsePanelWidths, PANEL_WIDTH_LIMITS } from '../workspace/panel-widths';
 import { splitOpenFlags, horizontalPanelIds, centerPanelIds, verticalPanelIds, RAIL_PX, BOTTOM_MIN_PX } from '../workspace/split-flags';
 import { applyTheme, loadTheme, persistTheme, type ThemeName } from '../theme/theme';
+import { type WorkspaceLayoutV1, type PanelId, type SlotId, isSlotVisible, PANEL_TITLES, KEEP_ALIVE_PANELS } from '../workspace/layout-model';
+import PanelChrome from '../workspace/PanelChrome';
+import SlotTabs from '../workspace/SlotTabs';
+import DropZones, { type DropTarget } from '../workspace/DropZones';
 
 // ============================================================
 // 可拖拽面板布局
@@ -25,16 +29,7 @@ interface PanelState {
   sidebarOpen: boolean;
   aiChatOpen: boolean;
   aiChatMinimized: boolean;
-  inspirationOpen: boolean;
   mindmapOpen: boolean;
-  materialOpen: boolean;
-  outlineOpen: boolean;
-  referenceOpen: boolean;
-  namegenOpen: boolean;
-  aiWriteOpen: boolean;
-  aiReviewOpen: boolean;
-  aiPolishOpen: boolean;
-  foreshadowingOpen: boolean;
   aiLevel: 'off' | 'assist';  // AI participation level
 }
 
@@ -75,6 +70,11 @@ interface DockLayoutProps {
   onSetWorkspaceMode: (mode: 'planning' | 'writing') => void;
   fontSizes: FontSizes;
   onSetFontSize: (domain: keyof FontSizes, preset: FontSizePreset) => void;
+  // ===== P3 布局模型 =====
+  layout: WorkspaceLayoutV1;
+  onMovePanel: (panelId: PanelId, target: SlotId | 'floating' | 'center') => void;
+  onClosePanel: (panelId: PanelId) => void;
+  onSetActive: (slotId: SlotId, panelId: PanelId) => void;
 }
 
 /** 小字号下拉选择器（面板/界面） */
@@ -93,6 +93,60 @@ const FontSizeSelect: React.FC<{
   </select>
 );
 
+/** 槽内渲染：SlotTabs + 当前 active 面板（PanelChrome 包着）。保活面板永远挂载（display:none 包着）。 */
+const SlotView: React.FC<{
+  slotId: SlotId;
+  slot: WorkspaceLayoutV1['slots'][SlotId];
+  panelContent: Record<PanelId, React.ReactNode>;
+  keepAlivePanels: PanelId[];
+  onClosePanel: (panelId: PanelId) => void;
+  onSetActive: (slotId: SlotId, panelId: PanelId) => void;
+  onDragStart: (panelId: PanelId) => void;
+}> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive, onDragStart }) => {
+  const activeId = slot.activeId;
+  return (
+    <div className="h-full w-full flex flex-col min-h-0">
+      <SlotTabs
+        slotId={slotId}
+        panelIds={slot.panelIds}
+        activeId={activeId}
+        onSetActive={onSetActive}
+      />
+      {/* 普通面板：只渲染 active 那个 */}
+      {activeId && !keepAlivePanels.includes(activeId) && (
+        <PanelChrome
+          key={activeId}
+          panelId={activeId}
+          onClose={onClosePanel}
+          onDragStart={(pid, e) => { e.preventDefault(); onDragStart(pid); }}
+        >
+          <div className="h-full w-full" style={{ fontSize: '100%' }}>
+            {panelContent[activeId]}
+          </div>
+        </PanelChrome>
+      )}
+      {/* 保活面板：永远挂载，display 由是否 active 决定 */}
+      {keepAlivePanels.map((pid) => (
+        <div
+          key={pid}
+          className="flex-1 min-h-0"
+          style={{ display: activeId === pid ? 'block' : 'none' }}
+        >
+          <PanelChrome
+            panelId={pid}
+            onClose={onClosePanel}
+            onDragStart={() => { /* 保活面板跨槽拖拒绝，不触发 drag */ }}
+          >
+            <div className="h-full w-full">
+              {panelContent[pid]}
+            </div>
+          </PanelChrome>
+        </div>
+      ))}
+    </div>
+  );
+};
+
 const DockLayout: React.FC<DockLayoutProps> = ({
   sidebar, writingArea, planningArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
   materialPanel, outlinePanel, referencePanel, namegenPanel,
@@ -103,18 +157,47 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   onSetAiLevel,
   workspaceMode, onSetWorkspaceMode,
   fontSizes, onSetFontSize,
+  layout, onMovePanel, onClosePanel, onSetActive,
 }) => {
   const initialWidths = useMemo(() => parsePanelWidths(
     typeof localStorage === 'undefined' ? null : localStorage.getItem(PANEL_WIDTHS_KEY),
   ), []);
   const [theme, setTheme] = useState<ThemeName>(loadTheme);
 
+  // ===== P3 拖拽状态 =====
+  const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
+
+  // panelId → 实际 ReactNode（功能面板内容，不含外壳；外壳由 PanelChrome 提供）
+  const panelContent = useMemo<Record<PanelId, React.ReactNode>>(() => ({
+    sidebar,
+    aiChat,
+    inspiration: inspirationPanel,
+    reference: referencePanel,
+    namegen: namegenPanel,
+    outline: outlinePanel,
+    material: materialPanel,
+    foreshadowing: foreshadowingPanel,
+    aiWrite: aiWritePanel,
+    aiReview: aiReviewPanel,
+    aiPolish: aiPolishPanel,
+    mindmap: mindmapPanel,
+  }), [sidebar, aiChat, inspirationPanel, referencePanel, namegenPanel, outlinePanel, materialPanel, foreshadowingPanel, aiWritePanel, aiReviewPanel, aiPolishPanel, mindmapPanel]);
+
   // ===== P2：分隔条换库，比例用 useDefaultLayout 持久化；P0 像素只作首次 defaultSize 种子（L3，不双写）=====
   const leftRef = usePanelRef();
   const bottomRef = usePanelRef();
 
-  // 槽展开判断（AI/右栏关闭=卸载；侧栏始终挂载走 collapse）
-  const flags = splitOpenFlags(panelState);
+  // 槽展开判断：right 由 layout 决定（P3 后灵感/参考/起名走 movePanel），ai 仍由 panelState。
+  // 侧栏始终挂载走 collapse，不参与 flags.left（侧栏 Panel 恒在，只折叠）。
+  const rightVisible = isSlotVisible(layout, 'right');
+  const aiVisible = panelState.aiLevel !== 'off' && panelState.aiChatOpen && !panelState.aiChatMinimized;
+  // 供 horizontalPanelIds/centerPanelIds 纯函数用的 flags（left 恒 true，因为侧栏 Panel 始终挂载）
+  const flags = useMemo(() => ({ left: true, ai: aiVisible, rightAux: rightVisible }), [aiVisible, rightVisible]);
+
+  // 面板是否已打开（在任一槽里），供顶栏按钮 active 高亮
+  const isPanelOpen = useCallback((pid: PanelId): boolean => {
+    return (Object.keys(layout.slots) as SlotId[]).some((s) => layout.slots[s].panelIds.includes(pid));
+  }, [layout]);
 
   // 条件渲染的 panel 组合会变（AI/右栏开关），useDefaultLayout 必须按「当前组合」传 panelIds，
   // 否则刷新后持久化的 layout（含 right/AI）对不上当前渲染的 panel 数，defaultLayout 整体作废 → 回 defaultSize。
@@ -416,14 +499,14 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
           {/* Inspiration toggle */}
           <button onClick={onToggleInspiration}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.inspirationOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('inspiration') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="灵感搜索 (Ctrl+Shift+I)">
             🔍 灵感
           </button>
 
           {/* Outline toggle */}
           <button onClick={onToggleOutline}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.outlineOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('outline') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="大纲面板">
             📋 大纲
           </button>
@@ -438,49 +521,49 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
           {/* Material panel toggle */}
           <button onClick={onToggleMaterial}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.materialOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('material') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="素材管理">
             📦 素材
           </button>
 
           {/* Reference toggle — 参考库匹配面板 */}
           <button onClick={onToggleReference}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.referenceOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('reference') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="参考匹配">
             📚 参考
           </button>
 
           {/* Name Generator toggle — 起名助手 */}
           <button onClick={onToggleNamegen}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.namegenOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('namegen') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="起名助手">
             🧙 起名
           </button>
 
           {/* AI Write toggle — AI 写章 */}
           <button onClick={onToggleAiWrite}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiWriteOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('aiWrite') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="AI 写章 (Ctrl+Shift+W)">
             🤖 写章
           </button>
 
           {/* AI Review toggle — AI 审稿 */}
           <button onClick={onToggleAiReview}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiReviewOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('aiReview') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="AI 审稿 (Ctrl+Shift+R)">
             🔍 审稿
           </button>
 
           {/* AI Polish toggle — 去 AI 味润色 */}
           <button onClick={onToggleAiPolish}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiPolishOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('aiPolish') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="去 AI 味润色">
             ✨ 润色
           </button>
 
           {/* Foreshadowing toggle — 伏笔追踪 */}
           <button onClick={onToggleForeshadowing}
-            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.foreshadowingOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('foreshadowing') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="伏笔追踪 (Ctrl+Shift+F)">
             🪢 伏笔
           </button>
@@ -552,45 +635,47 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               minSize={BOTTOM_MIN_PX}
               defaultSize={0}
             >
-              {/* 空槽占位。P3 才往这里拖面板。不要放写作区。P2 不渲染这条纵向 Separator（L2），避免拖出空白带。 */}
+              <SlotView
+                slotId="bottom"
+                slot={layout.slots.bottom}
+                panelContent={panelContent}
+                keepAlivePanels={KEEP_ALIVE_PANELS}
+                onClosePanel={onClosePanel}
+                onSetActive={onSetActive}
+                onDragStart={(pid) => setDraggingPanel(pid)}
+              />
             </Panel>
           </Group>
         </Panel>
-        {flags.rightAux && <Separator className="w-1.5 bg-transparent hover:bg-accent/50" />}
-        {flags.rightAux && (
+        {rightVisible && <Separator className="w-1.5 bg-transparent hover:bg-accent/50" />}
+        {rightVisible && (
           <Panel
             id="right"
             minSize={PANEL_WIDTH_LIMITS.insp.min}
             maxSize={PANEL_WIDTH_LIMITS.insp.max}
             defaultSize={initialWidths.insp}
           >
-            {/* ===== RIGHT SIDE PANELS（互斥三选一，关闭=整列卸载，L1）===== */}
-            <div className="h-full w-full flex">
-              {panelState.inspirationOpen && (
-                <aside className="h-full w-full border-l border-inspiration-700 bg-inspiration-900 overflow-hidden">
-                  <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
-                    {inspirationPanel}
-                  </div>
-                </aside>
-              )}
-              {panelState.referenceOpen && (
-                <aside className="h-full w-full border-l border-context-700 bg-context-900 overflow-hidden">
-                  <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
-                    {referencePanel}
-                  </div>
-                </aside>
-              )}
-              {panelState.namegenOpen && (
-                <aside className="h-full w-full border-l border-float-700 bg-float-900 overflow-hidden">
-                  <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
-                    {namegenPanel}
-                  </div>
-                </aside>
-              )}
-            </div>
+            <SlotView
+              slotId="right"
+              slot={layout.slots.right}
+              panelContent={panelContent}
+              keepAlivePanels={[]}
+              onClosePanel={onClosePanel}
+              onSetActive={onSetActive}
+              onDragStart={(pid) => setDraggingPanel(pid)}
+            />
           </Panel>
         )}
       </Group>
+
+      {/* ===== DropZones 拖放预览 ===== */}
+      <DropZones
+        draggingPanel={draggingPanel}
+        onDrop={(panelId, target) => {
+          onMovePanel(panelId, target === 'center' ? 'bottom' : target);
+          setDraggingPanel(null);
+        }}
+      />
 
       {/* ===== FLOATING MINDMAP ===== */}
       {panelState.mindmapOpen && (
@@ -619,95 +704,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
         </div>
       )}
 
-      {/* ===== FLOATING MATERIAL PANEL ===== */}
-      {panelState.materialOpen && (
-        <div className="fixed inset-0 z-40 pointer-events-none">
-          <div
-            className="absolute pointer-events-auto bg-float-900 border border-float-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
-            style={{
-              left: materialRect.x, top: materialRect.y,
-              width: materialRect.w, height: materialRect.h,
-            }}
-          >
-            <div
-              className="px-3 py-2 bg-float-800 border-b border-float-700 flex items-center justify-between cursor-move select-none"
-              onMouseDown={e => startFloatingDrag('material', 'move', '', materialRect, e)}
-            >
-              <span className="text-xs text-gray-400">📦 素材管理</span>
-              <button onClick={onToggleMaterial} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
-            </div>
-            <div className="flex-1 overflow-hidden" style={{ fontSize: `${panelsZoom * 100}%` }}>
-              {materialPanel}
-            </div>
-            {renderResizeHandles('material', materialRect)}
-          </div>
-        </div>
-      )}
-
-      {/* ===== FLOATING OUTLINE PANEL ===== */}
-      {panelState.outlineOpen && (
-        <div className="fixed inset-0 z-40 pointer-events-none">
-          <div
-            className="absolute pointer-events-auto bg-float-900 border border-float-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
-            style={{
-              left: outlineRect.x, top: outlineRect.y,
-              width: outlineRect.w, height: outlineRect.h,
-            }}
-          >
-            <div
-              className="px-3 py-2 bg-float-800 border-b border-float-700 flex items-center justify-between cursor-move select-none"
-              onMouseDown={e => startFloatingDrag('outline', 'move', '', outlineRect, e)}
-            >
-              <span className="text-xs text-gray-400">📋 大纲面板</span>
-              <button onClick={onToggleOutline} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
-            </div>
-            <div className="flex-1 overflow-hidden outline-panel-container" style={{ fontSize: `${panelsZoom * 100}%` }}>
-              {outlinePanel}
-            </div>
-            {renderResizeHandles('outline', outlineRect)}
-          </div>
-        </div>
-      )}
-
-      {/* ===== FLOATING AI WRITE PANEL ===== */}
-      <div style={{ display: panelState.aiWriteOpen ? 'block' : 'none' }}>
-        {aiWritePanel}
-      </div>
-
-      {/* ===== FLOATING AI REVIEW PANEL ===== */}
-      <div style={{ display: panelState.aiReviewOpen ? 'block' : 'none' }}>
-        {aiReviewPanel}
-      </div>
-
-      {/* ===== FLOATING AI POLISH PANEL ===== */}
-      <div style={{ display: panelState.aiPolishOpen ? 'block' : 'none' }}>
-        {aiPolishPanel}
-      </div>
-
-      {/* ===== FLOATING FORESHADOWING PANEL ===== */}
-      {panelState.foreshadowingOpen && (
-        <div className="fixed inset-0 z-40 pointer-events-none">
-          <div
-            className="absolute pointer-events-auto bg-float-900 border border-float-700 rounded-lg shadow-2xl overflow-hidden flex flex-col"
-            style={{
-              left: foreshadowingRect.x, top: foreshadowingRect.y,
-              width: foreshadowingRect.w, height: foreshadowingRect.h,
-            }}
-          >
-            <div
-              className="px-3 py-2 bg-float-800 border-b border-float-700 flex items-center justify-between cursor-move select-none"
-              onMouseDown={e => startFloatingDrag('foreshadowing', 'move', '', foreshadowingRect, e)}
-            >
-              <span className="text-xs text-gray-400">🪢 伏笔追踪</span>
-              <button onClick={onToggleForeshadowing} className="text-gray-500 hover:text-gray-100 text-xs">✕</button>
-            </div>
-            <div className="flex-1 overflow-hidden" style={{ fontSize: `${panelsZoom * 100}%` }}>
-              {foreshadowingPanel}
-            </div>
-            {renderResizeHandles('foreshadowing', foreshadowingRect)}
-          </div>
-        </div>
-      )}
     </div>
   );
 };

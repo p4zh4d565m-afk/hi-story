@@ -40,7 +40,8 @@ import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './s
 import { createPlanningLoader } from './services/planning-loader';
 import { factsToHookDrafts, type ChapterExtractionFact } from './services/chapter-extraction-proposals';
 import { formatPlanningAuthorityContext } from './services/ai-prompts/planning';
-import { applyRightAuxExclusive, toggleRightAux } from './workspace/right-aux-panels';
+import { useWorkspaceLayout } from './workspace/useWorkspaceLayout';
+import { panelSlot, DEFAULT_SLOT, type PanelId, type SlotId } from './workspace/layout-model';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -133,23 +134,21 @@ const App: React.FC = () => {
     existingRelation?: CharacterRelation;
   }>({ open: false, sourceId: '', targetId: '' });
 
-  // ===== Panel state =====
+  // ===== Panel state（P3 后只剩「不进 layout 归属」的显示态）=====
+  // 大纲/素材/伏笔/灵感/参考/起名/写章/审稿/润色 都进 layout（useWorkspaceLayout）。
+  // 保留：sidebarOpen（左栏折叠）、aiChatOpen/aiChatMinimized/aiLevel（AI 对话，center 内侧）、mindmapOpen（导图浮动例外）。
   const [panelState, setPanelState] = useState({
     sidebarOpen: true,
     aiChatOpen: false,       // 默认关闭，用户点击「✨ 辅助」或「💬 AI」时才打开
     aiChatMinimized: false,
-    inspirationOpen: false,
     mindmapOpen: false,
-    materialOpen: false,
-    outlineOpen: false,
-    referenceOpen: false,    // 参考面板
-    namegenOpen: false,      // 起名助手
-    aiWriteOpen: false,      // AI 写章
-    aiReviewOpen: false,     // AI 审稿
-    aiPolishOpen: false,     // 去 AI 味润色
-    foreshadowingOpen: false, // 伏笔追踪
     aiLevel: 'off' as 'off' | 'assist',  // 默认纯写模式，AI 模块不出现
   });
+
+  // ===== P3 布局模型：管大纲/素材/伏笔 + 灵感/参考/起名 + 侧栏归属 =====
+  // ===== P3 布局模型：管大纲/素材/伏笔/灵感/参考/起名/写章/审稿/润色 的归属 + 侧栏归属 =====
+  // 写章/审稿/润色是「保活面板」：打开走 openKeepAlive（固定 bottom）、关闭走 closeKeepAlive（组件仍 display:none 挂载）。
+  const workspaceLayout = useWorkspaceLayout();
 
   // ===== 字体大小设定 =====
   // 三个独立域: editor(编辑器字号) / panels(面板zoom) / ui(界面zoom)
@@ -564,8 +563,8 @@ const App: React.FC = () => {
     // 只把章纲交给代写面板，面板用章纲字段拼上下文。
     pendingAIOutlineRef.current = outline;
     setPendingAIOutline(outline);
-    setPanelState(previous => ({ ...previous, aiWriteOpen: true }));
-  }, [activeProject, chapters]);
+    workspaceLayout.openKeepAlive('aiWrite');
+  }, [activeProject, chapters, workspaceLayout]);
 
   // Obsidian 导入后，只刷新人物与世界观（不重载章节/大纲，避免覆盖未保存正文）。
   // 与 UI 集成测试共用 createImportedEntitiesRefresher，保证测试证明的是与生产一致的 IPC 失败链路。
@@ -978,7 +977,8 @@ const App: React.FC = () => {
 
   // 自动检测：每 3 秒检测一次，使用 ref 避免因 content 变化频繁重建定时器
   useEffect(() => {
-    if (!refAutoSearch || !panelState.referenceOpen) return;
+    const referenceVisible = panelSlot(workspaceLayout.layout, 'reference') !== null;
+    if (!refAutoSearch || !referenceVisible) return;
 
     const interval = setInterval(async () => {
       const plainText = activeChapterContentRef.current
@@ -1000,7 +1000,7 @@ const App: React.FC = () => {
     }, 3000);
 
     return () => { clearInterval(interval); setUserMatches([]); setOpenMatches([]); };
-  }, [refAutoSearch, panelState.referenceOpen]);
+  }, [refAutoSearch, workspaceLayout.layout]);
 
   // === Menu events ===
   useEffect(() => {
@@ -1084,16 +1084,16 @@ const App: React.FC = () => {
         return;
       }
       if ((e.ctrlKey || e.metaKey) && e.shiftKey) {
-        if (e.key === 'I') { e.preventDefault(); setPanelState(p => toggleRightAux(p, 'inspirationOpen')); }
-        if (e.key === 'N') { e.preventDefault(); setPanelState(p => toggleRightAux(p, 'namegenOpen')); }
+        if (e.key === 'I') { e.preventDefault(); workspaceLayout.movePanel('inspiration', 'right'); }
+        if (e.key === 'N') { e.preventDefault(); workspaceLayout.movePanel('namegen', 'right'); }
         if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
-        if (e.key === 'W') { e.preventDefault(); setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen })); }
-        if (e.key === 'R') { e.preventDefault(); setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen })); }
-        if (e.key === 'F') { e.preventDefault(); setPanelState(p => ({ ...p, foreshadowingOpen: !p.foreshadowingOpen })); }
+        if (e.key === 'W') { e.preventDefault(); workspaceLayout.openKeepAlive('aiWrite'); }
+        if (e.key === 'R') { e.preventDefault(); workspaceLayout.openKeepAlive('aiReview'); }
+        if (e.key === 'F') { e.preventDefault(); workspaceLayout.movePanel('foreshadowing', DEFAULT_SLOT.foreshadowing!); }
       }
       if (e.key === 'Escape') {
-        setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false, inspirationOpen: false }));
+        setPanelState(p => ({ ...p, aiChatMinimized: false, mindmapOpen: false }));
       }
     };
     window.addEventListener('keydown', h);
@@ -1147,16 +1147,16 @@ const App: React.FC = () => {
         onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
         onMinimizeAiChat={() => setPanelState(p => ({ ...p, aiChatMinimized: !p.aiChatMinimized }))}
         onToggleContext={() => { /* deprecated — no longer used */ }}
-        onToggleInspiration={() => setPanelState(p => toggleRightAux(p, 'inspirationOpen'))}
+        onToggleInspiration={() => workspaceLayout.movePanel('inspiration', 'right')}
         onToggleMindmap={() => setPanelState(p => ({ ...p, mindmapOpen: !p.mindmapOpen }))}
-        onToggleMaterial={() => setPanelState(p => ({ ...p, materialOpen: !p.materialOpen }))}
-        onToggleOutline={() => setPanelState(p => ({ ...p, outlineOpen: !p.outlineOpen }))}
-        onToggleReference={() => setPanelState(p => toggleRightAux(p, 'referenceOpen'))}
-        onToggleNamegen={() => setPanelState(p => toggleRightAux(p, 'namegenOpen'))}
-        onToggleAiWrite={() => setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen }))}
-        onToggleAiReview={() => setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen }))}
-        onToggleAiPolish={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: !p.aiPolishOpen })); }}
-        onToggleForeshadowing={() => setPanelState(p => ({ ...p, foreshadowingOpen: !p.foreshadowingOpen }))}
+        onToggleMaterial={() => workspaceLayout.movePanel('material', DEFAULT_SLOT.material!)}
+        onToggleOutline={() => workspaceLayout.movePanel('outline', DEFAULT_SLOT.outline!)}
+        onToggleReference={() => workspaceLayout.movePanel('reference', 'right')}
+        onToggleNamegen={() => workspaceLayout.movePanel('namegen', 'right')}
+        onToggleAiWrite={() => workspaceLayout.openKeepAlive('aiWrite')}
+        onToggleAiReview={() => workspaceLayout.openKeepAlive('aiReview')}
+        onToggleAiPolish={() => { setPolishSelection(null); workspaceLayout.openKeepAlive('aiPolish'); }}
+        onToggleForeshadowing={() => workspaceLayout.movePanel('foreshadowing', DEFAULT_SLOT.foreshadowing!)}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
           aiLevel: level,
@@ -1165,6 +1165,10 @@ const App: React.FC = () => {
         }))}
         fontSizes={fontSizes}
         onSetFontSize={setFontSize}
+        layout={workspaceLayout.layout}
+        onMovePanel={workspaceLayout.movePanel}
+        onClosePanel={(pid) => workspaceLayout.closePanel(pid)}
+        onSetActive={workspaceLayout.setActive}
         sidebar={
           <Sidebar
             projects={projects}
@@ -1218,17 +1222,17 @@ const App: React.FC = () => {
             onSetEditorFontSize={(p: FontSizePreset) => setFontSize('editor', p)}
             editorRef={editorRef}
             onSearchInInspiration={(text) => {
-              setPanelState(p => applyRightAuxExclusive(p, 'inspirationOpen', true));
+              workspaceLayout.movePanel('inspiration', 'right');
               localStorage.setItem('hi-story-pending-inspiration-search', text);
             }}
             onSearchInReference={(text) => {
-              setPanelState(p => applyRightAuxExclusive(p, 'referenceOpen', true));
+              workspaceLayout.movePanel('reference', 'right');
               localStorage.setItem('hi-story-pending-reference-search', text);
             }}
             onAIPolish={(text, range) => {
               // 打开润色面板，传入选中文本与选区范围
               setPolishSelection({ text, range: range ?? null });
-              setPanelState(p => ({ ...p, aiPolishOpen: true }));
+              workspaceLayout.openKeepAlive('aiPolish');
             }}
             onAIContinue={() => {
               // Ensure AI chat is open
@@ -1249,7 +1253,7 @@ const App: React.FC = () => {
         inspirationPanel={
           <InspirationPanel
             open={true}
-            onClose={() => setPanelState(p => ({ ...p, inspirationOpen: false }))}
+            onClose={() => workspaceLayout.closePanel('inspiration')}
             onSendToChat={(r) => console.log('Send to chat:', r.title)}
             onSaveAsMaterial={(r) => console.log('Save:', r.title)}
             pendingSearchText={
@@ -1273,9 +1277,9 @@ const App: React.FC = () => {
         }
         materialPanel={
           <MaterialPanel
-            open={panelState.materialOpen}
+            open={true}
             projectId={activeProject?.id ?? null}
-            onClose={() => setPanelState(p => ({ ...p, materialOpen: false }))}
+            onClose={() => workspaceLayout.closePanel('material')}
           />
         }
         outlinePanel={
@@ -1297,7 +1301,7 @@ const App: React.FC = () => {
             autoSearch={refAutoSearch}
             onToggleAutoSearch={() => setRefAutoSearch(v => !v)}
             onManualSearch={handleManualReferenceSearch}
-            onClose={() => setPanelState(p => ({ ...p, referenceOpen: false }))}
+            onClose={() => workspaceLayout.closePanel('reference')}
             searching={refSearching}
             pendingSearchText={
               (() => {
@@ -1311,13 +1315,13 @@ const App: React.FC = () => {
         namegenPanel={
           <NameGenerator
             open={true}
-            onClose={() => setPanelState(p => ({ ...p, namegenOpen: false }))}
+            onClose={() => workspaceLayout.closePanel('namegen')}
           />
         }
         aiWritePanel={
           <AIWritePanel
-            open={panelState.aiWriteOpen}
-            onClose={() => { pendingAIOutlineRef.current = null; setPendingAIOutline(null); setPanelState(p => ({ ...p, aiWriteOpen: false })); }}
+            open={true}
+            onClose={() => { pendingAIOutlineRef.current = null; setPendingAIOutline(null); workspaceLayout.closeKeepAlive('aiWrite'); }}
             outlineNodes={outlineNodes}
             activeOutlineNodeId={activeOutlineNodeId}
             chapterOutlines={planningSnapshot && planningSnapshot.projectId === activeProject?.id ? planningSnapshot.planning?.chapterOutlines ?? [] : []}
@@ -1383,8 +1387,8 @@ const App: React.FC = () => {
         }
         aiReviewPanel={
           <AIReviewPanel
-            open={panelState.aiReviewOpen}
-            onClose={() => setPanelState(p => ({ ...p, aiReviewOpen: false }))}
+            open={true}
+            onClose={() => workspaceLayout.closeKeepAlive('aiReview')}
             chapters={chapters}
             activeChapterId={activeChapterId}
             characters={characters}
@@ -1417,8 +1421,8 @@ const App: React.FC = () => {
         }
         aiPolishPanel={
           <AIPolishPanel
-            open={panelState.aiPolishOpen}
-            onClose={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: false })); }}
+            open={true}
+            onClose={() => { setPolishSelection(null); workspaceLayout.closeKeepAlive('aiPolish'); }}
             chapters={chapters}
             activeChapterId={activeChapterId}
             characters={characters}
@@ -1434,7 +1438,7 @@ const App: React.FC = () => {
         }
         foreshadowingPanel={
           <ForeshadowingPanel
-            open={panelState.foreshadowingOpen}
+            open={true}
             projectId={activeProject?.id ?? null}
             chapters={chapters.map(c => ({ id: c.id, title: c.title }))}
             characters={characters.map(c => ({ id: c.id, name: c.name }))}
