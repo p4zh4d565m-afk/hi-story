@@ -1,5 +1,5 @@
 import type { AIProvider, ChatMessage, ChatOptions, StreamCallbacks, ProviderConfig } from '../provider';
-import { AIError } from '../provider';
+import { AIError, AI_STREAM_CANCELLED } from '../provider';
 import { mergeSystemPrompt } from '../merge-system-prompt';
 
 export class ClaudeProvider implements AIProvider {
@@ -83,9 +83,17 @@ export class ClaudeProvider implements AIProvider {
         temperature: options?.temperature ?? 0.7,
         system: systemPrompt || undefined,
         messages: userAssistantMessages,
-      });
+      }, options?.signal ? { signal: options.signal } : undefined);
 
       let fullText = '';
+
+      // 用户取消：主动 abort 底层流，让其走 error 分支（下面归一为 AI_STREAM_CANCELLED）
+      const onUserAbort = () => {
+        try {
+          stream?.abort();
+        } catch { /* abort 失败则静默，等流自然结束 */ }
+      };
+      options?.signal?.addEventListener('abort', onUserAbort, { once: true });
 
       // Attach event listeners BEFORE the stream can start emitting
       stream.on('text', (text: string, delta: string) => {
@@ -96,14 +104,25 @@ export class ClaudeProvider implements AIProvider {
       });
 
       stream.on('end', () => {
+        options?.signal?.removeEventListener('abort', onUserAbort);
         callbacks.onComplete(fullText);
       });
 
       stream.on('error', (err: any) => {
-        callbacks.onError(new AIError(err.message, this.name));
+        options?.signal?.removeEventListener('abort', onUserAbort);
+        const isCancelled = options?.signal?.aborted;
+        callbacks.onError(
+          isCancelled
+            ? new AIError('已停止生成', this.name)
+            : new AIError(err?.message || 'Claude stream error', this.name),
+        );
       });
     } catch (err: any) {
-      callbacks.onError(new AIError(err.message || 'Claude stream error', this.name));
+      if (options?.signal?.aborted) {
+        callbacks.onError(new AIError(AI_STREAM_CANCELLED, this.name));
+      } else {
+        callbacks.onError(new AIError(err.message || 'Claude stream error', this.name));
+      }
     }
   }
 

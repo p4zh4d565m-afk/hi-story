@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService } from '../services/ai.service';
+import { aiService, AI_STOPPED_MESSAGE } from '../services/ai.service';
 import { POLISH_SYSTEM_PROMPT, buildPolishUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { Chapter, Character, WorldEntry } from '../types';
 import type { TextRange } from './editor/RichEditor';
@@ -296,7 +296,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      const generator = aiService.chatStream(messages, { temperature: 0.5, maxTokens: 8192 });
+      const generator = aiService.chatStream(messages, { temperature: 0.5, maxTokens: 8192 }, projectId);
       let fullText = '';
       for await (const token of generator) {
         fullText = token;
@@ -305,7 +305,8 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
       // 流式结束后，把润色结果转成可编辑纯文本，供用户微调
       setEditablePolishText(htmlToPlainText(fullText));
     } catch (e) {
-      setError(`润色失败：${(e as Error).message}`);
+      const msg = (e as Error).message;
+      if (msg !== AI_STOPPED_MESSAGE) setError(`润色失败：${msg}`);
     } finally {
       setPolishing(false);
     }

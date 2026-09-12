@@ -24,6 +24,7 @@ import RelationEditDialog from './components/RelationEditDialog';
 import { useProject } from './hooks/useProject';
 import { ContextBuilder } from '../main/ai/context-builder';
 import { decrypt } from './services/crypto';
+import { aiService } from './services/ai.service';
 import type { ProviderConfig } from '../main/ai/provider';
 import { useUndo, type UndoCommand } from './hooks/useUndoManager';
 import UndoToast from './components/UndoToast';
@@ -340,6 +341,15 @@ const App: React.FC = () => {
       setCharactersLoading(false); setWorldEntriesLoading(false);
     }
   }, [activeProject?.id, projectDataLoader, resetProjectData]);
+
+  // ===== 切项目：作废旧项目的活跃 AI 流（迟到 token 不进入新项目 UI，一期） =====
+  const prevProjectIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (prevProjectIdRef.current && prevProjectIdRef.current !== activeProject?.id) {
+      aiService.ignoreProjectStreams(prevProjectIdRef.current);
+    }
+    prevProjectIdRef.current = activeProject?.id ?? null;
+  }, [activeProject?.id]);
 
   // Obsidian 是独立的只读资料源：加载失败不能影响 SQLite 项目快照。
   const obsidianLoader = useMemo(() => createObsidianLoader({

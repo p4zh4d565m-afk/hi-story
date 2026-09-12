@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService } from '../services/ai.service';
+import { aiService, AI_STOPPED_MESSAGE } from '../services/ai.service';
 import {
   REVIEW_SYSTEM_PROMPT,
   buildReviewUserPrompt,
@@ -463,14 +463,15 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      const generator = aiService.chatStream(messages, { temperature: 0.4, maxTokens: 8192 });
+      const generator = aiService.chatStream(messages, { temperature: 0.4, maxTokens: 8192 }, projectId);
       let fullText = '';
       for await (const token of generator) {
         fullText = token;
         setRevisedContent(fullText);
       }
     } catch (e) {
-      setError(`AI 修复失败：${(e as Error).message}`);
+      const msg = (e as Error).message;
+      if (msg !== AI_STOPPED_MESSAGE) setError(`AI 修复失败：${msg}`);
     } finally {
       setRevising(false);
     }

@@ -48,7 +48,12 @@ export interface ChatOptions {
   temperature?: number;
   /** 系统角色提示（会作为 system 消息前置） */
   systemPrompt?: string;
+  /** 取消信号。用户点停止或切走项目后，Provider 应据此中止底层请求。 */
+  signal?: AbortSignal;
 }
+
+/** 用户主动取消 AI 流时归一出的错误码（不能显示为普通网络失败）。 */
+export const AI_STREAM_CANCELLED = 'AI_STREAM_CANCELLED';
 
 export interface ProviderConfig {
   name: string;

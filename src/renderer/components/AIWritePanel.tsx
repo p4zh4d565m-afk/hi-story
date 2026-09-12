@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService } from '../services/ai.service';
+import { aiService, AI_STOPPED_MESSAGE } from '../services/ai.service';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
@@ -392,6 +392,15 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (activeOutlineNodeId) setSelectedOutlineId(activeOutlineNodeId);
   }, [activeOutlineNodeId]);
 
+  // ===== 切项目：作废旧项目的活跃流，迟到 token 不再进入本面板（一期） =====
+  const prevProjectIdRef = useRef(projectId);
+  useEffect(() => {
+    if (prevProjectIdRef.current && prevProjectIdRef.current !== projectId) {
+      aiService.ignoreProjectStreams(prevProjectIdRef.current);
+    }
+    prevProjectIdRef.current = projectId;
+  }, [projectId]);
+
   // ===== 断点续写：页面打开时恢复进度 =====
   useEffect(() => {
     if (!open || !projectId) return;
@@ -581,7 +590,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         const generator = aiService.chatStream(messages, {
           temperature: 0.7, maxTokens: targetWords * 3,
           ...(writeModel ? { model: writeModel } : {}),
-        });
+        }, projectId);
         let fullText = '';
         for await (const token of generator) {
           fullText = token;
@@ -688,14 +697,15 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         temperature: 0.7,
         maxTokens: targetWords * 3,
         ...(writeModel ? { model: writeModel } : {}),
-      });
+      }, projectId);
       let fullText = '';
       for await (const token of generator) {
         fullText = token;
         setGeneratedContent(fullText);
       }
     } catch (e) {
-      setError(`AI 写作失败：${(e as Error).message}`);
+      const msg = (e as Error).message;
+      if (msg !== AI_STOPPED_MESSAGE) setError(`AI 写作失败：${msg}`);
     } finally {
       setGenerating(false);
     }
@@ -703,10 +713,10 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
   // ===== 停止生成 =====
   const handleStop = useCallback(() => {
-    // 通过取消 generator 的方式无法停止 IPC 流，但可以换个方法：
-    // 目前简单处理：允许继续等到结束。如需真正中断，需扩展 IPC 支持
+    // 一期：真正中止主进程流；for-await 会抛「已停止」，不会保存。
+    if (projectId) void aiService.cancelActiveStreams(projectId);
     setGenerating(false);
-  }, []);
+  }, [projectId]);
 
   // ===== 保存为新章节 =====
   const handleSave = useCallback(async () => {

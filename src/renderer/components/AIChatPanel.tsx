@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService, type ChatOptions } from '../services/ai.service';
+import { aiService, type ChatOptions, AI_STOPPED_MESSAGE } from '../services/ai.service';
 import { encrypt, decrypt } from '../services/crypto';
 import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
 import { createCreativeDecisionLoader } from '../services/creative-decision-loader';
@@ -630,7 +630,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             })),
             { role: 'user', content: userMessage.content },
           ];
-          return aiService.chatStream(chatMessages, { model: requestConfig.model, maxTokens: 2048 });
+          return aiService.chatStream(chatMessages, { model: requestConfig.model, maxTokens: 2048 }, requestProjectId);
         },
         onProgress: content => {
           if (projectIdRef.current === requestProjectId && activeThreadIdRef.current === requestThreadId) {
@@ -683,6 +683,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     if (requestProjectId) await creativeDecisionLoader.load(requestProjectId);
   };
 
+  // ===== 停止当前对话流（一期：真实中止主进程流） =====
+  const handleStopStream = async () => {
+    const requestProjectId = projectIdRef.current;
+    if (requestProjectId) await aiService.cancelActiveStreams(requestProjectId);
+    setIsStreaming(false);
+    setStreamingText('');
+  };
+
   const handleExtractDecisions = async (message: ChatEntry) => {
     const requestProjectId = projectId;
     const requestThreadId = activeThreadId;
@@ -704,6 +712,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       for await (const text of aiService.chatStream(
         buildDecisionExtractionMessages(message.content),
         { model: requestConfig.model, maxTokens: 2048, temperature: 0.1 },
+        requestProjectId,
       )) {
         extractedText = text;
       }
@@ -1309,12 +1318,13 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             disabled={isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
           />
           <button
-            onClick={sendMessage}
-            disabled={!input.trim() || isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
-            className="px-4 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover
-                       disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end"
+            onClick={isStreaming ? handleStopStream : sendMessage}
+            disabled={isStreaming ? false : (!input.trim() || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId)}
+            className={isStreaming
+              ? 'px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-500 transition-colors self-end'
+              : 'px-4 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end'}
           >
-            {isStreaming ? '...' : '发送'}
+            {isStreaming ? '⏹ 停止' : '发送'}
           </button>
         </div>
       </div>

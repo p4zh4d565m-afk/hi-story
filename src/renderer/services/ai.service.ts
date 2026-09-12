@@ -2,7 +2,12 @@ import type { ChatMessage } from '../../main/ai/provider';
 
 export interface AIService {
   chat: (messages: ChatMessage[], options?: ChatOptions) => Promise<string>;
-  chatStream: (messages: ChatMessage[], options?: ChatOptions) => AsyncGenerator<string>;
+  /** 流式对话。projectId 用于取消校验与切项目拒收；不传则无法取消/隔离。 */
+  chatStream: (messages: ChatMessage[], options?: ChatOptions, projectId?: string) => AsyncGenerator<string>;
+  /** 停止：真正 abort 该项目下所有活跃流，对应 generator 抛「已停止」，不会保存。 */
+  cancelActiveStreams: (projectId: string) => Promise<void>;
+  /** 作废某项目下所有活跃流：后续 token 不再 yield（切项目用，不主动 abort 主进程请求）。 */
+  ignoreProjectStreams: (projectId: string) => void;
   validateKey: (provider: string, apiKey: string, model: string, baseUrl?: string) => Promise<boolean>;
   getModels: (provider: string) => Promise<string[]>;
   configure: (provider: string, apiKey: string, model?: string, baseUrl?: string) => void;
@@ -15,11 +20,22 @@ export interface ChatOptions {
   systemPrompt?: string;
 }
 
+/** streamId → 桥接状态。cancelStream / ignoreProjectStreams 靠它唤醒或作废对应 generator。 */
+interface StreamBridge {
+  projectId: string;
+  ignored: boolean;
+  cancelled: boolean;
+  wake: (() => void) | null;
+}
+
+export const AI_STOPPED_MESSAGE = '已停止生成，不会保存';
+
 class AIServiceImpl implements AIService {
   private currentProvider: string = 'claude';
   private currentApiKey: string = '';
   private currentModel: string = 'claude-sonnet-4-6';
   private currentBaseUrl: string = '';
+  private streamBridges = new Map<string, StreamBridge>();
 
   configure(provider: string, apiKey: string, model?: string, baseUrl?: string) {
     this.currentProvider = provider;
@@ -50,10 +66,10 @@ class AIServiceImpl implements AIService {
    * 使用主进程的 ai:chatStream IPC + webContents 事件，
    * 每个 token 到达时立即 yield，用户能看到逐字输出的效果。
    *
-   * 之前是"假流式"：等完整回复返回后再用循环模拟打字。
-   * 现在改为真正的 token-by-token 流式，大幅降低首字延迟。
+   * 一期起：调用时登记 streamId → projectId 映射；收到事件时若映射被作废（切项目）
+   * 或已取消，则不 yield。取消由 cancelStream 唤醒并抛错，避免 for-await 永远挂住。
    */
-  async *chatStream(messages: ChatMessage[], options?: ChatOptions): AsyncGenerator<string> {
+  async *chatStream(messages: ChatMessage[], options?: ChatOptions, projectId?: string): AsyncGenerator<string> {
     const config: any = {
       name: this.currentProvider,
       apiKey: this.currentApiKey,
@@ -66,12 +82,15 @@ class AIServiceImpl implements AIService {
     }
 
     // 调用主进程真正的流式 IPC（会立即返回 streamId）
-    const result = await window.electronAPI.invoke('ai:chatStream', config, messages, options) as any;
+    const result = await window.electronAPI.invoke('ai:chatStream', config, messages, options, projectId ?? '') as any;
     if (!result.success) {
       throw new Error(result.error || 'AI 请求失败');
     }
 
     const { streamId } = result.data as { streamId: string };
+
+    const bridge: StreamBridge = { projectId: projectId ?? '', ignored: false, cancelled: false, wake: null };
+    this.streamBridges.set(streamId, bridge);
 
     // 用 Promise 驱动的队列桥接 IPC 事件和 async generator
     const pendingTokens: string[] = [];
@@ -81,6 +100,7 @@ class AIServiceImpl implements AIService {
 
     const onToken = (sid: string, token: string) => {
       if (sid !== streamId) return;
+      if (bridge.ignored || bridge.cancelled) return;
       pendingTokens.push(token);
       pendingResolve?.();
     };
@@ -108,31 +128,35 @@ class AIServiceImpl implements AIService {
       unsubscribeComplete();
       unsubscribeError();
     };
+    // 暴露唤醒能力给 cancelStream：取消后主进程不再发事件，必须主动唤醒 generator
+    bridge.wake = () => pendingResolve?.();
 
     try {
       let fullText = '';
       let lastYieldTime = 0;
-      while (!finished) {
+      while (true) {
+        if (bridge.cancelled) throw new Error(AI_STOPPED_MESSAGE);
+        // 优先 drain 积攒的 token：即使 finished 已置位（complete 与最后 token 同 tick 到达），也不能丢。
         if (pendingTokens.length > 0) {
-          // 合并所有积攒的 token
           fullText += pendingTokens.join('');
           pendingTokens.length = 0;
-          // 每 ~30ms yield 一次，保证流畅渲染且不造成过多 re-render
           const now = Date.now();
           if (now - lastYieldTime > 30) {
             yield fullText;
             lastYieldTime = now;
           }
-        } else {
-          // 如果之前有积累文本但还没 yield，现在 yield
-          if (Date.now() - lastYieldTime > 30 && fullText) {
-            yield fullText;
-            lastYieldTime = Date.now();
-          }
-          // 等待下一个事件
-          await new Promise<void>((resolve) => { pendingResolve = resolve; });
-          if (streamError) throw streamError;
+          continue;
         }
+        if (finished) break;
+        // 之前有积累文本但还没 yield，现在补一次
+        if (Date.now() - lastYieldTime > 30 && fullText) {
+          yield fullText;
+          lastYieldTime = now;
+        }
+        // 等待下一个事件
+        await new Promise<void>((resolve) => { pendingResolve = resolve; });
+        if (bridge.cancelled) throw new Error(AI_STOPPED_MESSAGE);
+        if (streamError) throw streamError;
       }
       // 确保最后一次 yield 包含完整文本
       if (fullText) {
@@ -140,6 +164,31 @@ class AIServiceImpl implements AIService {
       }
     } finally {
       cleanup();
+      this.streamBridges.delete(streamId);
+    }
+  }
+
+  async cancelActiveStreams(projectId: string): Promise<void> {
+    // 先复制出所有属于该项目的活跃流，逐个精确取消；作废 + 唤醒对应 generator。
+    const targets = [...this.streamBridges.entries()]
+      .filter(([, b]) => b.projectId === projectId && !b.ignored)
+      .map(([id]) => id);
+    for (const streamId of targets) {
+      const bridge = this.streamBridges.get(streamId);
+      if (bridge) {
+        bridge.ignored = true;
+        bridge.cancelled = true;
+        bridge.wake?.();
+      }
+      await window.electronAPI.invoke('ai:cancelStream', streamId, projectId);
+    }
+  }
+
+  ignoreProjectStreams(projectId: string): void {
+    for (const bridge of this.streamBridges.values()) {
+      if (bridge.projectId === projectId) {
+        bridge.ignored = true;
+      }
     }
   }
 

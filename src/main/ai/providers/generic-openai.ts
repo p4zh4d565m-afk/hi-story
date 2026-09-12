@@ -1,5 +1,5 @@
 import type { AIProvider, ChatMessage, ChatOptions, StreamCallbacks, ProviderConfig, EmbedOptions } from '../provider';
-import { AIError } from '../provider';
+import { AIError, AI_STREAM_CANCELLED } from '../provider';
 import { mergeSystemPrompt } from '../merge-system-prompt';
 
 /**
@@ -78,8 +78,17 @@ export class GenericOpenAIProvider implements AIProvider {
     const url = `${this.baseUrl}/chat/completions`;
     const merged = mergeSystemPrompt(messages, options?.systemPrompt);
 
-    // 构建 AbortController 用于超时保护
+    // 构建 AbortController：合并「用户取消 signal」与「超时」两路，任一方 abort 都取消
     const abortController = new AbortController();
+    const userSignal = options?.signal;
+    const onUserAbort = () => abortController.abort();
+    if (userSignal?.aborted) {
+      // 已经开始前就被取消：直接归一为取消错误，不发请求
+      callbacks.onError(new AIError(AI_STREAM_CANCELLED, this.name));
+      return;
+    }
+    userSignal?.addEventListener('abort', onUserAbort, { once: true });
+
     const timeoutMs = 120_000; // 2 分钟超时
     const timeoutId = setTimeout(() => abortController.abort(), timeoutMs);
 
@@ -167,7 +176,10 @@ export class GenericOpenAIProvider implements AIProvider {
       // 流自然结束（没有收到 [DONE] 但 reader 已经 done）
       callbacks.onComplete(fullText);
     } catch (err: any) {
-      if (err.name === 'AbortError') {
+      if (userSignal?.aborted) {
+        // 用户主动取消：归一为取消错误码（区别于超时）
+        callbacks.onError(new AIError(AI_STREAM_CANCELLED, this.name));
+      } else if (err.name === 'AbortError') {
         callbacks.onError(new AIError('请求超时（2分钟），请重试', this.name));
       } else if (err instanceof AIError) {
         callbacks.onError(err);
@@ -176,6 +188,7 @@ export class GenericOpenAIProvider implements AIProvider {
       }
     } finally {
       clearTimeout(timeoutId);
+      userSignal?.removeEventListener('abort', onUserAbort);
     }
   }
 
