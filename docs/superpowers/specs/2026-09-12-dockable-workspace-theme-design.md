@@ -1,6 +1,6 @@
 # Dockable Workspace 与主题系统：代码审查 + 实施方案
 
-> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0 已 commit（`cf9bbe0`）。P1 已 commit（`d9c83cb`）。P2 已 commit（`0e4e125` + 修复 `30c08f1`）。P3/P4 未开始。文内「Spec 审查意见」已把终态与 P2 范围拆开，避免按终态示意图超做。**
+> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0/P1/P2 已 commit。P3 已编码（`cda1205`→`28ea4b8`，拖拽/保活真窗口手测待补），未标「落地」。P4 未开始。**
 >
 > 日期：2026-09-12
 >
@@ -8,6 +8,7 @@
 > - P0 计划：`docs/superpowers/plans/2026-09-12-workspace-p0-layout-bleed.md`
 > - P1 计划：`docs/superpowers/plans/2026-09-12-workspace-p1-theme.md`
 > - P2 计划：`docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md`
+> - P3 计划：`docs/superpowers/plans/2026-09-12-workspace-p3-dock.md`
 
 ## 一句话目标
 
@@ -43,7 +44,7 @@
 | P0 止血 | **已 commit** `cf9bbe0` | `docs/superpowers/plans/2026-09-12-workspace-p0-layout-bleed.md` | 单测 12/12、写作 UI 12/12 |
 | P1 主题 | **已 commit** `d9c83cb` | `docs/superpowers/plans/2026-09-12-workspace-p1-theme.md` | `theme.test` 4/4、`workspace-p0` 12/12、写作 UI 12/12、`npx vite build` 通过 |
 | P2 分隔条 + 折叠 | **已 commit** `0e4e125` + 修复 `30c08f1` | `docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` | `workspace-p2` 3/3、`workspace-p0` 12/12、`theme` 4/4、写作 UI 12/12、`npx vite build` 通过；手测已过（见下） |
-| P3 拖进槽 | 未开始 | 等 P2 收口后再写计划 | — |
+| P3 拖进槽 | **已编码，未真窗口手测**（`cda1205`→`0fd6268`→`5c1c664`→`0b0cbc0`→`b80f966`→`28ea4b8`） | `docs/superpowers/plans/2026-09-12-workspace-p3-dock.md` | `workspace-layout` 22/22、全量 378、写作 UI 12/12、`npx vite build` 通过；拖拽/保活真窗口手测待补 |
 | P4 预设 | 未开始 | 等 P3 | — |
 
 ### P1 实际做了什么
@@ -64,7 +65,12 @@
 
 ### 下一步：P3（拖放进槽 + `WorkspaceLayoutV1`）
 
-P2 已收口（`0e4e125` + 修复 `30c08f1`）。下一步是 P3——Spec 风险最高的一步（保活 + 拖放 + 抽布局模型），先写实施计划再编码。
+计划已写。编码前两处已拍板（详见计划「已确认决策」与下文「P3 定案」）：
+
+1. **AI 对话本 P3 不迁。** 仍用 P2 的 center 内侧列。§8「AI 默认 right」是终态，入槽单开一小步。打开 💬 不走 `movePanel`。
+2. **六个工具默认 3+3。** 大纲/素材/伏笔 → right；写章/审稿/润色 → bottom。不要统一 right，也不要「只有审稿在 bottom」。
+
+`WorkspaceLayoutV1` 本轮**不是**全部 `panelState` 的唯一源：只管六个工具 + 灵感/参考/起名 + 侧栏。`aiChatOpen` / `aiChatMinimized` / `aiLevel` 仍留 P2。空 bottom：有面板才挂 Separator / `BOTTOM_MIN_PX`。编码未开始。
 
 ### P2 收口记录（2026-09-12）
 
@@ -75,6 +81,20 @@ P2 已收口（`0e4e125` + 修复 `30c08f1`）。下一步是 P3——Spec 风�
   2. AI/右栏条件渲染导致 `useDefaultLayout` 持久化 layout 与当前面板数对不上、刷新回默认。修：按当前组合传 `panelIds`（h/v/center 三组）。
 - **手测结论**：拖分隔条改占比、折叠侧栏出 24px 轨并恢复、刷新比例保留、空 bottom 拖不出空白带，均已过。
 - **未覆盖**：仍无 Electron 几何 E2E，几何行为靠库背书 + 手测，无自动回归锁。
+
+### P2 收口第二人复核（2026-09-12，给实现者看）
+
+**结论：P2 可以算收口。** L1–L3 都做到了；`0e4e125` 主体 → `30c08f1` 修手测 bug → `b3fb979` 只改文档，没有和主题色混 commit。手测抓到的两个接线 bug（☰ 未真 collapse、条件面板缺 `panelIds`）修对了，比「测试全绿就宣布落地」扎实。写作区 `hidden`、三面板 `display:none`、`contextPanel` 未顺手删，纪律也对。
+
+下面 5 条是建议，**不是判定 P2 没做完**。P3 开工前请过一遍。
+
+1. **先别开 P3 编码。** 下一步是抽 `WorkspaceLayoutV1` + 拖放 + 浮窗入槽，Spec 里风险最高。先写 `docs/superpowers/plans/2026-09-12-workspace-p3-dock.md`（或当日文件名），写清：写作区保活、AI 三面板 `display:none`、`applyRightAuxExclusive` 泛型随 layout model 一起改、空 bottom **有面板进槽才**挂 Separator / `minSize`。计划评审后再编码。**（后续：计划已写、两处定案已锁。编码仍等用户发话，不要从本复核段直接开工。）**
+2. **把刚修的两个 bug 收成纯函数单测。** 现在 `tests/unit/workspace-p2.test.ts` 只有 3 条布尔，锁不住 `30c08f1`。至少把 h/v/c 三组 `panelIds` 抽成函数（有右栏/无右栏、有 AI/无 AI），P3 改 Group 时刷新丢比例会再犯且没有自动网。侧栏 `expand/collapse` 双向同步很难单测，至少在 P3 计划里列为回归手测，不要只靠记忆。
+3. **空 bottom 仍是 P3 的雷。** `bottomRef` 建了却从不 `collapse()`，Panel 仍是 `defaultSize={0}` + `minSize={120}`。P2 因为没画纵向 Separator，手测拖不出来；P3 一加条就会按 120px 弹开。P3 计划写死：无面板时不挂条、不生效 `BOTTOM_MIN_PX`。
+4. **本计划文件当时没写验证结果。** Spec / CLAUDE 已标落地，`workspace-p2-splitter.md` 文末曾停在「不提交。等用户发话。」实现者不要按那句当未完工。以本收口 + 计划文末补的验证结果为准。
+5. **手测记录缺 1000 宽和关列。** 收口写了拖条、侧栏轨、刷新、空 bottom。计划验收里还有：关掉/最小化 AI、关掉右栏、约 1000 宽顶栏仍点得到。若没测过，P3 前补 1 分钟；测过了把一句补进上面「手测结论」。
+
+P3 拖放不能只靠手测，`node tests/ui/run-writing-workspace.cjs` 必须继续当门。
 
 ---
 
@@ -91,9 +111,9 @@ P2 已收口（`0e4e125` + 修复 `30c08f1`）。下一步是 P3——Spec 风�
 
 | 终态（§推荐技术方案 / §8 / §10） | 实际阶段 |
 |----------------------------------|----------|
-| 四槽 + 槽内标签 + 拖进槽 | **P3** |
-| AI 打开进入 **right**（与灵感同槽标签） | **P3**。P2 保持 AI 在编辑器右侧独立列 |
-| 大纲/写章/审稿默认入槽 | **P3** |
+| 四槽 + 槽内标签 + 拖进槽 | **P3**（本轮只迁六个浮窗；AI 对话不进槽） |
+| AI 打开进入 **right**（与灵感同槽标签） | **终态 / P3 之后一小步**。本 P3 不迁。P2 保持 AI 在编辑器右侧独立列 |
+| 大纲/素材/伏笔默认 right；写章/审稿/润色默认 bottom | **本 P3**。不要统一 right，也不要「只有审稿在 bottom」 |
 | 左/右/底都 24px 边轨 | **P3**。P2 只有侧栏轨 |
 | `hi-story-workspace-v1` 管面板归属 | **P3**。P2 只用库 persistence 管比例 |
 | 抽出 `WorkspaceLayoutV1` 再换 splitter | **不要按 §7 原文顺序。** 实际是 P0 止血 → P1 主题 → P2 先换 splitter（不抽模型）→ P3 再抽模型 |
@@ -106,7 +126,7 @@ P0 已做：灵感/参考/起名互斥、顶栏 `flex-wrap`、浮窗夹紧、AI 
 P1 已做：CSS 变量、Light/Dark、顶栏切换。  
 §0「宽度重启即丢 / 没有主题」、§1.1「唯一持久化是字号」、§3.1「宽度只在内存」、§3.3–3.5 里对应条目、§11「无 CSS 变量 / 语义色是编译期常量」——都是开工前快照。
 
-§3.5 第 2 条「没有纵向分割」仍真，归 P2 占位、P3 才把 AI 拖到下方。
+§3.5 第 2 条「没有纵向分割」：P2 已加空 bottom 占位；**本 P3** 把写章/审稿/润色放进 bottom。把 AI 对话拖到下方是终态/后续一小步，本 P3 不做。
 
 ### 仍成立、编码必须遵守
 
@@ -341,14 +361,14 @@ HiStower 已经有一个名叫 `DockLayout` 的布局壳，但**不是**可停�
 | 面板 | 默认槽 | 说明 |
 |------|--------|------|
 | 侧栏（项目/章节/人物/世界观） | left | 可停到 right；不进 bottom（列表过矮难用） |
-| AI 对话 | right | 最需要和编辑器并排或放到下方 |
+| AI 对话 | 终态 right；**本 P3 不迁** | 仍停 P2 的 center 内侧列。入槽单开一小步，避免和 right 槽双份真相 |
 | 灵感 / 参考 / 起名 | right | 改为标签页，禁止再横向叠三个 |
-| 大纲 | right 或 bottom | 现在是挡编辑器的大浮窗 |
-| 素材 | right | 同上 |
-| 伏笔 / 钩子追踪 | right 或 bottom | 同上 |
-| AI 写章 | right 或 bottom | 几何从组件内抽到布局；**实例保活** |
-| AI 审稿 | right 或 bottom | 同上 |
-| 润色 | right | 需要对照正文，默认右侧 |
+| 大纲 | **P3 默认 right** | 可拖到底；不再盖编辑器 |
+| 素材 | **P3 默认 right** | 同上 |
+| 伏笔 / 钩子追踪 | **P3 默认 right** | 可拖到底 |
+| AI 写章 | **P3 默认 bottom** | 几何从组件内抽到布局；**实例保活**；可拖到 right |
+| AI 审稿 | **P3 默认 bottom** | 同上。正文够宽优先于并排；用户可拖到 right |
+| 润色 | **P3 默认 bottom**（终态表曾写 right） | 对照已在面板内部完成；外壳放 bottom 让编辑器保持宽度；可拖到 right |
 | Obsidian 只读浏览 | 保持模态（P3 第一刀不改） | 审查时写「可改为可停靠」；导入向导仍用模态。浏览有路径/扫描语义，不并进第一批入槽 |
 | 角色思维导图 | bottom 或 right | 需要较大画布；允许「弹出浮动」作为例外 |
 
@@ -402,7 +422,7 @@ interface WorkspaceLayoutV1 {
 
 比例由 `react-resizable-panels` 的持久化（v4：`useDefaultLayout`）另存一份亦可，但**面板归属**必须由我们的 JSON 管，不能只靠库。
 
-**过渡（审查补丁）：** P2 **不**创建 `hi-story-workspace-v1`。P0 的 `hi-story-panel-widths` 只当种子；P2 比例只写库；P3 才引入上表 schema。三套 key 禁止同时当写手。
+**过渡（审查补丁）：** P2 **不**创建 `hi-story-workspace-v1`。P0 的 `hi-story-panel-widths` 只当种子；P2 比例只写库；P3 才引入上表 schema。三套 key 禁止同时当写手。**本 P3 收窄：** 归属 JSON 管六个工具 + 灵感/参考/起名 + 侧栏；`aiLevel` / `aiChatOpen` **先不**并进这份 JSON，仍走现有 `panelState`。
 
 持久化粒度：
 
@@ -499,14 +519,14 @@ interface WorkspaceLayoutV1 {
 - 折叠：终态下槽 `collapsed` 后显示一条 24px 边轨，点击恢复。**P2 只做侧栏轨**；AI / 右栏关闭仍卸载。
 - 中央永不折叠。
 
-### 默认布局（终态，P3 入槽后；P2 仍接近今天的三列）
+### 默认布局（P3 入槽后；与终态「AI 也进 right」不同）
 
-- left: 侧栏，280
-- center: 写作或策划；P2 时 AI 仍在 center 内侧，不进 right
-- right: 终态为空，打开 AI 对话时进入 right（**P3**）；P2 的 right 仍是灵感/参考/起名
-- bottom: 空；P2 占位但不可拖开
-- 大纲 / 素材 / 伏笔 / 写章 / 审稿 / 润色 / 导图：终态从「默认浮动」改为「默认进入 right 或 bottom 的标签」（**P3**）
-- 导图额外提供「弹出浮动」，浮动几何仍可 persist
+- left: 侧栏
+- center: 写作或策划；**AI 对话仍在 center 内侧**（本 P3 不进 right）
+- right: 打开时默认进大纲 / 素材 / 伏笔，以及灵感/参考/起名标签；空则槽收起
+- bottom: 打开时默认进写章 / 审稿 / 润色；无面板不挂 Separator、不弹开
+- 导图：浮动例外；浮动几何仍 persist
+- 打开后再拖，归属写入 `hi-story-workspace-v1`
 
 ### 主题
 
@@ -545,7 +565,7 @@ interface WorkspaceLayoutV1 {
 | 文件 | 改什么 |
 |------|--------|
 | `src/renderer/components/DockLayout.tsx` | P2：消费 Group/Panel；P3：再消费 layout model |
-| `src/renderer/App.tsx` | panelState 迁到 layout hook；顶栏加主题切换 |
+| `src/renderer/App.tsx` | P3：六个工具 + 灵感/参考/起名 + 侧栏走 layout hook；**保留** `aiChatOpen` 等。顶栏主题切换已是 P1 |
 | `tailwind.config.js` | 颜色改指向 CSS 变量 |
 | `src/renderer/styles/index.css` | 引入 tokens，滚动条/选区用变量 |
 | `src/renderer/index.html` | 可在载入前用一小段脚本读 theme，防闪白 |
@@ -601,7 +621,7 @@ interface WorkspaceLayoutV1 {
 
 ### P2 — Splitter 库替换 + 折叠
 
-**优先级：高。计划：`docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md`（编码未开始）。**
+**优先级：高。计划：`docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md`（已 commit）。**
 
 1. 加 `react-resizable-panels`。
 2. left | center | right 可拖比例，带 minSize。
@@ -613,15 +633,16 @@ interface WorkspaceLayoutV1 {
 
 ### P3 — 结构化停靠（拖放到槽）
 
-**优先级：中高，依赖 P2 的槽。**
+**优先级：中高，依赖 P2 的槽。计划：`docs/superpowers/plans/2026-09-12-workspace-p3-dock.md`（定案已锁，编码未开始）。**
 
-1. `WorkspaceLayoutV1` 成为唯一布局源，替换 `panelState` 布尔森林。
+1. `WorkspaceLayoutV1` 管六个工具 + 灵感/参考/起名 + 侧栏；**不**替换 `aiChatOpen`（AI 对话仍 P2 列）。
 2. `PanelChrome` + Drop Zone 预览。
-3. 把大纲 / 素材 / 伏笔 / 写章 / 审稿 / 润色从默认浮动改为入槽。Obsidian 只读浏览本阶段仍模态。
-4. 保活：center 的 WritingArea、display 隐藏的 AI 三面板。
+3. 大纲 / 素材 / 伏笔默认 **right**；写章 / 审稿 / 润色默认 **bottom**。Obsidian 只读浏览仍模态。
+4. 保活：center 的 WritingArea、display 隐藏的 AI 三面板。入槽 ≠ `key` 重置。
 5. 导图允许浮动例外。
+6. 空 bottom 有面板才挂 Separator / `BOTTOM_MIN_PX`。
 
-验收：把「审稿」拖到下方，编辑器变矮、审稿变高；刷新后仍在下方；切策划再回来正文未丢。
+验收：打开大纲进 right、打开审稿进 bottom；把审稿拖到 right 刷新仍在；切策划再回来正文未丢；💬 不出现在 right 槽标签。
 
 ### P4 — 工作区预设
 
@@ -665,7 +686,7 @@ interface WorkspaceLayoutV1 {
 
 - [ ] **P0** 1000×600：侧栏可关，顶栏可点到写章/AI，无遮挡死区
 - [ ] **P0/P2** 最大化：编辑器变高变宽，不是中间一条
-- [ ] **P3** 拖 AI 对话到下方：编辑器在上、对话在下，分隔条可拉
+- [ ] **终态 / 后续一小步** 拖 AI 对话到下方：编辑器在上、对话在下。**本 P3** 打开 💬 仍在 center 内侧，不进 right 槽标签
 - [ ] **P2** 折叠侧栏再打开：出现 24px 轨后恢复，宽度/比例还在
 - [ ] **P3** 重启应用：槽位、尺寸、折叠、主题与上次一致（P1 只保证主题；P2 保证比例；槽位是 P3）
 - [ ] **P0 起一直要** 策划 ↔ 写作：未保存正文仍在，自动保存仍触发
@@ -673,7 +694,7 @@ interface WorkspaceLayoutV1 {
 - [ ] **P1** Light / Dark 切换：侧栏、编辑器、AI 对话、顶栏一致；无需重启（写章灰底第二批）
 - [ ] 决策账本仍是模态，请求中关不掉
 - [ ] **P0** 同时打开灵感+参考：互斥，不是并排吃掉正文。**P3** 才改成同槽标签
-- [ ] **P2** 空 bottom 拖不出空白带；写章浮窗仍浮着
+- [ ] **P2** 空 bottom 拖不出空白带；**P3 前**写章浮窗仍浮着。**本 P3** 打开大纲进 right、打开审稿进 bottom；空 bottom 仍不挂 Separator
 
 ---
 
@@ -689,6 +710,15 @@ interface WorkspaceLayoutV1 {
 6. **主题**：P1 与 P0 可并行（正交、互不阻塞）；Light 用暖纸墨字，Dark 保持现有林间稿纸。**澄清：并行 ≠ 混改。** P0 动 DockLayout 几何、P1 动 tailwind 颜色，两者都碰 DockLayout；每个 P 内部仍一步一提交，P0 收口 commit 完再开 P1 颜色改，避免回滚时互相牵连。
 7. **死代码**：`Layout.tsx` / `MainArea.tsx` / `ContextPanel.tsx` 一期保留，不强制删除。不在主路径，顺手删会把范围扯进无测试旧组件；P3 稳定后再标废弃或删。
 
-**开工顺序**：P0 止血（已 commit `cf9bbe0`）→ P1 主题令牌（已编码未提交，须单独 commit）→ P2 分隔条与折叠（计划已写，编码未开始）→ P3 拖进槽 → P4 预设。
+**开工顺序**：P0 止血（已 commit `cf9bbe0`）→ P1 主题（已 commit `d9c83cb`）→ P2 分隔条（已 commit `0e4e125` + 修复）→ P3 拖进槽（计划已写、定案已锁、编码未开始）→ P4 预设。
 
 **P3 备忘：** `applyRightAuxExclusive` 的 `T extends Record<RightAuxKey, boolean>` 绑的是当前 `panelState` 三字段；抽 `WorkspaceLayoutV1` 时一并改泛型，P0/P1/P2 不提前重构。
+
+### P3 定案（2026-09-12，第二人拍板；编码未开始）
+
+对方写计划时发现 Spec 两处没锁死。口头「只有审稿在 bottom、其余五个在 right」**作废**。完整理由在计划文末「已确认决策」。
+
+1. **AI 对话本 P3 不迁。** 同意对方的保守方案。§8「AI 默认 right」是终态；本轮只迁六个浮窗。打开 💬 不走 `movePanel`；`movePanel` 拒绝 `aiChat`。避免 center 内侧列和 right 槽双份真相，也避免「对话可卸载」和「写章/审稿/润色 `display:none` 保活」挤进同一套标签寿命。
+2. **六个工具默认 3+3，不要「只有审稿在 bottom」。** 大纲/素材/伏笔 → right（列表查阅）；写章/审稿/润色 → bottom（大工作面，正文够宽）。润色对照已在面板内部完成，外壳放 bottom；用户仍可拖到 right，刷新记住。灵感/参考/起名进 right 当标签，与大纲三类共用右侧。
+3. **`WorkspaceLayoutV1` 本轮收窄。** 只管六个工具 + 灵感/参考/起名 + 侧栏，**不是**全部 `panelState` 的唯一源。`aiChatOpen` / `aiChatMinimized` / `aiLevel` 仍留 P2。
+4. **空 bottom：** 有面板才挂 Separator / 生效 `BOTTOM_MIN_PX`。无面板不挂条、不弹开。Obsidian 浏览仍模态。导图可浮动。
