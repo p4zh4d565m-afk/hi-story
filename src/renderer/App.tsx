@@ -36,6 +36,7 @@ import { createProjectDataLoader } from './services/project-data-loader';
 import { createImportedEntitiesRefresher } from './services/imported-entities-refresher';
 import { createObsidianLoader } from './services/obsidian-loader';
 import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './services/ai-runtime-context-loader';
+import { factsToHookDrafts, type ChapterExtractionFact } from './services/chapter-extraction-proposals';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -1331,9 +1332,19 @@ const App: React.FC = () => {
                   const r = await window.electronAPI.invoke('db:chapter:update', { id: chapterId, summary: extraction.summary }) as any;
                   if (!r?.success) console.error('摘要写库失败', r?.error);
                 }
-                if (extraction.facts && extraction.facts.length > 0) {
+                const facts = extraction.facts ?? [];
+                // A5 钩子单轨：hook 类型进决策提议（待确认），非 hook 仍自动落库
+                const hookDrafts = factsToHookDrafts(facts as ChapterExtractionFact[], chapterId);
+                if (hookDrafts.length > 0) {
+                  const r = await window.electronAPI.invoke('db:creativeDecisions:createChapterExtractionProposals', {
+                    projectId, drafts: hookDrafts,
+                  }) as any;
+                  if (!r?.success) console.error('钩子提议写库失败', r?.error);
+                }
+                const nonHookFacts = facts.filter((f: any) => f.factType !== 'hook');
+                if (nonHookFacts.length > 0) {
                   const r = await window.electronAPI.invoke('db:storyFacts:batchUpsert', {
-                    projectId, chapterId, facts: extraction.facts,
+                    projectId, chapterId, facts: nonHookFacts,
                   }) as any;
                   if (!r?.success) console.error('事实写库失败', r?.error);
                 }

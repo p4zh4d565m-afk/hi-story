@@ -58,27 +58,47 @@ export class CreativeDecisionRepo {
       }
       this.requireAssistantSource(input.projectId, input.sourceThreadId, input.sourceMessageId);
       input.drafts.forEach(draft => this.validateDraft(input.projectId, draft));
-
-      const create = this.db.transaction(() => input.drafts.map(draft => {
-        this.requireNoPendingTarget(input.projectId, draft);
-        const id = crypto.randomUUID();
-        const now = new Date().toISOString();
-        this.db.prepare(`
-          INSERT INTO creative_decisions (
-            id, project_id, source_thread_id, source_message_id, parent_decision_id,
-            decision_type, title, rationale, payload_json, status, created_at
-          ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 'proposed', ?)
-        `).run(
-          id, input.projectId, input.sourceThreadId, input.sourceMessageId,
-          draft.type, draft.title.trim(), draft.rationale.trim(), JSON.stringify(draft.payload), now,
-        );
-        return this.requireDecision(input.projectId, id);
-      }));
-
-      return { success: true, data: create.immediate() };
+      return { success: true, data: this.insertProposals(input.projectId, null, null, input.drafts) };
     } catch (error) {
       return failure(error);
     }
+  }
+
+  /**
+   * 章节抽取产生的钩子/债务提议（A5 钩子单轨）。
+   * 来源不是对话里的 assistant 消息，sourceThreadId/sourceMessageId 恒为 null，
+   * 故不走 requireAssistantSource；但仍走 validateDraft 与 requireNoPendingTarget。
+   */
+  createChapterExtractionProposals(input: { projectId: string; drafts: CreativeDecisionDraft[] }): IpcResult<CreativeDecision[]> {
+    try {
+      if (!Array.isArray(input.drafts) || input.drafts.length === 0) {
+        throw new Error('没有可保存的决策提议');
+      }
+      input.drafts.forEach(draft => this.validateDraft(input.projectId, draft));
+      return { success: true, data: this.insertProposals(input.projectId, null, null, input.drafts) };
+    } catch (error) {
+      return failure(error);
+    }
+  }
+
+  /** 单事务批量插入 proposed 提议（createProposals 与 createChapterExtractionProposals 共用） */
+  private insertProposals(projectId: string, sourceThreadId: string | null, sourceMessageId: string | null, drafts: CreativeDecisionDraft[]): CreativeDecision[] {
+    const create = this.db.transaction(() => drafts.map(draft => {
+      this.requireNoPendingTarget(projectId, draft);
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      this.db.prepare(`
+        INSERT INTO creative_decisions (
+          id, project_id, source_thread_id, source_message_id, parent_decision_id,
+          decision_type, title, rationale, payload_json, status, created_at
+        ) VALUES (?, ?, ?, ?, NULL, ?, ?, ?, ?, 'proposed', ?)
+      `).run(
+        id, projectId, sourceThreadId, sourceMessageId,
+        draft.type, draft.title.trim(), draft.rationale.trim(), JSON.stringify(draft.payload), now,
+      );
+      return this.requireDecision(projectId, id);
+    }));
+    return create.immediate();
   }
 
   findByProject(projectId: string): IpcResult<CreativeDecision[]> {

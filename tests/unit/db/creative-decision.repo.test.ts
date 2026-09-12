@@ -249,6 +249,34 @@ describe('CreativeDecisionRepo', () => {
     });
   }
 
+  it('A5：章节抽取提议无需 assistant 来源，source 字段为 null', () => {
+    const draft: CreativeDecisionDraft = {
+      type: 'narrative_hook',
+      title: '带血车票',
+      rationale: '章节抽取：chapter-a',
+      payload: {
+        subject: '旧车站', hookType: 'foreshadowing', description: '旧车站留下带血车票', intensity: 3,
+        chapterId: 'chapter-a',
+      },
+    };
+    const res = repo.createChapterExtractionProposals({ projectId: 'project-a', drafts: [draft] });
+    expect(res.success).toBe(true);
+    expect(res.data![0].sourceThreadId).toBeNull();
+    expect(res.data![0].sourceMessageId).toBeNull();
+    expect(res.data![0].status).toBe('proposed');
+  });
+
+  it('A5：旧 createProposals 路径仍要求 assistant 来源（不被放宽）', () => {
+    const res = repo.createProposals({
+      projectId: 'project-a',
+      sourceThreadId: 'thread-a',
+      sourceMessageId: 'user-a', // user 消息，非 assistant
+      drafts: [fourDrafts[2]],
+    });
+    expect(res.success).toBe(false);
+    expect(res.error).toContain('AI 回复');
+  });
+
   it('一次事务确认四类提议并写入对应目标表和效果表', () => {
     const proposals = createProposals();
     expect(proposals.success).toBe(true);

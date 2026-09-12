@@ -28,6 +28,13 @@ export function registerCreativeDecisionIpc(): void {
       catch (error) { return { success: false, error: (error as Error).message }; }
     },
   );
+  ipcMain.handle(
+    'db:creativeDecisions:createChapterExtractionProposals',
+    (_event, input: { projectId: string; drafts: CreateCreativeDecisionProposalsInput['drafts'] }) => {
+      try { return getRepo().createChapterExtractionProposals(input); }
+      catch (error) { return { success: false, error: (error as Error).message }; }
+    },
+  );
   ipcMain.handle('db:creativeDecisions:findByProject', (_event, projectId: string) => {
     try { return getRepo().findByProject(projectId); }
     catch (error) { return { success: false, error: (error as Error).message }; }
