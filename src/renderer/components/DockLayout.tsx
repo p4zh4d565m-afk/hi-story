@@ -100,17 +100,28 @@ const SlotView: React.FC<{
   keepAlivePanels: PanelId[];
   onClosePanel: (panelId: PanelId) => void;
   onSetActive: (slotId: SlotId, panelId: PanelId) => void;
-}> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive }) => {
+  onDragStart: (panelId: PanelId) => void;
+  onDrop: (panelId: PanelId, target: SlotId) => void;
+}> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive, onDragStart, onDrop }) => {
   const activeId = slot.activeId;
   // 普通面板：槽内 panelIds 全挂载、display 切显隐，切标签不丢内部 state；关闭（从 panelIds 移除）才卸载。
   const normalPanels = slot.panelIds.filter((pid) => !keepAlivePanels.includes(pid));
   return (
-    <div className="h-full w-full flex flex-col min-h-0">
+    <div
+      className="h-full w-full flex flex-col min-h-0"
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => {
+        e.preventDefault();
+        const pid = e.dataTransfer.getData('text/plain') as PanelId;
+        if (pid) onDrop(pid, slotId);
+      }}
+    >
       <SlotTabs
         slotId={slotId}
         panelIds={slot.panelIds}
         activeId={activeId}
         onSetActive={onSetActive}
+        onDragStart={normalPanels.length > 0 ? onDragStart : undefined}
       />
       {/* 普通面板：自带功能栏+关闭，不套 PanelChrome；全挂载、display 切显隐 */}
       {normalPanels.map((pid) => (
@@ -159,6 +170,9 @@ const DockLayout: React.FC<DockLayoutProps> = ({
     typeof localStorage === 'undefined' ? null : localStorage.getItem(PANEL_WIDTHS_KEY),
   ), []);
   const [theme, setTheme] = useState<ThemeName>(loadTheme);
+
+  // 拖拽中的面板（HTML5 drag；onDragEnd 不显式清空也行，drop 后 movePanel 会更新 layout，但保留一个状态以便可能的视觉反馈）
+  const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
 
   // panelId → 实际 ReactNode（功能面板内容，不含外壳；外壳由 PanelChrome 提供）
   const panelContent = useMemo<Record<PanelId, React.ReactNode>>(() => ({
@@ -635,6 +649,8 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 keepAlivePanels={KEEP_ALIVE_PANELS}
                 onClosePanel={onClosePanel}
                 onSetActive={onSetActive}
+                onDragStart={(pid) => setDraggingPanel(pid)}
+                onDrop={(pid, target) => { onMovePanel(pid, target); setDraggingPanel(null); }}
               />
             </Panel>
           </Group>
@@ -654,6 +670,8 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               keepAlivePanels={[]}
               onClosePanel={onClosePanel}
               onSetActive={onSetActive}
+              onDragStart={(pid) => setDraggingPanel(pid)}
+              onDrop={(pid, target) => { onMovePanel(pid, target); setDraggingPanel(null); }}
             />
           </Panel>
         )}

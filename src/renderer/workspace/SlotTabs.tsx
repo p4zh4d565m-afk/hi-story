@@ -10,9 +10,11 @@ export interface SlotTabsProps {
   panelIds: PanelId[];
   activeId: PanelId | null;
   onSetActive: (slotId: SlotId, panelId: PanelId) => void;
+  /** 开始拖拽某标签（HTML5 drag）；保活面板不传即可禁用拖拽 */
+  onDragStart?: (panelId: PanelId) => void;
 }
 
-const SlotTabs: React.FC<SlotTabsProps> = ({ slotId, panelIds, activeId, onSetActive }) => {
+const SlotTabs: React.FC<SlotTabsProps> = ({ slotId, panelIds, activeId, onSetActive, onDragStart }) => {
   if (panelIds.length <= 1) return null;
   return (
     <div className="shrink-0 flex border-b border-gray-700 bg-gray-800/50">
@@ -20,7 +22,13 @@ const SlotTabs: React.FC<SlotTabsProps> = ({ slotId, panelIds, activeId, onSetAc
         <button
           key={id}
           onClick={() => onSetActive(slotId, id)}
-          className={`px-2 py-1 text-[11px] border-r border-gray-700 transition-colors ${
+          draggable={!!onDragStart}
+          onDragStart={(e) => {
+            if (!onDragStart) return;
+            e.dataTransfer.setData('text/plain', id);
+            onDragStart(id);
+          }}
+          className={`px-2 py-1 text-[11px] border-r border-gray-700 transition-colors cursor-grab ${
             activeId === id ? 'bg-gray-700 text-gray-100' : 'text-gray-500 hover:text-gray-200'
           }`}
           title={PANEL_TITLES[id]}
