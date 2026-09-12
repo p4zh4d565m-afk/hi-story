@@ -113,6 +113,11 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
   const [initDone, setInitDone] = useState(false);
   const [applied, setApplied] = useState(false);
 
+  // 对比区（原文 / 润色后）共用的高度，两个框同步上下拉伸
+  const [compareHeight, setCompareHeight] = useState(340);
+  const compareResizingRef = useRef(false);
+  const compareResizeStartRef = useRef({ startY: 0, startH: 340 });
+
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 820, height: 560 });
   const resizing = useRef(false);
@@ -342,6 +347,31 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
     onClose();
   }, [projectId, onClose]);
 
+  // 对比区高度拖动：两个框同步上下拉伸
+  const handleCompareResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    compareResizingRef.current = true;
+    compareResizeStartRef.current = { startY: e.clientY, startH: compareHeight };
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      if (!compareResizingRef.current) return;
+      const dy = ev.clientY - compareResizeStartRef.current.startY;
+      // 向下拖增高，向上拖减矮；限 120~70vh
+      setCompareHeight(Math.max(120, Math.min(Math.round(window.innerHeight * 0.7), compareResizeStartRef.current.startH + dy)));
+    };
+    const onUp = () => {
+      compareResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [compareHeight]);
+
   if (!open) return null;
 
   return (
@@ -445,14 +475,17 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
             </div>
           )}
 
-          {/* ── 对比预览：原文 vs 润色后（可编辑） ── */}
+          {/* ── 对比预览：原文 vs 润色后（可编辑，两个框同步上下拉伸） ── */}
           {polishedContent && !polishing && (
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-3">
                 {/* 原文 */}
                 <div>
                   <h4 className="text-[13px] font-semibold text-gray-400 mb-1">原文（只读）</h4>
-                  <div className="p-3 bg-gray-900/50 border border-gray-800 rounded text-[15px] text-gray-400 leading-relaxed max-h-[340px] overflow-y-auto whitespace-pre-wrap">
+                  <div
+                    className="p-3 bg-gray-900/50 border border-gray-800 rounded text-[15px] text-gray-400 leading-relaxed overflow-y-auto whitespace-pre-wrap"
+                    style={{ height: `${compareHeight}px` }}
+                  >
                     {htmlToPlainText(sourceText)}
                   </div>
                 </div>
@@ -462,10 +495,20 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
                   <textarea
                     value={editablePolishText}
                     onChange={e => { setEditablePolishText(e.target.value); setApplied(false); }}
-                    className="w-full p-3 bg-gray-900/50 border border-green-800/50 rounded text-[15px] text-gray-200 leading-relaxed min-h-[160px] max-h-[70vh] overflow-y-auto resize-y focus:outline-none focus:border-accent"
+                    className="w-full p-3 bg-gray-900/50 border border-green-800/50 rounded text-[15px] text-gray-200 leading-relaxed overflow-y-auto resize-none focus:outline-none focus:border-accent"
+                    style={{ height: `${compareHeight}px` }}
                     spellCheck={false}
                   />
                 </div>
+              </div>
+
+              {/* 对比区高度拖动条 */}
+              <div
+                onMouseDown={handleCompareResizeStart}
+                className="flex items-center justify-center h-2 cursor-ns-resize rounded hover:bg-gray-800 select-none"
+                title="拖动调整原文/润色框高度"
+              >
+                <div className="w-12 h-1 rounded bg-gray-700" />
               </div>
 
               <p className="text-[11px] text-gray-500">
