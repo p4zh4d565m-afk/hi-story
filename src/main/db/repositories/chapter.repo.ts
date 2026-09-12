@@ -36,6 +36,8 @@ export class ChapterRepo {
     const id = uuidv4();
     const title = input.title ?? '未命名章节';
     const content = input.content ?? '';
+    // 与渲染端 handleSaveChapter 一致的统计：去掉 HTML 标签与空白字符后的字符数
+    const wordCount = content.replace(/<[^>]*>/g, '').replace(/\s+/g, '').length;
 
     const maxSort = this.db.prepare(
       'SELECT COALESCE(MAX(sort_order), -1) as max_sort FROM chapters WHERE project_id = ?'
@@ -44,7 +46,7 @@ export class ChapterRepo {
     this.db.prepare(`
       INSERT INTO chapters (id, project_id, title, content, status, word_count, sort_order, planning_outline, created_at, updated_at)
       VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?)
-    `).run(id, input.projectId, title, content, 0, maxSort.max_sort + 1, input.planningOutline ? JSON.stringify(input.planningOutline) : '', now, now);
+    `).run(id, input.projectId, title, content, wordCount, maxSort.max_sort + 1, input.planningOutline ? JSON.stringify(input.planningOutline) : '', now, now);
 
     return this.findById(id);
   }

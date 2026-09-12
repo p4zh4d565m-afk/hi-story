@@ -397,14 +397,15 @@ const App: React.FC = () => {
   }, [activeProject, isActiveProject, obsidianLoader, updateProject]);
 
   // ===== Handlers =====
-  const handleCreateChapter = useCallback(async (title: string) => {
-    if (!activeProject) return;
+  const handleCreateChapter = useCallback(async (title: string): Promise<Chapter | null> => {
+    if (!activeProject) return null;
     const projectId = activeProject.id;
     const planningOutline = pendingAIOutlineRef.current;
     const res = await window.electronAPI.invoke('db:chapter:create', { projectId, title, planningOutline }) as any;
-    if (!isActiveProject(projectId)) return;
+    if (!isActiveProject(projectId)) return null;
     if (planningOutline) { pendingAIOutlineRef.current = null; setPendingAIOutline(null); }
-    if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); }
+    if (res.success && res.data) { setChapters(prev => [...prev, res.data]); setActiveChapterId(res.data.id); return res.data as Chapter; }
+    return null;
   }, [activeProject, isActiveProject]);
 
   const handleInsertChapterAfter = useCallback(async (afterChapterId: string, title: string) => {
@@ -1306,73 +1307,43 @@ const App: React.FC = () => {
             style={activeProject?.style || ''}
             obsidianContext={obsidianContext}
             preferredTitle={pendingAIOutline ? `第${pendingAIOutline.chapterNumber}章 ${pendingAIOutline.title}` : undefined}
-            onSaveAsChapter={async (title, content) => {
+            onSaveAsChapter={async (title: string, content: string): Promise<string | null> => {
               const projectId = activeProject?.id;
-              if (!projectId) return;
-              await handleCreateChapter(title);
-              if (!isActiveProject(projectId)) return;
-              // 找到刚创建的章节（sortOrder 最大的），更新内容
-              setTimeout(async () => {
-                const res = await window.electronAPI.invoke('db:chapter:findByProject', projectId) as any;
-                if (isActiveProject(projectId) && res.success && res.data) {
-                  const sorted = [...res.data].sort((a: Chapter, b: Chapter) => b.sortOrder - a.sortOrder);
-                  if (sorted.length > 0) {
-                    handleSaveChapter(sorted[0].id, content);
-                    setActiveChapterId(sorted[0].id);
-
-                    // 检查是否有待写入的 AI 摘要 + 事实抽取结果
-                    const pendingSummary = localStorage.getItem('hi-story-pending-summary');
-                    if (pendingSummary) {
-                      try {
-                        const pending = JSON.parse(pendingSummary);
-                        if (pending.summary) {
-                          // 延迟确保章节先保存完
-                          setTimeout(() => {
-                            window.electronAPI.invoke('db:chapter:update', {
-                              id: sorted[0].id,
-                              summary: pending.summary,
-                            });
-                          }, 500);
-                        }
-                        // 保存抽取的叙事事实 + 同步钩子到 narrative_hooks（P1）
-                        if (pending.facts && pending.facts.length > 0) {
-                          setTimeout(() => {
-                            window.electronAPI.invoke('db:storyFacts:batchUpsert', {
-                              projectId: activeProject?.id,
-                              chapterId: sorted[0].id,
-                              facts: pending.facts,
-                            });
-
-                            // 从 facts 中分离出 hook 类型，同步到 narrative_hooks
-                            const hookFacts = pending.facts.filter((f: any) => f.factType === 'hook');
-                            for (const hook of hookFacts) {
-                              window.electronAPI.invoke('db:narrativeHooks:create', {
-                                projectId: activeProject?.id,
-                                chapterId: sorted[0].id,
-                                hookType: 'foreshadowing',
-                                subject: hook.subject ?? '',
-                                description: `${hook.subject}${hook.predicate}${hook.object}：${hook.description}`,
-                                intensity: 3,
-                              });
-                            }
-                          }, 800);
-                        }
-                        // 保存角色信息边界
-                        if (pending.knowledge && pending.knowledge.length > 0) {
-                          setTimeout(() => {
-                            window.electronAPI.invoke('db:storyFacts:batchUpsertKnowledge', {
-                              projectId: activeProject?.id,
-                              chapterId: sorted[0].id,
-                              knowledge: pending.knowledge,
-                            });
-                          }, 1000);
-                        }
-                      } catch { /* ignore */ }
-                      localStorage.removeItem('hi-story-pending-summary');
-                    }
-                  }
+              if (!projectId) return null;
+              const planningOutline = pendingAIOutlineRef.current;
+              // 同步链路：create 直接带上 content（word_count 由 repo 计算），返回章节 id，不靠 setTimeout + sortOrder 猜章
+              const res = await window.electronAPI.invoke('db:chapter:create', {
+                projectId, title, content, planningOutline,
+              }) as any;
+              if (!isActiveProject(projectId)) return null;
+              if (planningOutline) { pendingAIOutlineRef.current = null; setPendingAIOutline(null); }
+              if (res.success && res.data) {
+                setChapters(prev => [...prev, res.data]);
+                setActiveChapterId(res.data.id);
+                return res.data.id as string;
+              }
+              return null;
+            }}
+            onPersistExtraction={async (projectId: string, chapterId: string, extraction: { summary?: string; facts?: unknown[]; knowledge?: unknown[] }) => {
+              // 抽取结果异步落库：正文已保存，摘要/事实稍后到；失败不阻断正文
+              try {
+                if (extraction.summary) {
+                  const r = await window.electronAPI.invoke('db:chapter:update', { id: chapterId, summary: extraction.summary }) as any;
+                  if (!r?.success) console.error('摘要写库失败', r?.error);
                 }
-              }, 300);
+                if (extraction.facts && extraction.facts.length > 0) {
+                  const r = await window.electronAPI.invoke('db:storyFacts:batchUpsert', {
+                    projectId, chapterId, facts: extraction.facts,
+                  }) as any;
+                  if (!r?.success) console.error('事实写库失败', r?.error);
+                }
+                if (extraction.knowledge && extraction.knowledge.length > 0) {
+                  const r = await window.electronAPI.invoke('db:storyFacts:batchUpsertKnowledge', {
+                    projectId, chapterId, knowledge: extraction.knowledge,
+                  }) as any;
+                  if (!r?.success) console.error('角色知识写库失败', r?.error);
+                }
+              } catch (e) { console.error('抽取结果落库失败', e); }
             }}
           />
         }

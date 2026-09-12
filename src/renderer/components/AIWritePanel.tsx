@@ -139,8 +139,14 @@ interface AIWritePanelProps {
   obsidianContext?: string;
   /** 从结构化章纲进入时使用的固定章节标题 */
   preferredTitle?: string;
-  /** 保存为新章节的回调 */
-  onSaveAsChapter: (title: string, content: string) => void;
+  /** 保存为新章节的回调，返回新建章节 id（失败返回 null） */
+  onSaveAsChapter: (title: string, content: string) => Promise<string | null>;
+  /** 抽取结果（摘要/事实/角色知识）落库回调 */
+  onPersistExtraction?: (
+    projectId: string,
+    chapterId: string,
+    extraction: { summary?: string; facts?: unknown[]; knowledge?: unknown[] },
+  ) => Promise<void>;
 }
 
 // Provider preset (与 AIChatPanel 保持一致)
@@ -207,6 +213,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   obsidianContext,
   preferredTitle,
   onSaveAsChapter,
+  onPersistExtraction,
 }) => {
   // ===== 配置状态 =====
   const [selectedOutlineId, setSelectedOutlineId] = useState<string | null>(activeOutlineNodeId);
@@ -531,13 +538,13 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           setGeneratedContent(fullText);
         }
 
-        // 自动保存
-        onSaveAsChapter(node.title || 'AI 生成章节', fullText);
+        // 自动保存（拿到章节 id，失败则记录 saved:false）
+        const chapterId = await onSaveAsChapter(node.title || 'AI 生成章节', fullText);
 
         setBatchProgress(p => ({
           ...p,
           completed: i + 1,
-          results: [...p.results, { title: node.title, content: fullText, saved: true }],
+          results: [...p.results, { title: node.title, content: fullText, saved: !!chapterId }],
         }));
 
         // 短延迟避免 IPC 拥塞
@@ -658,17 +665,21 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const plainText = generatedContent.replace(/<[^>]+>/g, '');
     const firstLine = plainText.split('\n').find(l => l.trim().length > 0)?.trim() || '';
     const title = firstLine.length > 40 ? firstLine.slice(0, 40) + '...' : firstLine;
-    onSaveAsChapter(preferredTitle || title || 'AI 生成章节', generatedContent);
+    const chapterId = await onSaveAsChapter(preferredTitle || title || 'AI 生成章节', generatedContent);
+    if (!chapterId) {
+      setError('保存章节失败');
+      return;
+    }
     setSaved(true);
 
     // 异步生成章节摘要 + 抽取叙事事实（后台执行，不阻塞 UI）
     if (aiReady) {
-      generateAndSaveSummary(title || 'AI 生成章节', generatedContent);
+      generateAndSaveSummary(projectId, chapterId, title || 'AI 生成章节', generatedContent);
     }
-  }, [generatedContent, onSaveAsChapter, aiReady, characters, projectName, preferredTitle]);
+  }, [generatedContent, onSaveAsChapter, aiReady, characters, projectName, preferredTitle, projectId, onPersistExtraction]);
 
   // ===== 后台生成章节摘要 + 抽取叙事事实（合并为一次 AI 调用）=====
-  const generateAndSaveSummary = useCallback(async (chapterTitle: string, content: string) => {
+  const generateAndSaveSummary = useCallback(async (projectId: string, chapterId: string, chapterTitle: string, content: string) => {
     try {
       const userPrompt = buildSummaryUserPrompt(
         chapterTitle,
@@ -698,17 +709,16 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       const parsed = JSON.parse(jsonStr);
       const summaryText = (parsed.summary || `${parsed.events || ''} | ${parsed.characters || ''}`).slice(0, 300);
 
-      // 将摘要 + 事实 + 信息边界一起通过 localStorage 传给 App.tsx 处理
-      localStorage.setItem('hi-story-pending-summary', JSON.stringify({
-        content: content.slice(0, 500),
+      // 直接把抽取结果交给 App 落库（不再走 localStorage）
+      onPersistExtraction?.(projectId, chapterId, {
         summary: summaryText,
         facts: parsed.facts || [],
         knowledge: parsed.knowledge || [],
-      }));
+      });
     } catch (e) {
       console.warn('章节摘要/事实抽取失败（不影响正文保存）：', e);
     }
-  }, [aiReady, characters]);
+  }, [aiReady, characters, onPersistExtraction]);
 
   // ===== 复制到剪贴板 =====
   const handleCopy = useCallback(async () => {
