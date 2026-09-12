@@ -113,7 +113,7 @@ export class ClaudeProvider implements AIProvider {
         const isCancelled = options?.signal?.aborted;
         callbacks.onError(
           isCancelled
-            ? new AIError('已停止生成', this.name)
+            ? new AIError(AI_STREAM_CANCELLED, this.name)
             : new AIError(err?.message || 'Claude stream error', this.name),
         );
       });

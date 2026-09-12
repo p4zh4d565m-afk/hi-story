@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
-import { AI_STOPPED_MESSAGE } from '../../src/renderer/services/ai.service';
+import { AI_STOPPED_MESSAGE, AI_IGNORED_MESSAGE } from '../../src/renderer/services/ai.service';
 
 let aiService: typeof import('../../src/renderer/services/ai.service')['aiService'];
 
@@ -65,15 +65,24 @@ describe('ai.service 流取消与切项目拒收（一期）', () => {
     expect(result.join('')).toContain('你好');
   });
 
-  it('切项目作废后，旧项目 token 不再 yield', async () => {
+  it('切项目作废后立即结束 generator，不等 complete', async () => {
     const gen = aiService.chatStream([{ role: 'user', content: 'hi' }], { model: 'm' }, 'p1');
     const p = collect(gen);
     await new Promise(r => setTimeout(r, 10));
     aiService.ignoreProjectStreams('p1');
+    await expect(p).rejects.toThrow(AI_IGNORED_MESSAGE);
+  });
+
+  it('切项目作废后，旧项目 token 与 complete 末次 yield 都不进入结果', async () => {
+    const gen = aiService.chatStream([{ role: 'user', content: 'hi' }], { model: 'm' }, 'p1');
+    const p = collect(gen);
+    await new Promise(r => setTimeout(r, 10));
+    emit('ai:streamToken', 'stream-p1', '作废前');
+    await new Promise(r => setTimeout(r, 40));
+    aiService.ignoreProjectStreams('p1');
     emit('ai:streamToken', 'stream-p1', '旧项目迟到文字');
-    emit('ai:streamComplete', 'stream-p1', '旧项目迟到文字');
-    const result = await p;
-    expect(result.join('')).not.toContain('旧项目迟到文字');
+    emit('ai:streamComplete', 'stream-p1', '作废前旧项目迟到文字');
+    await expect(p).rejects.toThrow(AI_IGNORED_MESSAGE);
   });
 
   it('cancelActiveStreams 后 generator 抛「已停止」，不保存', async () => {
@@ -95,9 +104,8 @@ describe('ai.service 流取消与切项目拒收（一期）', () => {
     emit('ai:streamComplete', 'stream-p1', 'p1旧');
     emit('ai:streamToken', 'stream-p2', 'p2好');
     emit('ai:streamComplete', 'stream-p2', 'p2好');
-    const r1 = await p1;
+    await expect(p1).rejects.toThrow(AI_IGNORED_MESSAGE);
     const r2 = await p2;
-    expect(r1.join('')).not.toContain('p1旧');
     expect(r2.join('')).toContain('p2好');
   });
 });

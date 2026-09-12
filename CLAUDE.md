@@ -120,6 +120,7 @@ resources/
 - **Stop Hook** — 每次会话结束自动执行 `npx vite build` + 提示音
 
 - **A1–A6 生产管线收口（2026-09-12）** — 技术审查报告后的「第 0 步」确定 bug 修复 + 大纲真相收敛。**A6** 章节历史去掉 7 天过期、只按每章 30 份上限淘汰；**M3** 审稿接受修订弃 `'current'` 字面量、用真实 projectId + 回写 App；**M1** OpenAI 兼容路径读取 `systemPrompt`（抽 `merge-system-prompt.ts` 两端共用）；**M2** Provider 缓存键含 baseUrl + 完整 apiKey。**A3** 迁移 v20：`planning_ideas` 去重 + `UNIQUE(project_id)`，坏 JSON 由静默变空改为 `success:false` 报错，`save` 改为读-改-写合并（`undefined` 未传保留旧值、显式 `null`/`[]` 才清空，禁用 `??`）。**A2** 策划长任务完成后校验项目（`shouldApplyPlanningResult` + `persistPlanning` 后台写回不污染 UI）。**A1** 写章落库改同步链路：`create` 返回章节 id 并写 word_count，弃 sortOrder 猜章/套娃 timer/localStorage 旁路。**A5** 钩子单轨：写章抽取 `factType===hook` 走 `creative_decisions` proposed（新 IPC `createChapterExtractionProposals`，`factsToHookDrafts` 纯函数），非 hook 仍自动落库，停止 facts+hooks 双写。写章抽取不产债务（prompt 无 debt 类型）；债务仍走对话账本，写章抽债务另立 P2。**A4a** 普通对话改读策划（`createPlanningLoader` 独立加载失败不阻断 + `ContextBuilder.planningContext` 有策划时跳过 outlineNodes）。**A4b** 策划入口写章/审稿改读章纲（AI 代写不再复制 outline_nodes 节点；审稿有章纲则读章纲）。工具栏代写/批量仍读 outline_nodes，接章纲另立 P2。单测 323、写作 UI 12/12、决策账本 UI 16/16、Obsidian 导入 UI 114/114。参见 `docs/2026-09-12-A1-A6实施方案.md`
+- **AI 流真实取消（一期，2026-09-12）** — 停止会 abort 主进程流；切项目作废映射并结束 for-await。复核补丁与下一步见工作区 `ai-stream-cancel-report.md`。
 
 ## Git 远程仓库
 

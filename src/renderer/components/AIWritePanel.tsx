@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService, AI_STOPPED_MESSAGE } from '../services/ai.service';
+import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd } from '../services/ai.service';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
@@ -392,11 +392,17 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (activeOutlineNodeId) setSelectedOutlineId(activeOutlineNodeId);
   }, [activeOutlineNodeId]);
 
-  // ===== 切项目：作废旧项目的活跃流，迟到 token 不再进入本面板（一期） =====
+  // ===== 切项目：作废旧项目的活跃流，并清掉本面板可见草稿，避免旧正文打进新项目 =====
+  const projectIdRef = useRef(projectId);
   const prevProjectIdRef = useRef(projectId);
   useEffect(() => {
+    projectIdRef.current = projectId;
     if (prevProjectIdRef.current && prevProjectIdRef.current !== projectId) {
       aiService.ignoreProjectStreams(prevProjectIdRef.current);
+      setGeneratedContent('');
+      setGenerating(false);
+      setSaved(false);
+      setError(null);
     }
     prevProjectIdRef.current = projectId;
   }, [projectId]);
@@ -587,14 +593,19 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
         // 流式生成到面板
         setGeneratedContent('');
+        const startedProjectId = projectId;
         const generator = aiService.chatStream(messages, {
           temperature: 0.7, maxTokens: targetWords * 3,
           ...(writeModel ? { model: writeModel } : {}),
-        }, projectId);
+        }, startedProjectId);
         let fullText = '';
         for await (const token of generator) {
+          if (projectIdRef.current !== startedProjectId) break;
           fullText = token;
           setGeneratedContent(fullText);
+        }
+        if (projectIdRef.current !== startedProjectId) {
+          throw new Error(AI_IGNORED_MESSAGE);
         }
 
         // 自动保存（拿到章节 id，失败则记录 saved:false）
@@ -609,6 +620,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         // 短延迟避免 IPC 拥塞
         await new Promise(r => setTimeout(r, 500));
       } catch (e) {
+        const msg = (e as Error).message;
+        if (isSilentAiStreamEnd(msg)) break;
         console.error(`批量生成失败 [${nodes[i].title}]:`, e);
         setBatchProgress(p => ({
           ...p,
@@ -693,28 +706,32 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       ];
 
       // 流式生成
+      const startedProjectId = projectId;
       const generator = aiService.chatStream(messages, {
         temperature: 0.7,
         maxTokens: targetWords * 3,
         ...(writeModel ? { model: writeModel } : {}),
-      }, projectId);
+      }, startedProjectId);
       let fullText = '';
       for await (const token of generator) {
+        if (projectIdRef.current !== startedProjectId) break;
         fullText = token;
         setGeneratedContent(fullText);
       }
+      if (projectIdRef.current !== startedProjectId) {
+        throw new Error(AI_IGNORED_MESSAGE);
+      }
     } catch (e) {
       const msg = (e as Error).message;
-      if (msg !== AI_STOPPED_MESSAGE) setError(`AI 写作失败：${msg}`);
+      if (!isSilentAiStreamEnd(msg)) setError(`AI 写作失败：${msg}`);
     } finally {
       setGenerating(false);
     }
   }, [getContext, aiReady, styleGuide, targetWords, extraRequirement, projectId, obsidianContext, writeModel]);
 
   // ===== 停止生成 =====
-  const handleStop = useCallback(() => {
-    // 一期：真正中止主进程流；for-await 会抛「已停止」，不会保存。
-    if (projectId) void aiService.cancelActiveStreams(projectId);
+  const handleStop = useCallback(async () => {
+    if (projectId) await aiService.cancelActiveStreams(projectId);
     setGenerating(false);
   }, [projectId]);
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService, AI_STOPPED_MESSAGE } from '../services/ai.service';
+import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
 import { POLISH_SYSTEM_PROMPT, buildPolishUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { Chapter, Character, WorldEntry } from '../types';
 import type { TextRange } from './editor/RichEditor';
@@ -102,6 +102,8 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
   const [selectionText, setSelectionText] = useState<string>('');
   const [selectionRange, setSelectionRange] = useState<TextRange | null>(null);
   const [polishing, setPolishing] = useState(false);
+  const polishingRef = useRef(false);
+  polishingRef.current = polishing;
   const [polishedContent, setPolishedContent] = useState('');
   // 用户可编辑的润色后纯文本（初始化时由 polishedContent 转换，用户可粘贴原文想保留的部分）
   const [editablePolishText, setEditablePolishText] = useState('');
@@ -306,7 +308,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
       setEditablePolishText(htmlToPlainText(fullText));
     } catch (e) {
       const msg = (e as Error).message;
-      if (msg !== AI_STOPPED_MESSAGE) setError(`润色失败：${msg}`);
+      if (!isSilentAiStreamEnd(msg)) setError(`润色失败：${msg}`);
     } finally {
       setPolishing(false);
     }
@@ -333,11 +335,18 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
     setError(null);
   }, []);
 
+  const handleClose = useCallback(() => {
+    if (projectId && polishingRef.current) {
+      void aiService.cancelActiveStreams(projectId);
+    }
+    onClose();
+  }, [projectId, onClose]);
+
   if (!open) return null;
 
   return (
     <div className="fixed inset-0 z-40 pointer-events-none">
-      <div className="absolute inset-0 pointer-events-none" onClick={onClose} />
+      <div className="absolute inset-0 pointer-events-none" onClick={handleClose} />
       <div
         ref={panelRef}
         className="absolute pointer-events-auto bg-gray-950 border border-gray-700 rounded-lg shadow-2xl flex flex-col overflow-hidden"
@@ -370,7 +379,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
             ) : (
               <span className="text-[10px] text-red-400">⚠️ 未配置 AI</span>
             )}
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+            <button onClick={handleClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
           </div>
         </div>
 

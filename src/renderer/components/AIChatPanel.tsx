@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService, type ChatOptions, AI_STOPPED_MESSAGE } from '../services/ai.service';
+import { aiService, type ChatOptions, isSilentAiStreamEnd } from '../services/ai.service';
 import { encrypt, decrypt } from '../services/crypto';
 import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
 import { createCreativeDecisionLoader } from '../services/creative-decision-loader';
@@ -657,7 +657,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     } catch (requestError) {
       if (projectIdRef.current === requestProjectId) {
         const message = requestError instanceof Error ? requestError.message : String(requestError);
-        setError(message || 'AI 请求失败');
+        if (!isSilentAiStreamEnd(message)) setError(message || 'AI 请求失败');
       }
     } finally {
       if (projectIdRef.current === requestProjectId) {
@@ -749,7 +749,8 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         projectIdRef.current === requestProjectId
         && decisionOperationGenerationRef.current === requestGeneration
       ) {
-        setError(extractionError instanceof Error ? extractionError.message : String(extractionError));
+        const message = extractionError instanceof Error ? extractionError.message : String(extractionError);
+        if (!isSilentAiStreamEnd(message)) setError(message);
       }
     } finally {
       if (

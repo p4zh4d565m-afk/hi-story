@@ -6,7 +6,7 @@ export interface AIService {
   chatStream: (messages: ChatMessage[], options?: ChatOptions, projectId?: string) => AsyncGenerator<string>;
   /** 停止：真正 abort 该项目下所有活跃流，对应 generator 抛「已停止」，不会保存。 */
   cancelActiveStreams: (projectId: string) => Promise<void>;
-  /** 作废某项目下所有活跃流：后续 token 不再 yield（切项目用，不主动 abort 主进程请求）。 */
+  /** 作废某项目下所有活跃流：结束对应 generator（抛 AI_IGNORED_MESSAGE），后续 token 不再 yield。切项目用，不 abort 主进程请求。 */
   ignoreProjectStreams: (projectId: string) => void;
   validateKey: (provider: string, apiKey: string, model: string, baseUrl?: string) => Promise<boolean>;
   getModels: (provider: string) => Promise<string[]>;
@@ -29,6 +29,12 @@ interface StreamBridge {
 }
 
 export const AI_STOPPED_MESSAGE = '已停止生成，不会保存';
+/** 切项目作废映射：结束 for-await，不把迟到结果写进当前界面。主进程流按 Spec 不自动 abort。 */
+export const AI_IGNORED_MESSAGE = '已切换项目，迟到结果不会写入当前界面';
+
+export function isSilentAiStreamEnd(message: string): boolean {
+  return message === AI_STOPPED_MESSAGE || message === AI_IGNORED_MESSAGE;
+}
 
 class AIServiceImpl implements AIService {
   private currentProvider: string = 'claude';
@@ -131,11 +137,16 @@ class AIServiceImpl implements AIService {
     // 暴露唤醒能力给 cancelStream：取消后主进程不再发事件，必须主动唤醒 generator
     bridge.wake = () => pendingResolve?.();
 
+    const throwIfEnded = (): void => {
+      if (bridge.cancelled) throw new Error(AI_STOPPED_MESSAGE);
+      if (bridge.ignored) throw new Error(AI_IGNORED_MESSAGE);
+    };
+
     try {
       let fullText = '';
       let lastYieldTime = 0;
       while (true) {
-        if (bridge.cancelled) throw new Error(AI_STOPPED_MESSAGE);
+        throwIfEnded();
         // 优先 drain 积攒的 token：即使 finished 已置位（complete 与最后 token 同 tick 到达），也不能丢。
         if (pendingTokens.length > 0) {
           fullText += pendingTokens.join('');
@@ -155,9 +166,10 @@ class AIServiceImpl implements AIService {
         }
         // 等待下一个事件
         await new Promise<void>((resolve) => { pendingResolve = resolve; });
-        if (bridge.cancelled) throw new Error(AI_STOPPED_MESSAGE);
+        throwIfEnded();
         if (streamError) throw streamError;
       }
+      throwIfEnded();
       // 确保最后一次 yield 包含完整文本
       if (fullText) {
         yield fullText;
@@ -188,6 +200,7 @@ class AIServiceImpl implements AIService {
     for (const bridge of this.streamBridges.values()) {
       if (bridge.projectId === projectId) {
         bridge.ignored = true;
+        bridge.wake?.();
       }
     }
   }

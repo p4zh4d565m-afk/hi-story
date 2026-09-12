@@ -26,6 +26,14 @@ describe('streamRegistry（一期真实取消）', () => {
     expect(entry.controller.signal.aborted).toBe(true);
   });
 
+  it('cancel 命中后从注册表删除，迟到 get 为空', () => {
+    const entry = makeEntry();
+    streamRegistry.register('s-remove', entry);
+    expect(streamRegistry.cancel('s-remove', 'p1')).toBe(true);
+    expect(streamRegistry.get('s-remove')).toBeUndefined();
+    expect(entry.controller.signal.aborted).toBe(true);
+  });
+
   it('不存在的 streamId 取消返回 false', () => {
     expect(streamRegistry.cancel('missing', 'p1')).toBe(false);
   });

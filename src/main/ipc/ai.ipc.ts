@@ -6,6 +6,8 @@ import { streamRegistry } from '../ai/stream-registry';
 // Provider caching is handled by ProviderFactory internally.
 // Always use ProviderFactory.create() for singleton, invalidate via ProviderFactory.invalidateCache().
 
+const destroyedHookedSenders = new Set<number>();
+
 export function registerAIIpc(): void {
   // Send chat message (non-streaming)
   ipcMain.handle('ai:chat', async (_event, config: ProviderConfig, messages: ChatMessage[], options?: ChatOptions) => {
@@ -34,6 +36,9 @@ export function registerAIIpc(): void {
   // 一期起 chatStream 必须带 projectId，用于流注册表与取消校验。
   ipcMain.handle('ai:chatStream', async (event, config: ProviderConfig, messages: ChatMessage[], options?: ChatOptions, projectId?: string) => {
     try {
+      if (!projectId) {
+        return { success: false, error: '缺少 projectId，无法启动可取消的 AI 流' };
+      }
       const provider = ProviderFactory.create(config);
       const sender = event.sender;
       const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -44,14 +49,18 @@ export function registerAIIpc(): void {
       streamRegistry.register(streamId, {
         controller,
         senderId: sender.id,
-        projectId: projectId || '',
+        projectId,
         terminal: false,
       });
 
-      // 窗口销毁：中止该窗口所有流，避免后台继续烧额度、迟到结果无处投递
-      sender.once('destroyed', () => {
-        streamRegistry.abortAllForSender(sender.id);
-      });
+      // 每个窗口只挂一次销毁钩子，避免每条流叠一个 listener
+      if (!destroyedHookedSenders.has(sender.id)) {
+        destroyedHookedSenders.add(sender.id);
+        sender.once('destroyed', () => {
+          destroyedHookedSenders.delete(sender.id);
+          streamRegistry.abortAllForSender(sender.id);
+        });
+      }
 
       const isAlive = (): boolean => {
         const entry = streamRegistry.get(streamId);
@@ -70,22 +79,29 @@ export function registerAIIpc(): void {
           sender.send('ai:streamToken', streamId, token);
         },
         onComplete: (fullText: string) => {
-          if (!isAlive()) return;
-          sender.send('ai:streamComplete', streamId, fullText);
-          finish();
+          try {
+            if (isAlive()) sender.send('ai:streamComplete', streamId, fullText);
+          } finally {
+            finish();
+          }
         },
         onError: (error: Error) => {
-          if (!isAlive()) return;
-          sender.send('ai:streamError', streamId, error.message);
-          finish();
+          try {
+            if (isAlive()) sender.send('ai:streamError', streamId, error.message);
+          } finally {
+            finish();
+          }
         },
       };
 
       // Start streaming (don't await — run in background, catch rejections)
       provider.chatStream(messages, callbacks, opts).catch((err) => {
         console.error('chatStream background error:', err);
-        if (isAlive()) {
-          sender.send('ai:streamError', streamId, err?.message || 'AI 请求失败');
+        try {
+          if (isAlive()) {
+            sender.send('ai:streamError', streamId, err?.message || 'AI 请求失败');
+          }
+        } finally {
           finish();
         }
       });

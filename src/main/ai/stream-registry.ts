@@ -45,7 +45,7 @@ export const streamRegistry = {
 
   /**
    * 取消前检查：streamId 必须存在、未终止，且 projectId 匹配。
-   * 先标 terminal，再 abort，避免 abort 与迟到回调之间的竞态窗口。
+   * 先标 terminal，再 abort，再从注册表删除，避免取消后条目永久残留。
    */
   cancel(id: string, projectId: string): boolean {
     const entry = streams.get(id);
@@ -53,6 +53,7 @@ export const streamRegistry = {
     if (entry.projectId !== projectId) return false;
     entry.terminal = true;
     entry.controller.abort();
+    streams.delete(id);
     return true;
   },
 

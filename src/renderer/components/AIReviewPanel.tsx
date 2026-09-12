@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService, AI_STOPPED_MESSAGE } from '../services/ai.service';
+import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
 import {
   REVIEW_SYSTEM_PROMPT,
   buildReviewUserPrompt,
@@ -115,6 +115,10 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [revising, setRevising] = useState(false);
   const [revisedContent, setRevisedContent] = useState('');
   const [revisionAccepted, setRevisionAccepted] = useState(false);
+  const reviewingRef = useRef(false);
+  reviewingRef.current = reviewing;
+  const revisingRef = useRef(false);
+  revisingRef.current = revising;
 
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 760, height: 520 });
@@ -375,7 +379,12 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      const response = await aiService.chat(messages, { temperature: 0.3, maxTokens: 4096 });
+      let response = '';
+      const generator = aiService.chatStream(messages, { temperature: 0.3, maxTokens: 4096 }, projectId);
+      for await (const token of generator) {
+        response = token;
+      }
+      if (!response.trim()) throw new Error('AI 未返回审稿结果');
 
       // 解析 AI 返回的 JSON
       let parsed: AIReviewResult;
@@ -406,7 +415,8 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
 
       setResult(parsed);
     } catch (e) {
-      setError(`审稿失败：${(e as Error).message}`);
+      const msg = (e as Error).message;
+      if (!isSilentAiStreamEnd(msg)) setError(`审稿失败：${msg}`);
     } finally {
       setReviewing(false);
     }
@@ -471,7 +481,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       }
     } catch (e) {
       const msg = (e as Error).message;
-      if (msg !== AI_STOPPED_MESSAGE) setError(`AI 修复失败：${msg}`);
+      if (!isSilentAiStreamEnd(msg)) setError(`AI 修复失败：${msg}`);
     } finally {
       setRevising(false);
     }
@@ -507,6 +517,13 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     setRevisedContent('');
     setActiveTab('review');
   }, []);
+
+  const handleClose = useCallback(() => {
+    if (projectId && (reviewingRef.current || revisingRef.current)) {
+      void aiService.cancelActiveStreams(projectId);
+    }
+    onClose();
+  }, [projectId, onClose]);
 
   // ===== 跳转到问题段落 =====
   const handleJumpToIssue = useCallback((issue: ReviewIssue) => {
@@ -594,7 +611,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
 
   return (
     <div className="fixed inset-0 z-40 pointer-events-none">
-      <div className="absolute inset-0 pointer-events-none" onClick={onClose} />
+      <div className="absolute inset-0 pointer-events-none" onClick={handleClose} />
       <div
         ref={panelRef}
         className="absolute pointer-events-auto bg-gray-950 border border-gray-700 rounded-lg shadow-2xl flex flex-col overflow-hidden"
@@ -627,7 +644,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             ) : (
               <span className="text-[10px] text-red-400">⚠️ 未配置 AI</span>
             )}
-            <button onClick={onClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+            <button onClick={handleClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
           </div>
         </div>
 
@@ -998,7 +1015,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             )}
             <div className="flex-1" />
             <button
-              onClick={onClose}
+              onClick={handleClose}
               className="px-3 py-1.5 text-gray-500 text-xs hover:text-white transition-colors"
             >
               关闭
