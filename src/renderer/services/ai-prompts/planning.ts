@@ -1,4 +1,4 @@
-import type { ChapterOutline, MasterOutline, Project, StoryOption, VolumeOutline, VolumeStage, WritingSkill } from '../../types';
+import type { Chapter, ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, VolumeStage, WritingSkill } from '../../types';
 
 export function buildStoryOptionsPrompt(
   project: Project,
@@ -221,6 +221,58 @@ export function formatStagesContext(entries: StageContextEntry[], mode: 'full' |
   }
   if (sections.length === 0) return null;
   return sections.join('\n');
+}
+
+/**
+ * 把策划总纲/章纲格式化为普通对话用的有界结构上下文（A4a）。
+ *
+ * - 有 masterOutline：注入前提/结局/主线冲突/阶段标题（有界）。
+ * - 当前章对得上施工卡（activeChapter.planningOutline）则用施工卡字段；
+ *   否则若 chapterOutlines 非空，注入当前卷章标题 + 一句任务。
+ * - 只读 planning 侧结构；调用方在 planning 存在时不再把 outlineNodes 放入同一 system。
+ * - 全部无内容返回 null。
+ */
+export function formatPlanningAuthorityContext(
+  planning: PlanningIdea | null | undefined,
+  activeChapter?: { planningOutline?: ChapterOutline | null; chapterNumber?: number } | null,
+): string | null {
+  if (!planning) return null;
+  const parts: string[] = [];
+
+  if (planning.masterOutline) {
+    const m = planning.masterOutline;
+    const lines: string[] = ['## 全书结构（策划工作台）'];
+    if (m.premise) lines.push(`核心前提：${sliceMax(m.premise, 160)}`);
+    if (m.centralConflict) lines.push(`贯穿冲突：${sliceMax(m.centralConflict, 160)}`);
+    if (m.ending) lines.push(`结局方向：${sliceMax(m.ending, 160)}`);
+    const phases = m.phases ?? [];
+    if (phases.length) {
+      lines.push(`全书阶段：${phases.slice(0, 8).map(p => p.title).filter(Boolean).join(' → ')}`);
+    }
+    parts.push(lines.join('\n'));
+  }
+
+  // 当前章施工卡优先
+  const card = activeChapter?.planningOutline;
+  if (card) {
+    const lines: string[] = ['## 当前章施工卡'];
+    if (card.chapterGoal) lines.push(`本章任务：${sliceMax(card.chapterGoal, 120)}`);
+    if (card.pov) lines.push(`视角：${sliceMax(card.pov, 40)}`);
+    if (card.centralConflict) lines.push(`核心冲突：${sliceMax(card.centralConflict, 120)}`);
+    if (card.keyBeats?.length) lines.push(`关键节拍：${card.keyBeats.slice(0, 8).map(k => sliceMax(k, 40)).join(' → ')}`);
+    if (card.endingHook) lines.push(`章末钩子：${sliceMax(card.endingHook, 80)}`);
+    parts.push(lines.join('\n'));
+  } else if (planning.chapterOutlines?.length) {
+    const chapters = planning.chapterOutlines;
+    const list = chapters.slice(0, 30).map(c => {
+      const task = c.chapterGoal ? `：${sliceMax(c.chapterGoal, 40)}` : '';
+      return `第${c.chapterNumber}章 ${c.title}${task}`;
+    });
+    parts.push(`## 当前卷章纲\n${list.join('\n')}`);
+  }
+
+  if (parts.length === 0) return null;
+  return parts.join('\n\n');
 }
 
 export function buildChapterOutlinesPrompt(

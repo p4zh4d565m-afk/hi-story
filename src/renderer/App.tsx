@@ -27,7 +27,7 @@ import { decrypt } from './services/crypto';
 import type { ProviderConfig } from '../main/ai/provider';
 import { useUndo, type UndoCommand } from './hooks/useUndoManager';
 import UndoToast from './components/UndoToast';
-import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult } from './types';
+import type { ChapterOutline, CreateProjectInput, Chapter, OutlineNode, Character, WorldEntry, ObsidianScanResult, PlanningIdea } from './types';
 import type { ImportResult } from '../main/importer';
 import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
@@ -36,7 +36,9 @@ import { createProjectDataLoader } from './services/project-data-loader';
 import { createImportedEntitiesRefresher } from './services/imported-entities-refresher';
 import { createObsidianLoader } from './services/obsidian-loader';
 import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './services/ai-runtime-context-loader';
+import { createPlanningLoader } from './services/planning-loader';
 import { factsToHookDrafts, type ChapterExtractionFact } from './services/chapter-extraction-proposals';
+import { formatPlanningAuthorityContext } from './services/ai-prompts/planning';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -81,6 +83,7 @@ const App: React.FC = () => {
   const [obsidianLoading, setObsidianLoading] = useState(false);
   const [obsidianError, setObsidianError] = useState<string | null>(null);
   const [aiRuntimeContext, setAiRuntimeContext] = useState<AiRuntimeContextSnapshot | null>(null);
+  const [planningSnapshot, setPlanningSnapshot] = useState<{ projectId: string; planning: PlanningIdea | null } | null>(null);
   const [importing, setImporting] = useState(false);
   const [workspaceMode, setWorkspaceMode] = useState<'planning' | 'writing'>('writing');
 
@@ -362,6 +365,19 @@ const App: React.FC = () => {
       setObsidianLoading(false);
     }
   }, [activeProject?.id, obsidianLoader]);
+
+  // 策划数据独立加载（A4a）：失败不阻断项目，坏 JSON 保留上次快照。
+  const planningLoader = useMemo(() => createPlanningLoader({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    onApply: (projectId, planning) => setPlanningSnapshot({ projectId, planning }),
+    isProjectCurrent: isActiveProject,
+  }), [isActiveProject]);
+
+  useEffect(() => {
+    setPlanningSnapshot(null);
+    if (activeProject) void planningLoader.load(activeProject.id);
+    else planningLoader.invalidate();
+  }, [activeProject?.id, planningLoader]);
 
   // 确认后的四类运行时状态独立加载；项目和请求代次必须同时匹配才可提交。
   const aiRuntimeContextLoader = useMemo(() => createAiRuntimeContextLoader({
@@ -1093,6 +1109,10 @@ const App: React.FC = () => {
 
   const contextMessages = useMemo(() => {
     if (!activeProject) return [];
+    const planning = planningSnapshot && planningSnapshot.projectId === activeProject.id
+      ? planningSnapshot.planning
+      : null;
+    const planningContext = formatPlanningAuthorityContext(planning, activeChapter);
     const messages = ContextBuilder.build({
       project: activeProject,
       currentChapter: activeChapter ?? undefined,
@@ -1104,6 +1124,7 @@ const App: React.FC = () => {
         ? aiRuntimeContext.storyFacts : undefined,
       characterKnowledge: aiRuntimeContext?.projectId === activeProject.id
         ? aiRuntimeContext.characterKnowledge : undefined,
+      planningContext,
     });
     const narrativeContext = aiRuntimeContext?.projectId === activeProject.id
       ? aiRuntimeContext.narrativeContext
@@ -1111,7 +1132,7 @@ const App: React.FC = () => {
     return narrativeContext
       ? [...messages, { role: 'system' as const, content: narrativeContext }]
       : messages;
-  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments, aiRuntimeContext]);
+  }, [activeProject, activeChapter, characters, worldEntries, outlineNodes, obsidianDocuments, aiRuntimeContext, planningSnapshot]);
 
   return (
     <ErrorBoundary>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines, formatStagesContext, buildChapterOutlinesPrompt } from '../../src/renderer/services/ai-prompts/planning';
-import type { VolumeOutline, VolumeStage, MasterOutline, StoryOption } from '../../src/renderer/types';
+import { parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines, formatStagesContext, buildChapterOutlinesPrompt, formatPlanningAuthorityContext } from '../../src/renderer/services/ai-prompts/planning';
+import type { VolumeOutline, VolumeStage, MasterOutline, StoryOption, PlanningIdea, ChapterOutline } from '../../src/renderer/types';
 
 const option = {
   title: '测试书名',
@@ -268,3 +268,53 @@ describe('buildChapterOutlinesPrompt 拆章注入 stages', () => {
     expect(c).not.toContain('"stages"');   // 但卷 JSON 里无 stages 键
   });
 });
+
+describe('formatPlanningAuthorityContext（A4a）', () => {
+  const mkMaster = (over: Partial<MasterOutline> = {}): MasterOutline => ({
+    premise: '核心前提', ending: '结局', protagonistArc: '人物弧', centralConflict: '冲突',
+    structureModel: '结构', phases: [{ title: '阶段1', purpose: '', chapterRange: '', keyEvents: [], turningPoint: '', emotionTrend: '' }],
+    subplots: [], storyPromises: [], ...over,
+  });
+  const mkChapter = (over: Partial<ChapterOutline> = {}): ChapterOutline => ({
+    volumeIndex: 0, chapterNumber: 1, title: '第一章', pov: '', chapterGoal: '本章任务',
+    openingSituation: '', centralConflict: '', keyBeats: [], reveal: '', characterChange: '',
+    emotionalBeat: '', payoff: '', endingHook: '', ...over,
+  });
+  const mkPlanning = (over: Partial<PlanningIdea> = {}): PlanningIdea => ({
+    id: 'p1', projectId: 'p1', idea: '', requirements: '', generatedOptions: [], selectedOption: null,
+    status: 'confirmed', masterOutline: null, outlineStatus: 'empty', volumeOutlines: [], volumeStatus: 'empty',
+    chapterOutlines: [], chapterOutlineStatus: 'empty', createdAt: '', updatedAt: '', ...over,
+  });
+
+  it('null/undefined planning 返回 null', () => {
+    expect(formatPlanningAuthorityContext(null)).toBeNull();
+    expect(formatPlanningAuthorityContext(undefined)).toBeNull();
+  });
+
+  it('有总纲时注入前提/冲突/结局/阶段标题', () => {
+    const out = formatPlanningAuthorityContext(mkPlanning({ masterOutline: mkMaster() }));
+    expect(out).toContain('全书结构');
+    expect(out).toContain('核心前提');
+    expect(out).toContain('冲突');
+    expect(out).toContain('阶段1');
+  });
+
+  it('当前章有施工卡时用施工卡字段（chapterGoal/pov/endingHook）', () => {
+    const card = mkChapter({ chapterGoal: '本章目标X', pov: '主角', endingHook: '钩子Y' });
+    const out = formatPlanningAuthorityContext(mkPlanning(), { planningOutline: card } as any);
+    expect(out).toContain('当前章施工卡');
+    expect(out).toContain('本章目标X');
+    expect(out).toContain('主角');
+    expect(out).toContain('钩子Y');
+  });
+
+  it('无施工卡但章纲存在时注入章标题+一句任务', () => {
+    const out = formatPlanningAuthorityContext(mkPlanning({ chapterOutlines: [mkChapter({ title: '第一章', chapterGoal: '目标A' })] }), { planningOutline: null } as any);
+    expect(out).toContain('第1章 第一章：目标A');
+  });
+
+  it('完全无内容返回 null', () => {
+    expect(formatPlanningAuthorityContext(mkPlanning())).toBeNull();
+  });
+});
+

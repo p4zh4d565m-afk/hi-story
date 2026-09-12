@@ -13,6 +13,8 @@ export interface ContextSources {
   characterKnowledge?: CharacterKnowledge[];
   /** Obsidian 人物、世界观和长期大纲（只读主资料） */
   obsidianDocuments?: ObsidianDocument[];
+  /** A4a：策划结构上下文（已由渲染端 formatPlanningAuthorityContext 格式化的有界文本） */
+  planningContext?: string | null;
 }
 
 // ============================================================
@@ -179,9 +181,16 @@ export class ContextBuilder {
     }
 
     // 4. 关联大纲节点 [priority=8]
-    if (sources.outlineNodes && sources.outlineNodes.length > 0) {
+    // A4a：有策划结构上下文时，对话以策划为权威，不再注入 outlineNodes（避免双份真相）；
+    // 无策划数据则回退现有大纲树。
+    if (sources.outlineNodes && sources.outlineNodes.length > 0 && !sources.planningContext) {
       const text = getOutlineContext(sources.outlineNodes);
       blocks.push({ text, priority: 8 });
+    }
+
+    // 4b. 策划结构（A4a）[priority=8，占用 outline 预算]
+    if (sources.planningContext) {
+      blocks.push({ text: sources.planningContext, priority: 8 });
     }
 
     // 5. 关联角色 [priority=8]
