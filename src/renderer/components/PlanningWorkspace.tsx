@@ -184,6 +184,17 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     }
   };
 
+  // 长任务切走项目后：后台写回 startedId；若此时已切回原项目，再 loadPlanning 一次对齐界面。
+  // 返回 true 表示已处理（写回 + 可选刷新），false 表示写回失败。
+  const persistAndRefreshIfReturned = async (startedId: string, payload: Parameters<typeof persistPlanning>[1]): Promise<boolean> => {
+    const ok = await persistPlanning(startedId, payload);
+    if (ok && shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+      // 切回原项目：刷新一次，避免 A→B→A 快切时界面停在旧库
+      await loadPlanning(startedId);
+    }
+    return ok;
+  };
+
   const generate = async () => {
     if (!project || idea.trim().length < 10) {
       setError('请先写下至少 10 个字的故事想法');
@@ -208,7 +219,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       const generated = parseStoryOptions(raw);
       // 长任务期间切走项目：结果后台写回 startedId，不污染当前 UI
       if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistPlanning(startedId, {
+        await persistAndRefreshIfReturned(startedId, {
           idea, requirements, status: 'generated', selectedOption: null,
           generatedOptions: generated, masterOutline: null, outlineStatus: 'empty',
           volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
@@ -261,7 +272,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       );
       const outline = parseMasterOutline(raw);
       if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistPlanning(startedId, {
+        await persistAndRefreshIfReturned(startedId, {
           idea, requirements, status: 'confirmed', selectedOption,
           generatedOptions: options, masterOutline: outline, outlineStatus: 'generated',
           volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
@@ -332,7 +343,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       );
       const volumes = parseVolumeOutlines(raw);
       if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistPlanning(startedId, {
+        await persistAndRefreshIfReturned(startedId, {
           idea, requirements, status: 'confirmed', selectedOption,
           generatedOptions: options, masterOutline, outlineStatus: 'locked',
           volumeOutlines: volumes, volumeStatus: 'generated',
@@ -391,7 +402,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       const merged = [...chapterOutlines.filter(chapter => chapter.volumeIndex !== volumeIndex), ...generated]
         .sort((a, b) => a.chapterNumber - b.chapterNumber);
       if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistPlanning(startedId, {
+        await persistAndRefreshIfReturned(startedId, {
           idea, requirements, status: 'confirmed', selectedOption,
           generatedOptions: options, masterOutline, outlineStatus: 'locked',
           volumeOutlines, volumeStatus: 'locked',
