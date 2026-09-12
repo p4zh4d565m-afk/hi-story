@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_LAYOUT, DEFAULT_SLOT,
   movePanel, closePanel, setActive, panelSlot, isSlotVisible,
-  openKeepAlive, closeKeepAlive,
 } from '../../src/renderer/workspace/layout-model';
 import { parseLayout, serializeLayout } from '../../src/renderer/workspace/layout-storage';
 
@@ -20,10 +19,6 @@ describe('layout-model：movePanel', () => {
     const next = movePanel(DEFAULT_LAYOUT, 'outline', DEFAULT_SLOT.outline!);
     expect(next.slots.right.panelIds).toEqual(['outline']);
     expect(next.slots.right.activeId).toBe('outline');
-  });
-
-  it('写章默认槽是 bottom（3+3 定案；打开走 openKeepAlive 不走 movePanel）', () => {
-    expect(DEFAULT_SLOT.aiWrite).toBe('bottom');
   });
 
   it('跨槽移动：从 right 移到 bottom，原槽移除', () => {
@@ -44,7 +39,7 @@ describe('layout-model：movePanel', () => {
     expect(next).toEqual(DEFAULT_LAYOUT);
   });
 
-  it('aiChat 完全拒绝 movePanel；三个保活面板跨槽拖也拒绝', () => {
+  it('aiChat 与写章/审稿/润色（浮动窗）都不走 movePanel', () => {
     const fixed = ['aiChat', 'aiWrite', 'aiReview', 'aiPolish'];
     for (const pid of fixed) {
       for (const target of ['left', 'right', 'bottom', 'center', 'floating'] as const) {
@@ -53,13 +48,16 @@ describe('layout-model：movePanel', () => {
     }
   });
 
-  it('DEFAULT_SLOT 3+3：大纲/素材/伏笔 right，写章/审稿/润色 bottom', () => {
+  it('DEFAULT_SLOT：大纲/素材/伏笔/灵感/参考/起名 right（写章/审稿/润色已回浮动窗，无默认槽）', () => {
     expect(DEFAULT_SLOT.outline).toBe('right');
     expect(DEFAULT_SLOT.material).toBe('right');
     expect(DEFAULT_SLOT.foreshadowing).toBe('right');
-    expect(DEFAULT_SLOT.aiWrite).toBe('bottom');
-    expect(DEFAULT_SLOT.aiReview).toBe('bottom');
-    expect(DEFAULT_SLOT.aiPolish).toBe('bottom');
+    expect(DEFAULT_SLOT.inspiration).toBe('right');
+    expect(DEFAULT_SLOT.reference).toBe('right');
+    expect(DEFAULT_SLOT.namegen).toBe('right');
+    expect(DEFAULT_SLOT.aiWrite).toBeUndefined();
+    expect(DEFAULT_SLOT.aiReview).toBeUndefined();
+    expect(DEFAULT_SLOT.aiPolish).toBeUndefined();
   });
 
   it('导图之外的面板不接受 floating', () => {
@@ -143,41 +141,5 @@ describe('layout-storage', () => {
     const l = movePanel(DEFAULT_LAYOUT, 'outline', 'right');
     const round = parseLayout(serializeLayout(l));
     expect(round).toEqual(l);
-  });
-});
-
-describe('保活面板（openKeepAlive/closeKeepAlive）', () => {
-  it('openKeepAlive 固定进 bottom 并设 active', () => {
-    const next = openKeepAlive(DEFAULT_LAYOUT, 'aiWrite');
-    expect(next.slots.bottom.panelIds).toEqual(['aiWrite']);
-    expect(next.slots.bottom.activeId).toBe('aiWrite');
-  });
-
-  it('打开第二个保活面板：追加到 bottom、active 切过去、原面板仍在', () => {
-    let l = openKeepAlive(DEFAULT_LAYOUT, 'aiWrite');
-    l = openKeepAlive(l, 'aiReview');
-    expect(l.slots.bottom.panelIds).toEqual(['aiWrite', 'aiReview']);
-    expect(l.slots.bottom.activeId).toBe('aiReview');
-  });
-
-  it('重复打开已存在的保活面板只切 active 不重复追加', () => {
-    let l = openKeepAlive(DEFAULT_LAYOUT, 'aiWrite');
-    l = openKeepAlive(l, 'aiReview');
-    l = openKeepAlive(l, 'aiWrite');
-    expect(l.slots.bottom.panelIds).toEqual(['aiWrite', 'aiReview']);
-    expect(l.slots.bottom.activeId).toBe('aiWrite');
-  });
-
-  it('closeKeepAlive 从 bottom 移除，active 回落到剩余', () => {
-    let l = openKeepAlive(DEFAULT_LAYOUT, 'aiWrite');
-    l = openKeepAlive(l, 'aiReview');
-    const next = closeKeepAlive(l, 'aiWrite');
-    expect(next.slots.bottom.panelIds).toEqual(['aiReview']);
-    expect(next.slots.bottom.activeId).toBe('aiReview');
-  });
-
-  it('非保活面板 openKeepAlive/closeKeepAlive 原样返回', () => {
-    expect(openKeepAlive(DEFAULT_LAYOUT, 'outline')).toEqual(DEFAULT_LAYOUT);
-    expect(closeKeepAlive(DEFAULT_LAYOUT, 'outline')).toEqual(DEFAULT_LAYOUT);
   });
 });

@@ -39,7 +39,7 @@ export const DEFAULT_LAYOUT: WorkspaceLayoutV1 = {
   floating: [],
 };
 
-/** 打开面板时的默认槽（3+3 定案：大纲/素材/伏笔/灵感/参考/起名 → right；写章/审稿/润色 → bottom）。 */
+/** 打开面板时的默认槽（大纲/素材/伏笔/灵感/参考/起名 → right）。写章/审稿/润色已回浮动窗，不走 layout。 */
 export const DEFAULT_SLOT: Partial<Record<PanelId, SlotId>> = {
   outline: 'right',
   material: 'right',
@@ -47,9 +47,6 @@ export const DEFAULT_SLOT: Partial<Record<PanelId, SlotId>> = {
   inspiration: 'right',
   reference: 'right',
   namegen: 'right',
-  aiWrite: 'bottom',
-  aiReview: 'bottom',
-  aiPolish: 'bottom',
 };
 
 /** 只能在 left 的面板。 */
@@ -58,14 +55,8 @@ const LEFT_ONLY: PanelId[] = ['sidebar'];
 /** 允许 floating 的面板（仅导图）。 */
 const FLOATING_ALLOWED: PanelId[] = ['mindmap'];
 
-/** 完全不走 layout 归属的面板（aiChat 仍留 P2 center 内侧列）。 */
-const OUTSIDE_LAYOUT: PanelId[] = ['aiChat'];
-
-/** 保活面板：固定 bottom，打开可进 bottom、关闭仍挂载（display:none），跨槽拖拒绝。 */
-const KEEP_ALIVE: PanelId[] = ['aiWrite', 'aiReview', 'aiPolish'];
-
-/** 导出的保活面板列表（DockLayout 用它决定「哪些面板组件必须永远挂载」）。 */
-export const KEEP_ALIVE_PANELS: PanelId[] = [...KEEP_ALIVE];
+/** 完全不走 layout 归属的面板（aiChat 留 P2 center 内侧列；写章/审稿/润色回浮动窗布尔控制）。 */
+const OUTSIDE_LAYOUT: PanelId[] = ['aiChat', 'aiWrite', 'aiReview', 'aiPolish'];
 
 type Target = SlotId | 'floating' | 'center';
 
@@ -101,9 +92,8 @@ function resolveTarget(target: Target): Target {
 }
 
 export function movePanel(l: WorkspaceLayoutV1, panelId: PanelId, target: Target): WorkspaceLayoutV1 {
-  // aiChat（P2 center 内侧列）完全不走布局；三个保活面板固定 bottom、跨槽拖拒绝。
+  // aiChat（P2 center 内侧列）与写章/审稿/润色（浮动窗布尔控制）都不走布局。
   if (OUTSIDE_LAYOUT.includes(panelId)) return l;
-  if (KEEP_ALIVE.includes(panelId)) return l;
   const resolved = resolveTarget(target);
   // sidebar 只能 left；导图之外不接受 floating。
   if (LEFT_ONLY.includes(panelId) && resolved !== 'left') return l;
@@ -117,24 +107,6 @@ export function movePanel(l: WorkspaceLayoutV1, panelId: PanelId, target: Target
     next.slots[resolved].panelIds.push(panelId);
     next.slots[resolved].activeId = panelId;
   }
-  return next;
-}
-
-/** 打开保活面板：固定进 bottom、设为 active；已存在则只切 active。不跨槽、不浮动。 */
-export function openKeepAlive(l: WorkspaceLayoutV1, panelId: PanelId): WorkspaceLayoutV1 {
-  if (!KEEP_ALIVE.includes(panelId)) return l;
-  const next = clone(l);
-  const slot = next.slots.bottom;
-  if (!slot.panelIds.includes(panelId)) slot.panelIds.push(panelId);
-  slot.activeId = panelId;
-  return next;
-}
-
-/** 关闭保活面板：从 bottom 移除，但面板组件仍由父级 display:none 挂载（本函数只管归属）。 */
-export function closeKeepAlive(l: WorkspaceLayoutV1, panelId: PanelId): WorkspaceLayoutV1 {
-  if (!KEEP_ALIVE.includes(panelId)) return l;
-  const next = clone(l);
-  removePanel(next, panelId);
   return next;
 }
 

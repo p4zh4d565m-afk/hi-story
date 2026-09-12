@@ -10,7 +10,7 @@ export const LAYOUT_KEY = 'hi-story-workspace-v1';
 
 const KNOWN_PANEL_IDS: PanelId[] = [
   'sidebar', 'aiChat', 'inspiration', 'reference', 'namegen',
-  'outline', 'material', 'foreshadowing', 'aiWrite', 'aiReview', 'aiPolish', 'mindmap',
+  'outline', 'material', 'foreshadowing', 'mindmap',
 ];
 
 function sanitizeSlot(slot: unknown, fallback: WorkspaceLayoutV1['slots'][SlotId]): WorkspaceLayoutV1['slots'][SlotId] {
