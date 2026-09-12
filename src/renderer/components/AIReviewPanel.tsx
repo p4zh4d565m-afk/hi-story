@@ -14,7 +14,7 @@ import {
 } from '../services/ai-prompts';
 import type { StyleStatsResult } from '../services/ai-prompts';
 import AIReviewResultComponent from './AIReviewResult';
-import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, AntiAICheckResult } from '../types';
+import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, ChapterOutline, AntiAICheckResult } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
 import { ContextBuilder } from '../../main/ai/context-builder';
 
@@ -39,6 +39,8 @@ interface AIReviewPanelProps {
   worldEntries: WorldEntry[];
   /** 大纲节点 */
   outlineNodes: OutlineNode[];
+  /** 策划章纲（A4b：有则审稿以章纲为结构参考，回退 outlineNodes） */
+  chapterOutlines?: ChapterOutline[];
   /** 项目名称 */
   projectName: string;
   /** 项目 ID（用于加载创作罗盘和风格指纹） */
@@ -87,6 +89,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   characters,
   worldEntries,
   outlineNodes,
+  chapterOutlines,
   projectName,
   projectId,
   typeTags,
@@ -345,10 +348,10 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
           name: w.name,
           description: w.description,
         })),
-        outlineNodes: outlineNodes.map(n => ({
-          title: n.title,
-          summary: n.summary || '',
-        })),
+        // A4b：有章纲时以章纲为结构参考，回退 outlineNodes
+        outlineNodes: (chapterOutlines && chapterOutlines.length > 0)
+          ? chapterOutlines.map(c => ({ title: `第${c.chapterNumber}章 ${c.title}`, summary: c.chapterGoal || '' }))
+          : outlineNodes.map(n => ({ title: n.title, summary: n.summary || '' })),
         storyFactsSummary,
         knowledgeSummary,
         hooksSummary,
@@ -407,7 +410,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setReviewing(false);
     }
-  }, [selectedChapterId, aiReady, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, obsidianContext]);
+  }, [selectedChapterId, aiReady, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, chapterOutlines, obsidianContext]);
 
   // ===== AI 自动修复 =====
   const handleAutoRevise = useCallback(async () => {

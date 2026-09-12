@@ -549,20 +549,12 @@ const App: React.FC = () => {
       return;
     }
 
-    const marker = `[章纲 ${outline.volumeIndex}:${outline.chapterNumber}]`;
-    let node = outlineNodes.find(item => item.summary.includes(marker));
-    if (!node) {
-      const summary = `${marker}\n视角：${outline.pov}\n本章任务：${outline.chapterGoal}\n开场处境：${outline.openingSituation}\n核心冲突：${outline.centralConflict}\n关键节拍：${outline.keyBeats.join(' → ')}\n信息揭示：${outline.reveal}\n人物变化：${outline.characterChange}\n情绪体验：${outline.emotionalBeat}\n爽点/回报：${outline.payoff}\n章末钩子：${outline.endingHook}`;
-      const res = await window.electronAPI.invoke('db:outline:create', { projectId: activeProject.id, parentId: null, title: `第${outline.chapterNumber}章 ${outline.title}`, summary }) as any;
-      if (!res?.success || !res.data) return;
-      node = res.data;
-      setOutlineNodes(previous => [...previous, res.data]);
-    }
-    setActiveOutlineNodeId(node.id);
+    // AI 代写：A4b 不再把章纲复制成 outline_nodes 节点（消除双份），
+    // 只把章纲交给代写面板，面板用章纲字段拼上下文。
     pendingAIOutlineRef.current = outline;
     setPendingAIOutline(outline);
     setPanelState(previous => ({ ...previous, aiWriteOpen: true }));
-  }, [activeProject, chapters, outlineNodes]);
+  }, [activeProject, chapters]);
 
   // Obsidian 导入后，只刷新人物与世界观（不重载章节/大纲，避免覆盖未保存正文）。
   // 与 UI 集成测试共用 createImportedEntitiesRefresher，保证测试证明的是与生产一致的 IPC 失败链路。
@@ -1320,6 +1312,8 @@ const App: React.FC = () => {
             onClose={() => { pendingAIOutlineRef.current = null; setPendingAIOutline(null); setPanelState(p => ({ ...p, aiWriteOpen: false })); }}
             outlineNodes={outlineNodes}
             activeOutlineNodeId={activeOutlineNodeId}
+            chapterOutlines={planningSnapshot && planningSnapshot.projectId === activeProject?.id ? planningSnapshot.planning?.chapterOutlines ?? [] : []}
+            pendingChapterOutline={pendingAIOutline}
             characters={characters}
             worldEntries={worldEntries}
             chapters={chapters}
@@ -1388,6 +1382,7 @@ const App: React.FC = () => {
             characters={characters}
             worldEntries={worldEntries}
             outlineNodes={outlineNodes}
+            chapterOutlines={planningSnapshot && planningSnapshot.projectId === activeProject?.id ? planningSnapshot.planning?.chapterOutlines ?? [] : []}
             projectName={activeProject?.name || ''}
             projectId={activeProject?.id || ''}
             typeTags={activeProject?.typeTags || []}

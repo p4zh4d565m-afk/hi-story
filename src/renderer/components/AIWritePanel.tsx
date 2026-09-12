@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
 import { aiService } from '../services/ai.service';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
-import type { OutlineNode, Character, WorldEntry, Chapter } from '../types';
+import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
 import { ContextBuilder } from '../../main/ai/context-builder';
 
@@ -37,6 +37,22 @@ interface CharacterKnowledge {
   characterName: string;
   factDescription: string;
   source: string;
+}
+
+/** 将章纲字段格式化为「内容提要」摘要文本（A4b：代写/批量以章纲为结构输入） */
+function formatChapterOutlineSummary(outline: ChapterOutline): string {
+  const lines: string[] = [];
+  if (outline.chapterGoal) lines.push(`本章任务：${outline.chapterGoal}`);
+  if (outline.pov) lines.push(`视角：${outline.pov}`);
+  if (outline.openingSituation) lines.push(`开场处境：${outline.openingSituation}`);
+  if (outline.centralConflict) lines.push(`核心冲突：${outline.centralConflict}`);
+  if (outline.keyBeats?.length) lines.push(`关键节拍：${outline.keyBeats.join(' → ')}`);
+  if (outline.reveal) lines.push(`信息揭示：${outline.reveal}`);
+  if (outline.characterChange) lines.push(`人物变化：${outline.characterChange}`);
+  if (outline.emotionalBeat) lines.push(`情绪体验：${outline.emotionalBeat}`);
+  if (outline.payoff) lines.push(`爽点/回报：${outline.payoff}`);
+  if (outline.endingHook) lines.push(`章末钩子：${outline.endingHook}`);
+  return lines.join('\n');
 }
 
 /** 将叙事事实列表格式化为 AI 可读的上下文文本 */
@@ -121,6 +137,10 @@ interface AIWritePanelProps {
   outlineNodes: OutlineNode[];
   /** 激活的大纲节点 ID（外部传入） */
   activeOutlineNodeId: string | null;
+  /** 策划章纲（A4b：有则代写/批量以章纲为结构输入，回退 outlineNodes） */
+  chapterOutlines?: ChapterOutline[];
+  /** 从结构化章纲进入时的当前章纲（优先于选中节点） */
+  pendingChapterOutline?: ChapterOutline | null;
   /** 角色列表 */
   characters: Character[];
   /** 世界观条目 */
@@ -203,6 +223,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   onClose,
   outlineNodes,
   activeOutlineNodeId,
+  chapterOutlines,
+  pendingChapterOutline,
   characters,
   worldEntries,
   chapters,
@@ -399,7 +421,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   // ===== 构建 Write 上下文 =====
   const getContext = useCallback(() => {
     const selectedOutline = outlineNodes.find(n => n.id === selectedOutlineId);
-    if (!selectedOutline) return null;
+    // A4b：从策划「AI 代写」进入时，pendingChapterOutline 是权威结构输入（不依赖 outline_nodes）
+    const plannedOutline = pendingChapterOutline ?? null;
+    if (!selectedOutline && !plannedOutline) return null;
 
     // 取最近章节的 AI 摘要（优先使用 summary 字段，回退到正文前 200 字）
     const recentChapters = chapters
@@ -418,12 +442,38 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         };
       });
 
+    // 章纲 → outlineTitle/outlineSummary；相关上下文优先用相邻章纲，回退 outlineNodes
+    if (plannedOutline) {
+      const summary = formatChapterOutlineSummary(plannedOutline);
+      const relatedChapters = (chapterOutlines ?? [])
+        .filter(c => c.chapterNumber !== plannedOutline.chapterNumber)
+        .map(c => ({ title: `第${c.chapterNumber}章 ${c.title}`, summary: `${c.chapterGoal || ''}` }));
+      return {
+        projectName,
+        typeTags,
+        style,
+        outlineTitle: `第${plannedOutline.chapterNumber}章 ${plannedOutline.title}`,
+        outlineSummary: summary,
+        characters: includeCharacters
+          ? characters.map(c => ({
+              name: c.name, aliases: c.aliases, personality: c.personality,
+              background: c.background, arc: c.arc,
+            }))
+          : [],
+        worldEntries: includeWorld
+          ? worldEntries.map(w => ({ category: w.category, name: w.name, description: w.description }))
+          : [],
+        recentChapters: includeContext ? recentChapters : [],
+        outlineNodes: relatedChapters,
+      };
+    }
+
     return {
       projectName,
       typeTags,
       style,
-      outlineTitle: selectedOutline.title,
-      outlineSummary: selectedOutline.summary || '',
+      outlineTitle: selectedOutline!.title,
+      outlineSummary: selectedOutline!.summary || '',
       characters: includeCharacters
         ? characters.map(c => ({
             name: c.name,
@@ -439,7 +489,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       recentChapters: includeContext ? recentChapters : [],
       outlineNodes: outlineNodes.map(n => ({ title: n.title, summary: n.summary || '' })),
     };
-  }, [selectedOutlineId, outlineNodes, characters, worldEntries, chapters,
+  }, [selectedOutlineId, outlineNodes, pendingChapterOutline, chapterOutlines, characters, worldEntries, chapters,
       projectName, typeTags, style, includeContext, includeCharacters, includeWorld]);
 
   // ===== 批量生成（P2 断点续写）=====
