@@ -1,6 +1,6 @@
 # Dockable Workspace 与主题系统：代码审查 + 实施方案
 
-> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0 已 commit（`cf9bbe0`）。P1 已编码未提交。下一步是 P2 分隔条与折叠（计划已写，编码未开始）。文内「Spec 审查意见」已把终态与 P2 范围拆开，避免按终态示意图超做。**
+> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0 已 commit（`cf9bbe0`）。P1 已 commit（`d9c83cb`）。P2 已编码未提交（下一步是验证后单独 commit）。P3/P4 未开始。文内「Spec 审查意见」已把终态与 P2 范围拆开，避免按终态示意图超做。**
 >
 > 日期：2026-09-12
 >
@@ -41,8 +41,8 @@
 | 阶段 | 状态 | 计划 | 证据 |
 |------|------|------|------|
 | P0 止血 | **已 commit** `cf9bbe0` | `docs/superpowers/plans/2026-09-12-workspace-p0-layout-bleed.md` | 单测 12/12、写作 UI 12/12 |
-| P1 主题 | **已编码，未 commit** | `docs/superpowers/plans/2026-09-12-workspace-p1-theme.md` | `theme.test` 4/4、`workspace-p0` 12/12、写作 UI 12/12、`npx vite build` 通过 |
-| P2 分隔条 + 折叠 | **计划已写，编码未开始** | `docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` | — |
+| P1 主题 | **已 commit** `d9c83cb` | `docs/superpowers/plans/2026-09-12-workspace-p1-theme.md` | `theme.test` 4/4、`workspace-p0` 12/12、写作 UI 12/12、`npx vite build` 通过 |
+| P2 分隔条 + 折叠 | **已编码，未 commit** | `docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` | `workspace-p2` 3/3、`workspace-p0` 12/12、`theme` 4/4、写作 UI 12/12、`npx vite build` 通过 |
 | P3 拖进槽 | 未开始 | 等 P2 收口后再写计划 | — |
 | P4 预设 | 未开始 | 等 P3 | — |
 

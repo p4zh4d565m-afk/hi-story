@@ -1,6 +1,8 @@
-import React, { useState, useRef, useCallback, useEffect } from 'react';
+import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 import { clampFloatingRect } from '../workspace/floating-rect';
-import { PANEL_WIDTHS_KEY, parsePanelWidths, serializePanelWidths } from '../workspace/panel-widths';
+import { PANEL_WIDTHS_KEY, parsePanelWidths, PANEL_WIDTH_LIMITS } from '../workspace/panel-widths';
+import { splitOpenFlags, RAIL_PX, BOTTOM_MIN_PX } from '../workspace/split-flags';
 import { applyTheme, loadTheme, persistTheme, type ThemeName } from '../theme/theme';
 
 // ============================================================
@@ -102,13 +104,36 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   workspaceMode, onSetWorkspaceMode,
   fontSizes, onSetFontSize,
 }) => {
-  const initialWidths = parsePanelWidths(
+  const initialWidths = useMemo(() => parsePanelWidths(
     typeof localStorage === 'undefined' ? null : localStorage.getItem(PANEL_WIDTHS_KEY),
-  );
-  const [sidebarWidth, setSidebarWidth] = useState(initialWidths.sidebar);
-  const [aiChatWidth, setAiChatWidth] = useState(initialWidths.aiChat);
-  const [inspWidth, setInspWidth] = useState(initialWidths.insp);
+  ), []);
   const [theme, setTheme] = useState<ThemeName>(loadTheme);
+
+  // ===== P2：分隔条换库，比例用 useDefaultLayout 持久化；P0 像素只作首次 defaultSize 种子（L3，不双写）=====
+  const leftRef = usePanelRef();
+  const bottomRef = usePanelRef();
+  const { defaultLayout: hLayout, onLayoutChanged: onHLayout } = useDefaultLayout({
+    id: 'hi-story-split-h',
+    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  });
+  const { defaultLayout: vLayout, onLayoutChanged: onVLayout } = useDefaultLayout({
+    id: 'hi-story-split-v',
+    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  });
+  const { defaultLayout: cLayout, onLayoutChanged: onCLayout } = useDefaultLayout({
+    id: 'hi-story-split-center',
+    storage: typeof localStorage === 'undefined' ? undefined : localStorage,
+  });
+
+  // 槽展开判断（AI/右栏关闭=卸载；侧栏始终挂载走 collapse）
+  const flags = splitOpenFlags(panelState);
+
+  // 侧栏拖过 minSize 被库自动折叠时，同步回 panelState.sidebarOpen（防「折叠状态双源」分叉）
+  const onSidebarResize = useCallback((size: { asPercentage: number; inPixels: number }) => {
+    if (panelState.sidebarOpen && size.inPixels <= RAIL_PX) {
+      onToggleSidebar();
+    }
+  }, [panelState.sidebarOpen, onToggleSidebar]);
 
   useEffect(() => {
     applyTheme(theme);
@@ -213,14 +238,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(PANEL_WIDTHS_KEY, serializePanelWidths({
-        sidebar: sidebarWidth, aiChat: aiChatWidth, insp: inspWidth,
-      }));
-    } catch { /* 隐私模式等写失败时保持内存宽度 */ }
-  }, [sidebarWidth, aiChatWidth, inspWidth]);
-
-  useEffect(() => {
     const onResize = () => {
       const vp = { width: window.innerWidth, height: window.innerHeight };
       const clamp = (rect: { x: number; y: number; w: number; h: number }) =>
@@ -233,46 +250,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
-
-  // ===== Draggable resize =====
-  const useResize = (initialWidth: number, setWidth: (w: number) => void, min: number, max: number, dir: 'left' | 'right' = 'right') => {
-    const resizing = useRef(false);
-    const startX = useRef(0);
-    const startW = useRef(initialWidth);
-
-    const onDown = useCallback((e: React.MouseEvent) => {
-      e.preventDefault();
-      resizing.current = true;
-      startX.current = e.clientX;
-      startW.current = initialWidth;
-      document.body.style.cursor = 'col-resize';
-      document.body.style.userSelect = 'none';
-
-      const onMove = (ev: MouseEvent) => {
-        if (!resizing.current) return;
-        const delta = ev.clientX - startX.current;
-        const newW = dir === 'right'
-          ? Math.max(min, Math.min(max, startW.current + delta))
-          : Math.max(min, Math.min(max, startW.current - delta));
-        setWidth(newW);
-      };
-      const onUp = () => {
-        resizing.current = false;
-        document.body.style.cursor = '';
-        document.body.style.userSelect = '';
-        document.removeEventListener('mousemove', onMove);
-        document.removeEventListener('mouseup', onUp);
-      };
-      document.addEventListener('mousemove', onMove);
-      document.addEventListener('mouseup', onUp);
-    }, [initialWidth, min, max, dir]);
-
-    return onDown;
-  };
-
-  const handleSidebarResize = useResize(sidebarWidth, setSidebarWidth, 200, 420, 'right');
-  const handleAiChatResize = useResize(aiChatWidth, setAiChatWidth, 300, 700, 'left');
-  const handleInspResize = useResize(inspWidth, setInspWidth, 300, 600, 'left');
 
   // ── 渲染浮动面板的 8 方向调整大小手柄 ──
   // 注意：手柄缩小范围避免覆盖标题栏，标题栏 z-index 设为更高
@@ -304,21 +281,52 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   );
 
   return (
-    <div className="h-full flex bg-gray-950 text-gray-100 relative overflow-hidden">
-      {/* ===== SIDEBAR ===== */}
-      {panelState.sidebarOpen && (
-        <>
-          <aside className="flex-shrink-0 border-r border-sidebar-700 bg-sidebar-900 overflow-hidden"
-            style={{ width: sidebarWidth, fontSize: `${uiZoom * 100}%` }}>
-            {sidebar}
-          </aside>
-          <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
-            onMouseDown={handleSidebarResize} title="拖拽调整侧栏宽度" />
-        </>
-      )}
-
-      {/* ===== MAIN WRITING AREA ===== */}
-      <main className="flex-1 min-w-0 flex flex-col">
+    <div className="h-full bg-gray-950 text-gray-100 relative overflow-hidden">
+      <Group
+        id="hi-story-split-h"
+        orientation="horizontal"
+        className="h-full w-full"
+        defaultLayout={hLayout}
+        onLayoutChanged={onHLayout}
+      >
+        {/* ===== SIDEBAR（左，始终挂载，可折叠成 24px 轨）===== */}
+        <Panel
+          id="left"
+          panelRef={leftRef}
+          collapsible
+          collapsedSize={RAIL_PX}
+          minSize={PANEL_WIDTH_LIMITS.sidebar.min}
+          maxSize={PANEL_WIDTH_LIMITS.sidebar.max}
+          defaultSize={initialWidths.sidebar}
+          onResize={onSidebarResize}
+        >
+          <div className="h-full w-full relative overflow-hidden" style={{ fontSize: `${uiZoom * 100}%` }}>
+            <aside className="h-full w-full border-r border-sidebar-700 bg-sidebar-900" hidden={!panelState.sidebarOpen}>
+              {sidebar}
+            </aside>
+            {!panelState.sidebarOpen && (
+              <button
+                onClick={onToggleSidebar}
+                className="absolute inset-0 flex items-center justify-center bg-sidebar-900 border-r border-sidebar-700 text-gray-400 hover:text-gray-100"
+                title="展开侧栏"
+              >
+                ☰
+              </button>
+            )}
+          </div>
+        </Panel>
+        <Separator className="w-1.5 bg-transparent hover:bg-accent/50" />
+        <Panel id="center" minSize={360}>
+          <Group
+            id="hi-story-split-v"
+            orientation="vertical"
+            className="h-full w-full"
+            defaultLayout={vLayout}
+            onLayoutChanged={onVLayout}
+          >
+            <Panel id="main" minSize={200}>
+              {/* ===== MAIN WRITING AREA ===== */}
+              <main className="h-full flex flex-col min-h-0">
         {/* Top toolbar (UI domain zoom) */}
         <div className="flex items-center gap-1 px-2 py-1 bg-editor-800 border-b border-editor-700 flex-wrap"
           style={{ fontSize: `${uiZoom * 100}%` }}>
@@ -476,21 +484,32 @@ const DockLayout: React.FC<DockLayoutProps> = ({
           )}
         </div>
 
-        {/* Content area */}
-        <div className="flex-1 flex overflow-hidden">
+        {/* Content area — 写作/策划 与 AI 对话用横向 Group（AI 关闭=卸载列，L1） */}
+        <Group
+          id="hi-story-split-center"
+          orientation="horizontal"
+          className="flex-1 min-h-0"
+          defaultLayout={cLayout}
+          onLayoutChanged={onCLayout}
+        >
           {/* 策划与写作共用主区域，数据保持在同一个小说项目中 */}
-          <div className="flex-1 min-w-0 overflow-hidden">
-            {/* 保留编辑器及待保存内容，切换页面时自动保存仍可继续执行。 */}
-            <div className="h-full" hidden={workspaceMode !== 'writing'}>{writingArea}</div>
-            {workspaceMode === 'planning' && planningArea}
-          </div>
+          <Panel id="editor" minSize={280}>
+            <div className="h-full w-full overflow-hidden">
+              {/* 保留编辑器及待保存内容，切换页面时自动保存仍可继续执行。 */}
+              <div className="h-full" hidden={workspaceMode !== 'writing'}>{writingArea}</div>
+              {workspaceMode === 'planning' && planningArea}
+            </div>
+          </Panel>
 
-          {/* AI Chat panel (dockable, resizable) — hidden when aiLevel is 'off' */}
-          {panelState.aiChatOpen && !panelState.aiChatMinimized && panelState.aiLevel !== 'off' && (
-            <>
-              <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
-                onMouseDown={handleAiChatResize} title="拖拽调整 AI 对话宽度" />
-              <aside className="flex-shrink-0 border-l border-aichat-700 bg-aichat-900 overflow-hidden" style={{ width: aiChatWidth }}>
+          {flags.ai && <Separator className="w-1.5 bg-transparent hover:bg-accent/50" />}
+          {flags.ai && (
+            <Panel
+              id="ai"
+              minSize={PANEL_WIDTH_LIMITS.aiChat.min}
+              maxSize={PANEL_WIDTH_LIMITS.aiChat.max}
+              defaultSize={initialWidths.aiChat}
+            >
+              <aside className="h-full w-full border-l border-aichat-700 bg-aichat-900 overflow-hidden">
                 <div className="h-full relative zoom-container" style={{ fontSize: `${panelsZoom * 100}%` }}>
                   {/* Minimize button — positioned below the AI header so it doesn't cover ⚙️ */}
                   <button onClick={onMinimizeAiChat}
@@ -501,52 +520,58 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                   {aiChat}
                 </div>
               </aside>
-            </>
+            </Panel>
           )}
-        </div>
+        </Group>
       </main>
-
-      {/* ===== RIGHT SIDE PANELS (stacked) ===== */}
-      <div className="flex-shrink-0 flex">
-        {/* Inspiration panel */}
-        {panelState.inspirationOpen && (
-          <>
-            <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
-              onMouseDown={handleInspResize} title="拖拽调整宽度" />
-            <aside className="flex-shrink-0 border-l border-inspiration-700 bg-inspiration-900 overflow-hidden" style={{ width: inspWidth }}>
-              <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
-                {inspirationPanel}
-              </div>
-            </aside>
-          </>
+            </Panel>
+            <Panel
+              id="bottom"
+              panelRef={bottomRef}
+              collapsible
+              collapsedSize={0}
+              minSize={BOTTOM_MIN_PX}
+              defaultSize={0}
+            >
+              {/* 空槽占位。P3 才往这里拖面板。不要放写作区。P2 不渲染这条纵向 Separator（L2），避免拖出空白带。 */}
+            </Panel>
+          </Group>
+        </Panel>
+        {flags.rightAux && <Separator className="w-1.5 bg-transparent hover:bg-accent/50" />}
+        {flags.rightAux && (
+          <Panel
+            id="right"
+            minSize={PANEL_WIDTH_LIMITS.insp.min}
+            maxSize={PANEL_WIDTH_LIMITS.insp.max}
+            defaultSize={initialWidths.insp}
+          >
+            {/* ===== RIGHT SIDE PANELS（互斥三选一，关闭=整列卸载，L1）===== */}
+            <div className="h-full w-full flex">
+              {panelState.inspirationOpen && (
+                <aside className="h-full w-full border-l border-inspiration-700 bg-inspiration-900 overflow-hidden">
+                  <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
+                    {inspirationPanel}
+                  </div>
+                </aside>
+              )}
+              {panelState.referenceOpen && (
+                <aside className="h-full w-full border-l border-context-700 bg-context-900 overflow-hidden">
+                  <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
+                    {referencePanel}
+                  </div>
+                </aside>
+              )}
+              {panelState.namegenOpen && (
+                <aside className="h-full w-full border-l border-float-700 bg-float-900 overflow-hidden">
+                  <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
+                    {namegenPanel}
+                  </div>
+                </aside>
+              )}
+            </div>
+          </Panel>
         )}
-
-        {/* Reference panel — 参考库匹配 */}
-        {panelState.referenceOpen && (
-          <>
-            <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
-              onMouseDown={handleInspResize} title="拖拽调整宽度" />
-            <aside className="flex-shrink-0 border-l border-context-700 bg-context-900 overflow-hidden" style={{ width: inspWidth }}>
-              <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
-                {referencePanel}
-              </div>
-            </aside>
-          </>
-        )}
-
-        {/* Name Generator panel — 起名助手 */}
-        {panelState.namegenOpen && (
-          <>
-            <div className="w-1.5 hover:w-2 cursor-col-resize bg-transparent hover:bg-accent/50 flex-shrink-0 z-10"
-              onMouseDown={handleInspResize} title="拖拽调整宽度" />
-            <aside className="flex-shrink-0 border-l border-float-700 bg-float-900 overflow-hidden" style={{ width: inspWidth }}>
-              <div style={{ fontSize: `${panelsZoom * 100}%`, height: '100%' }}>
-                {namegenPanel}
-              </div>
-            </aside>
-          </>
-        )}
-      </div>
+      </Group>
 
       {/* ===== FLOATING MINDMAP ===== */}
       {panelState.mindmapOpen && (
