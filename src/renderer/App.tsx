@@ -1396,6 +1396,10 @@ const App: React.FC = () => {
             onChapterAccepted={(chapterId, content) => {
               // 接受修订后回写 App 的 chapters（与 handleSaveChapter 成功后的更新一致）
               setChapters(prev => prev.map(ch => ch.id === chapterId ? { ...ch, content } : ch));
+              // 同章节 key 不变，TipTap 不会自动同步；若修订的是当前打开章节，须主动刷新编辑器
+              if (activeChapter?.id === chapterId) {
+                editorRef.current?.setContent(content);
+              }
             }}
           />
         }
