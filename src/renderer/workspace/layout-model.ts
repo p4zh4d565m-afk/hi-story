@@ -1,6 +1,6 @@
 // Workspace 布局模型（P3 纯函数）
 // 管「面板归属哪个槽、槽内谁 active」，不碰槽的像素/百分比（那是 react-resizable-panels 的 useDefaultLayout）。
-// 本轮只迁六个浮窗工具 + 灵感/参考/起名 + 侧栏；aiChat 仍留 P2 的 center 内侧列，movePanel 拒绝 aiChat。
+// 本轮管大纲/素材/伏笔/灵感/参考/起名 + 侧栏；aiChat（P2 center 内侧列）与写章/审稿/润色（浮动窗）都不走本模型。
 
 export type SlotId = 'left' | 'right' | 'bottom';
 

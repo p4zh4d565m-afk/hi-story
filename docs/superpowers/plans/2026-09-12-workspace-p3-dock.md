@@ -1,6 +1,8 @@
 # Workspace P3 拖放进槽 Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans 按任务执行。步骤用 checkbox 跟踪。本阶段禁止打开 P4 预设，禁止改 P1 主题色、禁止回改 P0/P2 几何。
+>
+> **⚠️ 翻案（2026-09-13）：** 本计划最初定案「写章/审稿/润色默认 bottom（3+3）」，产品实测后**推翻**——三面板改回浮动窗、不入槽。下文正文仍按旧 3+3 描述，**以 Spec「P3 定案（2026-09-13 修订）」与 §8 浮动表为准**。最终交付：大纲/素材/伏笔/灵感/参考/起名入 right；写章/审稿/润色保持浮动。`openKeepAlive`/`closeKeepAlive` 已删除。
 
 **Goal:** 把大纲 / 素材 / 伏笔 / 写章 / 审稿 / 润色从「默认浮动窗」改为「默认入槽」，支持拖标题到 left/right/bottom；`WorkspaceLayoutV1` 管这六者 + 灵感/参考/起名 + 侧栏的归属。**不管 AI 对话**（仍 P2 的 center 内侧列）。导图保留浮动例外。
 
@@ -229,4 +231,4 @@ npx vite build
 4. **Obsidian 浏览仍模态。** 导图可浮动。不要扫第二批 `text-white` / 写章灰底，不要开 P4。
 5. **写作 UI 回归是门。** `node tests/ui/run-writing-workspace.cjs` 必须继续绿。几何仍无 Electron E2E，提交前按上文手动清单走一遍。
 
-编码未开始。不提交除非用户明确要求。
+编码已做、未收口。第二人复核见 Spec「P3 第二人复核」。不标落地、不开 P4，除非用户明确要求。

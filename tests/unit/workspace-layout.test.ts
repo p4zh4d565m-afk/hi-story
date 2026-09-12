@@ -137,6 +137,21 @@ describe('layout-storage', () => {
     expect(parseLayout(raw).floating).toEqual(['mindmap']);
   });
 
+  it('旧 bottom 残留的写章/审稿/润色被剥掉（锁双窗回归）', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      slots: {
+        left: { panelIds: ['sidebar'], activeId: 'sidebar' },
+        right: { panelIds: [], activeId: null },
+        bottom: { panelIds: ['aiWrite', 'aiReview', 'aiPolish', 'outline'], activeId: 'aiWrite' },
+      },
+      floating: [],
+    });
+    const parsed = parseLayout(raw);
+    expect(parsed.slots.bottom.panelIds).toEqual(['outline']);
+    expect(parsed.slots.bottom.activeId).toBe('outline');
+  });
+
   it('往返保持', () => {
     const l = movePanel(DEFAULT_LAYOUT, 'outline', 'right');
     const round = parseLayout(serializeLayout(l));
