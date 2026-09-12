@@ -20,6 +20,7 @@ interface ForeshadowingPanelProps {
   characters: Array<{ id: string; name: string }>;
   /** 大纲节点 */
   outlineNodes: Array<{ id: string; title: string }>;
+  onClose?: () => void;
 }
 
 interface EditingForeshadowing {
@@ -54,7 +55,7 @@ const STATUS_ICONS: Record<string, string> = {
 };
 
 const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
-  open, projectId, chapters, characters, outlineNodes,
+  open, projectId, chapters, characters, outlineNodes, onClose,
 }) => {
   const [foreshadowings, setForeshadowings] = useState<Foreshadowing[]>([]);
   const [loading, setLoading] = useState(false);
@@ -187,6 +188,9 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
             </button>
           ))}
         </div>
+        {onClose && (
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-100 text-xs leading-none">✕</button>
+        )}
       </div>
 
         {/* ── 主体 ── */}

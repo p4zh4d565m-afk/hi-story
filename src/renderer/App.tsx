@@ -1291,6 +1291,7 @@ const App: React.FC = () => {
             onDelete={handleDeleteOutlineNode}
             onUpdate={handleUpdateOutlineNode}
             loading={outlineLoading}
+            onClose={() => workspaceLayout.closePanel('outline')}
           />
         }
         referencePanel={
@@ -1443,6 +1444,7 @@ const App: React.FC = () => {
             chapters={chapters.map(c => ({ id: c.id, title: c.title }))}
             characters={characters.map(c => ({ id: c.id, name: c.name }))}
             outlineNodes={outlineNodes.map(n => ({ id: n.id, title: n.title }))}
+            onClose={() => workspaceLayout.closePanel('foreshadowing')}
           />
         }
       />

@@ -112,24 +112,17 @@ const SlotView: React.FC<{
         activeId={activeId}
         onSetActive={onSetActive}
       />
-      {/* 普通面板：全部挂载，display 由是否 active 决定 */}
+      {/* 普通面板：自带功能栏+关闭，不套 PanelChrome；全挂载、display 切显隐 */}
       {normalPanels.map((pid) => (
         <div
           key={pid}
           className="flex-1 min-h-0"
           style={{ display: activeId === pid ? 'block' : 'none' }}
         >
-          <PanelChrome
-            panelId={pid}
-            onClose={onClosePanel}
-          >
-            <div className="h-full w-full">
-              {panelContent[pid]}
-            </div>
-          </PanelChrome>
+          {panelContent[pid]}
         </div>
       ))}
-      {/* 保活面板：永远挂载，display 由是否 active 决定（关闭仍挂载） */}
+      {/* 保活面板：已剥壳，由 PanelChrome 提供标题+关闭；永远挂载、display 切显隐 */}
       {keepAlivePanels.map((pid) => (
         <div
           key={pid}

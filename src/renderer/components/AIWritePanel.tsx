@@ -273,89 +273,6 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const BATCH_PROGRESS_KEY = 'hi-story-batch-progress';
   const [batchPaused, setBatchPaused] = useState(false);
 
-  // ===== 面板尺寸拖拽缩放 =====
-  const [panelSize, setPanelSize] = useState({ width: 680, height: 500 });
-  const resizing = useRef(false);
-  const resizeStartRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0 });
-
-  // ===== 面板拖拽移动 =====
-  const panelRef = useRef<HTMLDivElement>(null);
-  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
-  const dragging = useRef(false);
-  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
-
-  const handleResizeStart = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    resizing.current = true;
-    resizeStartRef.current = { startX: e.clientX, startY: e.clientY, startW: panelSize.width, startH: panelSize.height };
-    document.body.style.cursor = 'nwse-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev: MouseEvent) => {
-      if (!resizing.current) return;
-      const dx = ev.clientX - resizeStartRef.current.startX;
-      const dy = ev.clientY - resizeStartRef.current.startY;
-      setPanelSize({
-        width: Math.max(480, Math.min(1400, resizeStartRef.current.startW + dx)),
-        height: Math.max(300, Math.min(900, resizeStartRef.current.startH + dy)),
-      });
-    };
-    const onUp = () => {
-      resizing.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, [panelSize]);
-
-  // ===== 拖拽移动：标题栏按下开始拖动 =====
-  const handleDragStart = useCallback((e: React.MouseEvent) => {
-    // 不拖拽按钮（关闭按钮等）
-    if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).closest('button')) return;
-    e.preventDefault();
-    dragging.current = true;
-    const rect = panelRef.current!.getBoundingClientRect();
-    dragStartRef.current = {
-      mouseX: e.clientX,
-      mouseY: e.clientY,
-      panelX: rect.left,
-      panelY: rect.top,
-    };
-    document.body.style.cursor = 'move';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev: MouseEvent) => {
-      if (!dragging.current) return;
-      const dx = ev.clientX - dragStartRef.current.mouseX;
-      const dy = ev.clientY - dragStartRef.current.mouseY;
-      setPanelPos({
-        x: Math.max(-200, Math.min(window.innerWidth - 200, dragStartRef.current.panelX + dx)),
-        y: Math.max(0, Math.min(window.innerHeight - 40, dragStartRef.current.panelY + dy)),
-      });
-    };
-    const onUp = () => {
-      dragging.current = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, []);
-
-  // 面板打开时计算初始居中位置（仅在首次打开且未被拖动过时）
-  useEffect(() => {
-    if (open && !panelPos) {
-      setPanelPos({
-        x: Math.max(0, (window.innerWidth - panelSize.width) / 2),
-        y: Math.max(0, (window.innerHeight - panelSize.height) / 2),
-      });
-    }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
-
   // ===== 初始化 AI 配置 =====
   useEffect(() => {
     async function init() {
@@ -824,49 +741,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     : 0;
 
   return (
-    <div className="fixed inset-0 z-40 pointer-events-none">
-      <div className="absolute inset-0 pointer-events-none" onClick={onClose} />
-      <div
-        ref={panelRef}
-        className="absolute pointer-events-auto bg-gray-950 border border-gray-700 rounded-lg shadow-2xl flex flex-col overflow-hidden"
-        style={panelPos ? {
-          top: `${panelPos.y}px`,
-          left: `${panelPos.x}px`,
-          width: `${panelSize.width}px`,
-          maxHeight: '90vh',
-          height: `${panelSize.height}px`,
-        } : {
-          top: '50%',
-          left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: `${panelSize.width}px`,
-          maxHeight: '90vh',
-          height: `${panelSize.height}px`,
-        }}
-      >
-        {/* ── 标题栏（可拖拽移动）── */}
-        <div
-          className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0 cursor-move select-none"
-          onMouseDown={handleDragStart}
-        >
-          <span className="text-sm font-semibold text-gray-200">🤖 AI 写章</span>
-          <div className="flex items-center gap-2">
-            {!initDone ? (
-              <span className="text-[10px] text-gray-500">检查 AI 配置...</span>
-            ) : aiReady ? (
-              <span className="text-[10px] text-green-500">🤖 AI 就绪</span>
-            ) : (
-              <span className="text-[10px] text-red-400">⚠️ 未配置 AI</span>
-            )}
-            <button
-              onClick={onClose}
-              className="text-gray-500 hover:text-white text-lg leading-none"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-
+    <div className="h-full w-full bg-gray-950 flex flex-col overflow-hidden">
         {/* ── 主体 ── */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
           {/* 配置区 */}
@@ -1122,21 +997,6 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
             </button>
           </div>
         )}
-
-        {/* 拖拽缩放手柄（右下角） */}
-        <div
-          onMouseDown={handleResizeStart}
-          className="absolute bottom-0 right-0 w-5 h-5 cursor-nwse-resize group select-none"
-          title="拖动调整面板大小"
-        >
-          <svg
-            width="14" height="14" viewBox="0 0 14 14"
-            className="absolute bottom-1 right-1 text-gray-700 group-hover:text-gray-400 transition-colors"
-          >
-            <path d="M2 12 L12 2 M6 12 L12 6 M10 12 L12 10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/>
-          </svg>
-        </div>
-      </div>
     </div>
   );
 };

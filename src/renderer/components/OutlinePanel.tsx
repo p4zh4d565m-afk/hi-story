@@ -16,6 +16,7 @@ interface OutlinePanelProps {
   onDelete: (id: string) => void;
   onUpdate: (id: string, title: string, summary: string) => void;
   loading: boolean;
+  onClose?: () => void;
 }
 
 // ── 辅助：把扁平节点按 parentId 构建成树 ──
@@ -126,6 +127,7 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
   onDelete,
   onUpdate,
   loading,
+  onClose,
 }) => {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -412,6 +414,9 @@ const OutlinePanel: React.FC<OutlinePanelProps> = ({
         >
           + 新节点
         </button>
+        {onClose && (
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-100 text-xs leading-none">✕</button>
+        )}
       </div>
 
       {/* 主体 */}
