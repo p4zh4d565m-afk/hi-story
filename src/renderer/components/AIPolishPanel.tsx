@@ -113,6 +113,88 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
   const [initDone, setInitDone] = useState(false);
   const [applied, setApplied] = useState(false);
 
+  // ===== 面板尺寸拖拽缩放 =====
+  const [panelSize, setPanelSize] = useState({ width: 820, height: 560 });
+  const resizing = useRef(false);
+  const resizeStartRef = useRef({ startX: 0, startY: 0, startW: 0, startH: 0 });
+
+  // ===== 面板拖拽移动 =====
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelPos, setPanelPos] = useState<{ x: number; y: number } | null>(null);
+  const dragging = useRef(false);
+  const dragStartRef = useRef({ mouseX: 0, mouseY: 0, panelX: 0, panelY: 0 });
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizing.current = true;
+    resizeStartRef.current = { startX: e.clientX, startY: e.clientY, startW: panelSize.width, startH: panelSize.height };
+    document.body.style.cursor = 'nwse-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      if (!resizing.current) return;
+      const dx = ev.clientX - resizeStartRef.current.startX;
+      const dy = ev.clientY - resizeStartRef.current.startY;
+      setPanelSize({
+        width: Math.max(520, Math.min(1500, resizeStartRef.current.startW + dx)),
+        height: Math.max(350, Math.min(950, resizeStartRef.current.startH + dy)),
+      });
+    };
+    const onUp = () => {
+      resizing.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [panelSize]);
+
+  // ===== 拖拽移动：标题栏按下开始拖动 =====
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).tagName === 'BUTTON' || (e.target as HTMLElement).closest('button')) return;
+    e.preventDefault();
+    dragging.current = true;
+    const rect = panelRef.current!.getBoundingClientRect();
+    dragStartRef.current = {
+      mouseX: e.clientX,
+      mouseY: e.clientY,
+      panelX: rect.left,
+      panelY: rect.top,
+    };
+    document.body.style.cursor = 'move';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      if (!dragging.current) return;
+      const dx = ev.clientX - dragStartRef.current.mouseX;
+      const dy = ev.clientY - dragStartRef.current.mouseY;
+      setPanelPos({
+        x: Math.max(-200, Math.min(window.innerWidth - 200, dragStartRef.current.panelX + dx)),
+        y: Math.max(0, Math.min(window.innerHeight - 40, dragStartRef.current.panelY + dy)),
+      });
+    };
+    const onUp = () => {
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  // 面板打开时计算初始居中位置
+  useEffect(() => {
+    if (open && !panelPos) {
+      setPanelPos({
+        x: Math.max(0, (window.innerWidth - panelSize.width) / 2),
+        y: Math.max(0, (window.innerHeight - panelSize.height) / 2),
+      });
+    }
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ===== 初始化 AI =====
   useEffect(() => {
     async function init() {
@@ -260,8 +342,47 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
     onClose();
   }, [projectId, onClose]);
 
+  if (!open) return null;
+
   return (
-    <div className="h-full w-full bg-gray-950 flex flex-col overflow-hidden">
+    <div className="fixed inset-0 z-40 pointer-events-none">
+      <div className="absolute inset-0 pointer-events-none" onClick={handleClose} />
+      <div
+        ref={panelRef}
+        className="absolute pointer-events-auto bg-gray-950 border border-gray-700 rounded-lg shadow-2xl flex flex-col overflow-hidden"
+        style={panelPos ? {
+          top: `${panelPos.y}px`,
+          left: `${panelPos.x}px`,
+          width: `${panelSize.width}px`,
+          maxHeight: '92vh',
+          height: `${panelSize.height}px`,
+        } : {
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: `${panelSize.width}px`,
+          maxHeight: '92vh',
+          height: `${panelSize.height}px`,
+        }}
+      >
+        {/* ── 标题栏（可拖拽移动）── */}
+        <div
+          className="flex items-center justify-between px-4 py-2 border-b border-gray-800 shrink-0 cursor-move select-none"
+          onMouseDown={handleDragStart}
+        >
+          <span className="text-sm font-semibold text-gray-200">✨ 去 AI 味润色</span>
+          <div className="flex items-center gap-2">
+            {!initDone ? (
+              <span className="text-[10px] text-gray-500">检查 AI 配置...</span>
+            ) : aiReady ? (
+              <span className="text-[10px] text-green-500">🤖 AI 就绪</span>
+            ) : (
+              <span className="text-[10px] text-red-400">⚠️ 未配置 AI</span>
+            )}
+            <button onClick={handleClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+          </div>
+        </div>
+
         {/* ── 主体 ── */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4 text-sm">
           {/* 润色范围选择 */}
@@ -376,6 +497,16 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
             </div>
           )}
         </div>
+
+        {/* ── 右下角缩放手柄 ── */}
+        <div
+          className="absolute bottom-0 right-0 w-4 h-4 cursor-nwse-resize"
+          onMouseDown={handleResizeStart}
+          style={{
+            background: 'linear-gradient(135deg, transparent 50%, #4a4a4a 50%)',
+          }}
+        />
+      </div>
     </div>
   );
 };

@@ -4,8 +4,7 @@ import { clampFloatingRect } from '../workspace/floating-rect';
 import { PANEL_WIDTHS_KEY, parsePanelWidths, PANEL_WIDTH_LIMITS } from '../workspace/panel-widths';
 import { splitOpenFlags, horizontalPanelIds, centerPanelIds, verticalPanelIds, RAIL_PX, BOTTOM_MIN_PX } from '../workspace/split-flags';
 import { applyTheme, loadTheme, persistTheme, type ThemeName } from '../theme/theme';
-import { type WorkspaceLayoutV1, type PanelId, type SlotId, isSlotVisible, PANEL_TITLES, KEEP_ALIVE_PANELS } from '../workspace/layout-model';
-import PanelChrome from '../workspace/PanelChrome';
+import { type WorkspaceLayoutV1, type PanelId, type SlotId, isSlotVisible, PANEL_TITLES } from '../workspace/layout-model';
 import SlotTabs from '../workspace/SlotTabs';
 
 // ============================================================
@@ -97,15 +96,12 @@ const SlotView: React.FC<{
   slotId: SlotId;
   slot: WorkspaceLayoutV1['slots'][SlotId];
   panelContent: Record<PanelId, React.ReactNode>;
-  keepAlivePanels: PanelId[];
   onClosePanel: (panelId: PanelId) => void;
   onSetActive: (slotId: SlotId, panelId: PanelId) => void;
   onDragStart: (panelId: PanelId) => void;
   onDrop: (panelId: PanelId, target: SlotId) => void;
-}> = ({ slotId, slot, panelContent, keepAlivePanels, onClosePanel, onSetActive, onDragStart, onDrop }) => {
+}> = ({ slotId, slot, panelContent, onClosePanel, onSetActive, onDragStart, onDrop }) => {
   const activeId = slot.activeId;
-  // 普通面板：槽内 panelIds 全挂载、display 切显隐，切标签不丢内部 state；关闭（从 panelIds 移除）才卸载。
-  const normalPanels = slot.panelIds.filter((pid) => !keepAlivePanels.includes(pid));
   return (
     <div
       className="h-full w-full flex flex-col min-h-0"
@@ -121,33 +117,16 @@ const SlotView: React.FC<{
         panelIds={slot.panelIds}
         activeId={activeId}
         onSetActive={onSetActive}
-        onDragStart={normalPanels.length > 0 ? onDragStart : undefined}
+        onDragStart={slot.panelIds.length > 0 ? onDragStart : undefined}
       />
-      {/* 普通面板：自带功能栏+关闭，不套 PanelChrome；全挂载、display 切显隐 */}
-      {normalPanels.map((pid) => (
+      {/* 槽内面板：全挂载、display 切显隐，切标签不丢内部 state；关闭（从 panelIds 移除）才卸载 */}
+      {slot.panelIds.map((pid) => (
         <div
           key={pid}
           className="flex-1 min-h-0"
           style={{ display: activeId === pid ? 'block' : 'none' }}
         >
           {panelContent[pid]}
-        </div>
-      ))}
-      {/* 保活面板：已剥壳，由 PanelChrome 提供标题+关闭；永远挂载、display 切显隐 */}
-      {keepAlivePanels.map((pid) => (
-        <div
-          key={pid}
-          className="flex-1 min-h-0"
-          style={{ display: activeId === pid ? 'block' : 'none' }}
-        >
-          <PanelChrome
-            panelId={pid}
-            onClose={onClosePanel}
-          >
-            <div className="h-full w-full">
-              {panelContent[pid]}
-            </div>
-          </PanelChrome>
         </div>
       ))}
     </div>
@@ -246,10 +225,16 @@ const DockLayout: React.FC<DockLayoutProps> = ({
     }
   }, [panelState.sidebarOpen, onToggleSidebar]);
 
-  // bottom 槽双向同步：有面板 expand + 挂条 + 生效 minSize；无面板 collapse 到 0 + 不挂条（保住三个 AI 实例不卸）。
+  // bottom 槽双向同步：有面板才展开（resize 到合理高度，expand() 只到 minSize=120 太矮）、挂条、生效 minSize；
+  // 无面板 collapse 到 0 + 不挂条（保住三个 AI 实例不卸）。
   useEffect(() => {
-    if (bottomVisible) bottomRef.current?.expand();
-    else bottomRef.current?.collapse();
+    if (bottomVisible) {
+      if (bottomRef.current?.isCollapsed()) {
+        bottomRef.current?.resize('40%');
+      }
+    } else {
+      bottomRef.current?.collapse();
+    }
   }, [bottomVisible, bottomRef]);
 
   useEffect(() => {
@@ -557,21 +542,21 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
           {/* AI Write toggle — AI 写章 */}
           <button onClick={onToggleAiWrite}
-            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('aiWrite') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiWriteOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="AI 写章 (Ctrl+Shift+W)">
             🤖 写章
           </button>
 
           {/* AI Review toggle — AI 审稿 */}
           <button onClick={onToggleAiReview}
-            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('aiReview') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiReviewOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="AI 审稿 (Ctrl+Shift+R)">
             🔍 审稿
           </button>
 
           {/* AI Polish toggle — 去 AI 味润色 */}
           <button onClick={onToggleAiPolish}
-            className={`px-2 py-1 rounded text-xs transition-colors ${isPanelOpen('aiPolish') ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
+            className={`px-2 py-1 rounded text-xs transition-colors ${panelState.aiPolishOpen ? 'text-accent bg-accent/10' : 'text-gray-400 hover:text-gray-100'}`}
             title="去 AI 味润色">
             ✨ 润色
           </button>
@@ -655,7 +640,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 slotId="bottom"
                 slot={layout.slots.bottom}
                 panelContent={panelContent}
-                keepAlivePanels={KEEP_ALIVE_PANELS}
                 onClosePanel={onClosePanel}
                 onSetActive={onSetActive}
                 onDragStart={(pid) => setDraggingPanel(pid)}
@@ -676,7 +660,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
               slotId="right"
               slot={layout.slots.right}
               panelContent={panelContent}
-              keepAlivePanels={[]}
               onClosePanel={onClosePanel}
               onSetActive={onSetActive}
               onDragStart={(pid) => setDraggingPanel(pid)}
@@ -685,6 +668,17 @@ const DockLayout: React.FC<DockLayoutProps> = ({
           </Panel>
         )}
       </Group>
+
+      {/* ===== 浮动 AI 面板（保活：display:none 不卸载，生成中的流不断）===== */}
+      <div style={{ display: panelState.aiWriteOpen ? 'block' : 'none' }}>
+        {aiWritePanel}
+      </div>
+      <div style={{ display: panelState.aiReviewOpen ? 'block' : 'none' }}>
+        {aiReviewPanel}
+      </div>
+      <div style={{ display: panelState.aiPolishOpen ? 'block' : 'none' }}>
+        {aiPolishPanel}
+      </div>
 
       {/* ===== FLOATING MINDMAP ===== */}
       {panelState.mindmapOpen && (

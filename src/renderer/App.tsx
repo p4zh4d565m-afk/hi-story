@@ -135,19 +135,22 @@ const App: React.FC = () => {
   }>({ open: false, sourceId: '', targetId: '' });
 
   // ===== Panel state（P3 后只剩「不进 layout 归属」的显示态）=====
-  // 大纲/素材/伏笔/灵感/参考/起名/写章/审稿/润色 都进 layout（useWorkspaceLayout）。
+  // 大纲/素材/伏笔/灵感/参考/起名 进 layout（useWorkspaceLayout）。
+  // 写章/审稿/润色回到浮动窗：走 panelState 布尔 + display:none 保活（关闭不卸载，流不断）。
   // 保留：sidebarOpen（左栏折叠）、aiChatOpen/aiChatMinimized/aiLevel（AI 对话，center 内侧）、mindmapOpen（导图浮动例外）。
   const [panelState, setPanelState] = useState({
     sidebarOpen: true,
     aiChatOpen: false,       // 默认关闭，用户点击「✨ 辅助」或「💬 AI」时才打开
     aiChatMinimized: false,
     mindmapOpen: false,
+    aiWriteOpen: false,      // AI 写章（浮动窗）
+    aiReviewOpen: false,     // AI 审稿（浮动窗）
+    aiPolishOpen: false,     // 去 AI 味润色（浮动窗）
     aiLevel: 'off' as 'off' | 'assist',  // 默认纯写模式，AI 模块不出现
   });
 
-  // ===== P3 布局模型：管大纲/素材/伏笔 + 灵感/参考/起名 + 侧栏归属 =====
-  // ===== P3 布局模型：管大纲/素材/伏笔/灵感/参考/起名/写章/审稿/润色 的归属 + 侧栏归属 =====
-  // 写章/审稿/润色是「保活面板」：打开走 openKeepAlive（固定 bottom）、关闭走 closeKeepAlive（组件仍 display:none 挂载）。
+  // ===== P3 布局模型：管大纲/素材/伏笔/灵感/参考/起名 + 侧栏归属 =====
+  // 写章/审稿/润色已退出 layout（回浮动窗），不再走 openKeepAlive/closeKeepAlive。
   const workspaceLayout = useWorkspaceLayout();
 
   // ===== 字体大小设定 =====
@@ -563,8 +566,8 @@ const App: React.FC = () => {
     // 只把章纲交给代写面板，面板用章纲字段拼上下文。
     pendingAIOutlineRef.current = outline;
     setPendingAIOutline(outline);
-    workspaceLayout.openKeepAlive('aiWrite');
-  }, [activeProject, chapters, workspaceLayout]);
+    setPanelState(previous => ({ ...previous, aiWriteOpen: true }));
+  }, [activeProject, chapters]);
 
   // Obsidian 导入后，只刷新人物与世界观（不重载章节/大纲，避免覆盖未保存正文）。
   // 与 UI 集成测试共用 createImportedEntitiesRefresher，保证测试证明的是与生产一致的 IPC 失败链路。
@@ -1088,8 +1091,8 @@ const App: React.FC = () => {
         if (e.key === 'N') { e.preventDefault(); workspaceLayout.openOrFocus('namegen', 'right'); }
         if (e.key === 'A') { e.preventDefault(); setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false })); }
         if (e.key === 'S') { e.preventDefault(); setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen })); }
-        if (e.key === 'W') { e.preventDefault(); workspaceLayout.openKeepAlive('aiWrite'); }
-        if (e.key === 'R') { e.preventDefault(); workspaceLayout.openKeepAlive('aiReview'); }
+        if (e.key === 'W') { e.preventDefault(); setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen })); }
+        if (e.key === 'R') { e.preventDefault(); setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen })); }
         if (e.key === 'F') { e.preventDefault(); workspaceLayout.openOrFocus('foreshadowing', DEFAULT_SLOT.foreshadowing!); }
       }
       if (e.key === 'Escape') {
@@ -1153,9 +1156,9 @@ const App: React.FC = () => {
         onToggleOutline={() => workspaceLayout.openOrFocus('outline', DEFAULT_SLOT.outline!)}
         onToggleReference={() => workspaceLayout.openOrFocus('reference', 'right')}
         onToggleNamegen={() => workspaceLayout.openOrFocus('namegen', 'right')}
-        onToggleAiWrite={() => workspaceLayout.openKeepAlive('aiWrite')}
-        onToggleAiReview={() => workspaceLayout.openKeepAlive('aiReview')}
-        onToggleAiPolish={() => { setPolishSelection(null); workspaceLayout.openKeepAlive('aiPolish'); }}
+        onToggleAiWrite={() => setPanelState(p => ({ ...p, aiWriteOpen: !p.aiWriteOpen }))}
+        onToggleAiReview={() => setPanelState(p => ({ ...p, aiReviewOpen: !p.aiReviewOpen }))}
+        onToggleAiPolish={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: !p.aiPolishOpen })); }}
         onToggleForeshadowing={() => workspaceLayout.openOrFocus('foreshadowing', DEFAULT_SLOT.foreshadowing!)}
         onSetAiLevel={(level) => setPanelState(p => ({
           ...p,
@@ -1232,7 +1235,7 @@ const App: React.FC = () => {
             onAIPolish={(text, range) => {
               // 打开润色面板，传入选中文本与选区范围
               setPolishSelection({ text, range: range ?? null });
-              workspaceLayout.openKeepAlive('aiPolish');
+              setPanelState(p => ({ ...p, aiPolishOpen: true }));
             }}
             onAIContinue={() => {
               // Ensure AI chat is open
@@ -1321,8 +1324,8 @@ const App: React.FC = () => {
         }
         aiWritePanel={
           <AIWritePanel
-            open={true}
-            onClose={() => { pendingAIOutlineRef.current = null; setPendingAIOutline(null); workspaceLayout.closeKeepAlive('aiWrite'); }}
+            open={panelState.aiWriteOpen}
+            onClose={() => { pendingAIOutlineRef.current = null; setPendingAIOutline(null); setPanelState(p => ({ ...p, aiWriteOpen: false })); }}
             outlineNodes={outlineNodes}
             activeOutlineNodeId={activeOutlineNodeId}
             chapterOutlines={planningSnapshot && planningSnapshot.projectId === activeProject?.id ? planningSnapshot.planning?.chapterOutlines ?? [] : []}
@@ -1388,8 +1391,8 @@ const App: React.FC = () => {
         }
         aiReviewPanel={
           <AIReviewPanel
-            open={true}
-            onClose={() => workspaceLayout.closeKeepAlive('aiReview')}
+            open={panelState.aiReviewOpen}
+            onClose={() => setPanelState(p => ({ ...p, aiReviewOpen: false }))}
             chapters={chapters}
             activeChapterId={activeChapterId}
             characters={characters}
@@ -1422,8 +1425,8 @@ const App: React.FC = () => {
         }
         aiPolishPanel={
           <AIPolishPanel
-            open={true}
-            onClose={() => { setPolishSelection(null); workspaceLayout.closeKeepAlive('aiPolish'); }}
+            open={panelState.aiPolishOpen}
+            onClose={() => { setPolishSelection(null); setPanelState(p => ({ ...p, aiPolishOpen: false })); }}
             chapters={chapters}
             activeChapterId={activeChapterId}
             characters={characters}
