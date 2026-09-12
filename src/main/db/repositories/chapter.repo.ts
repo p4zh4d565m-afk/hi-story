@@ -205,8 +205,7 @@ export class ChapterRepo {
 // 章节历史版本
 // ============================================================
 
-const MAX_SNAPSHOTS_PER_CHAPTER = 30;  // 每章最多保留 30 个快照
-const MAX_SNAPSHOT_AGE_DAYS = 7;       // 超过 7 天的自动清理
+const MAX_SNAPSHOTS_PER_CHAPTER = 30;  // 每章最多保留 30 个快照（按时间淘汰最旧，覆盖成书周期）
 
 export class ChapterHistoryRepo {
   /** 在章节更新前保存快照 */
@@ -221,7 +220,7 @@ export class ChapterHistoryRepo {
       VALUES (?, ?, ?, ?, ?)
     `).run(id, chapterId, content, wordCount, now);
 
-    // 清理超出上限的旧快照
+    // 清理超出上限的旧快照（不再按 7 天时间窗淘汰，只按条数上限）
     const count = (db.prepare(
       'SELECT COUNT(*) as cnt FROM chapter_history WHERE chapter_id = ?'
     ).get(chapterId) as { cnt: number }).cnt;
@@ -233,10 +232,6 @@ export class ChapterHistoryRepo {
         )
       `).run(chapterId, count - MAX_SNAPSHOTS_PER_CHAPTER);
     }
-
-    // 清理过期快照
-    const cutoff = new Date(Date.now() - MAX_SNAPSHOT_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    db.prepare('DELETE FROM chapter_history WHERE chapter_id = ? AND saved_at < ?').run(chapterId, cutoff);
   }
 
   /** 获取章节的所有历史快照（最新的在前） */
