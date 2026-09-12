@@ -108,6 +108,8 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     setVolumeOutlines([]); setVolumeStatus('empty');
     setChapterOutlines([]); setChapterOutlineStatus('empty'); setActiveVolume(0);
     setStageClearedNotice(false);
+    // 切项目时清掉所有长任务的 loading 状态，避免上一项目的生成把下一项目的按钮卡在加载态
+    setLoading(false); setOutlineLoading(false); setVolumeLoading(false); setChapterLoadingVolume(null);
     const ticket = projectLoadGuardRef.current.select(project?.id ?? null);
     if (!project) return;
     loadPlanning(project.id, ticket);
@@ -222,7 +224,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       await save('generated', null, generated, null, 'empty', [], 'empty', [], 'empty');
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
-    } finally { setLoading(false); }
+    } finally {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setLoading(false);
+    }
   };
 
   const confirm = async (index: number) => {
@@ -272,7 +276,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     }
-    finally { setOutlineLoading(false); }
+    finally {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setOutlineLoading(false);
+    }
   };
 
   const updateOutlineField = (field: keyof MasterOutline, value: string | string[]) => {
@@ -342,7 +348,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     }
-    finally { setVolumeLoading(false); }
+    finally {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setVolumeLoading(false);
+    }
   };
 
   const updateVolume = (index: number, field: keyof VolumeOutline, value: string | string[]) => {
@@ -398,7 +406,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     }
-    finally { setChapterLoadingVolume(null); }
+    finally {
+      if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setChapterLoadingVolume(null);
+    }
   };
 
   const updateChapter = (volumeIndex: number, chapterNumber: number, field: keyof ChapterOutline, value: string | string[] | number) => {

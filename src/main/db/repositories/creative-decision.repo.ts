@@ -58,7 +58,7 @@ export class CreativeDecisionRepo {
       }
       this.requireAssistantSource(input.projectId, input.sourceThreadId, input.sourceMessageId);
       input.drafts.forEach(draft => this.validateDraft(input.projectId, draft));
-      return { success: true, data: this.insertProposals(input.projectId, null, null, input.drafts) };
+      return { success: true, data: this.insertProposals(input.projectId, input.sourceThreadId, input.sourceMessageId, input.drafts) };
     } catch (error) {
       return failure(error);
     }

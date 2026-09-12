@@ -277,6 +277,13 @@ describe('CreativeDecisionRepo', () => {
     expect(res.error).toContain('AI 回复');
   });
 
+  it('对话 createProposals 成功时保留真实 sourceThreadId/sourceMessageId（防抹空回归）', () => {
+    const res = createProposals([fourDrafts[2]]);
+    expect(res.success).toBe(true);
+    expect(res.data![0].sourceThreadId).toBe('thread-a');
+    expect(res.data![0].sourceMessageId).toBe('assistant-a');
+  });
+
   it('一次事务确认四类提议并写入对应目标表和效果表', () => {
     const proposals = createProposals();
     expect(proposals.success).toBe(true);
