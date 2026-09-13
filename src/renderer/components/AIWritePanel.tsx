@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
 import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
+import { splitGeneratedPreviewBlocks } from '../services/ai/generated-preview';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
@@ -1101,12 +1102,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                 {generating && !generatedContent ? (
                   <span className="text-gray-500 italic">正在创作...</span>
                 ) : (
-                  <div
-                    className="prose prose-invert prose-xs max-w-none"
-                    dangerouslySetInnerHTML={{
-                      __html: generatedContent || '<span class="text-gray-500 italic">等待生成...</span>',
-                    }}
-                  />
+                  <GeneratedContentPreview content={generatedContent} />
                 )}
               </div>
             </div>
@@ -1159,6 +1155,30 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           </svg>
         </div>
       </div>
+    </div>
+  );
+};
+
+/** 写章预览：分段文本节点，零 innerHTML。保存路径仍存 HTML 原文。 */
+const GeneratedContentPreview: React.FC<{ content: string }> = ({ content }) => {
+  const blocks = splitGeneratedPreviewBlocks(content);
+  if (blocks.length === 0) {
+    return <span className="text-gray-500 italic">等待生成...</span>;
+  }
+  if (blocks.length === 1 && blocks[0].kind === 'fallback') {
+    return (
+      <pre className="whitespace-pre-wrap font-sans text-xs text-gray-200 leading-relaxed m-0">
+        {blocks[0].text}
+      </pre>
+    );
+  }
+  return (
+    <div className="space-y-2 text-xs text-gray-200 leading-relaxed">
+      {blocks.map((block, index) => block.kind === 'paragraph' ? (
+        <p key={index} className="m-0 whitespace-pre-wrap">{block.text}</p>
+      ) : (
+        <pre key={index} className="m-0 whitespace-pre-wrap font-sans">{block.text}</pre>
+      ))}
     </div>
   );
 };
