@@ -1,6 +1,6 @@
 # Dockable Workspace 与主题系统：代码审查 + 实施方案
 
-> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0/P1/P2 已 commit。P3 已编码（`cda1205`→`8ca7189`），未标落地：2026-09-13 产品翻案——写章/审稿/润色改回浮动窗（原「3+3 放 bottom」作废），合同已同步修订。P4 未开始。**
+> 状态：**已批准设计（2026-09-12）。7 条决策全部按默认确认。P0/P1/P2/P3 已 commit。P3 已落地（2026-09-13，两处产品翻案已入合同：写章/审稿/润色保持浮动不入槽、面板归属不持久化重启清空）。P4 未开始。**
 >
 > 日期：2026-09-12
 >
@@ -44,7 +44,7 @@
 | P0 止血 | **已 commit** `cf9bbe0` | `docs/superpowers/plans/2026-09-12-workspace-p0-layout-bleed.md` | 单测 12/12、写作 UI 12/12 |
 | P1 主题 | **已 commit** `d9c83cb` | `docs/superpowers/plans/2026-09-12-workspace-p1-theme.md` | `theme.test` 4/4、`workspace-p0` 12/12、写作 UI 12/12、`npx vite build` 通过 |
 | P2 分隔条 + 折叠 | **已 commit** `0e4e125` + 修复 `30c08f1` | `docs/superpowers/plans/2026-09-12-workspace-p2-splitter.md` | `workspace-p2` 3/3、`workspace-p0` 12/12、`theme` 4/4、写作 UI 12/12、`npx vite build` 通过；手测已过（见下） |
-| P3 拖进槽 | **已编码，未收口**（`cda1205`→`28ea4b8`） | `docs/superpowers/plans/2026-09-12-workspace-p3-dock.md` | `workspace-layout` 22/22、全量 378、写作 UI 12/12、build 通过；第二人复核见下文，空 bottom Separator 未按定案做 |
+| P3 拖进槽 | **已落地**（`cda1205`→`7c5b635`） | `docs/superpowers/plans/2026-09-12-workspace-p3-dock.md` | `workspace-layout` 17/17、`workspace-p2` 6/6、全量 373、写作 UI 12/12、build 通过；两处产品翻案已入合同 |
 | P4 预设 | 未开始 | 等 P3 | — |
 
 ### P1 实际做了什么
@@ -690,9 +690,10 @@ interface WorkspaceLayoutV1 {
 3. 大纲 / 素材 / 伏笔 / 灵感 / 参考 / 起名默认 **right**；写章 / 审稿 / 润色**保持浮动窗、本 P3 不入槽**。Obsidian 只读浏览仍模态。
 4. 保活：center 的 WritingArea、写章/审稿/润色关闭 display:none 不卸载（流不断）。入槽 ≠ `key` 重置。
 5. 导图允许浮动例外。
-6. 空 bottom 有面板才挂 Separator / `BOTTOM_MIN_PX`。
+6. 空 bottom 有面板才挂 Separator / `BOTTOM_MIN_PX`（空时卸载，不可拉）。
+7. **面板归属不持久化**：重启后 right/bottom 默认空，只保留槽比例（用户 2026-09-13 决定，推翻原「拖到底刷新仍在」）。
 
-验收：打开大纲进 right；把大纲拖到 bottom 刷新仍在；切策划再回来正文未丢；写章/审稿/润色仍浮窗、可拖可关、生成中流不断；💬 不出现在 right 槽标签。
+验收：打开大纲进 right；把大纲拖到 bottom（本次会话内生效）；切策划再回来正文未丢；写章/审稿/润色仍浮窗、可拖可关、生成中流不断；💬 不出现在 right 槽标签；重启后已打开的面板清空。
 
 ### P4 — 工作区预设
 
@@ -738,13 +739,13 @@ interface WorkspaceLayoutV1 {
 - [ ] **P0/P2** 最大化：编辑器变高变宽，不是中间一条
 - [ ] **终态 / 后续一小步** 拖 AI 对话到下方：编辑器在上、对话在下。**本 P3** 打开 💬 仍在 center 内侧，不进 right 槽标签
 - [ ] **P2** 折叠侧栏再打开：出现 24px 轨后恢复，宽度/比例还在
-- [ ] **P3** 重启应用：槽位、尺寸、折叠、主题与上次一致（P1 只保证主题；P2 保证比例；槽位是 P3）
+- [ ] **P3** 重启应用：尺寸、折叠、主题与上次一致（P1 主题；P2 比例；**面板归属不持久化，重启清空**——2026-09-13 产品决定）
 - [ ] **P0 起一直要** 策划 ↔ 写作：未保存正文仍在，自动保存仍触发
 - [ ] **P3** 写章生成中把面板拖到另一槽：流继续，停止键仍可用
 - [ ] **P1** Light / Dark 切换：侧栏、编辑器、AI 对话、顶栏一致；无需重启（写章灰底第二批）
 - [ ] 决策账本仍是模态，请求中关不掉
 - [ ] **P0** 同时打开灵感+参考：互斥，不是并排吃掉正文。**P3** 才改成同槽标签
-- [ ] **P2** 空 bottom 拖不出空白带；**P3 后**写章/审稿/润色仍浮窗（保持浮动，不入槽）。**本 P3** 打开大纲进 right、拖到底刷新还在；空 bottom 仍不挂 Separator
+- [ ] **P2** 空 bottom 拖不出空白带；**P3 后**写章/审稿/润色仍浮窗（保持浮动，不入槽）。**本 P3** 打开大纲进 right、拖到底（会话内）；空 bottom 卸载不挂 Separator
 
 ---
 
