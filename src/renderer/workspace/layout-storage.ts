@@ -1,6 +1,7 @@
 // Workspace 布局持久化（P3）
-// hi-story-workspace-v1 管「面板归属哪个槽」，react-resizable-panels 的 useDefaultLayout 管「槽的比例」。
-// 坏数据静默回默认，不弹错、不写回。
+// 注意：2026-09-13 产品决定「面板归属不持久化、重启清空」，useWorkspaceLayout 已不再读写本文件。
+// 本文件暂为死代码保留：parseLayout 的「剥掉旧 bottom 残留三面板」单测仍防旧数据回归，
+// 未来若重新启用归属持久化，从这里恢复。坏数据静默回默认，不弹错、不写回。
 
 import {
   DEFAULT_LAYOUT, type WorkspaceLayoutV1, type PanelId, type SlotId,

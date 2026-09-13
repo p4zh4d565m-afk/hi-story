@@ -91,7 +91,7 @@ const FontSizeSelect: React.FC<{
   </select>
 );
 
-/** 槽内渲染：SlotTabs + 当前 active 面板（PanelChrome 包着）。保活面板永远挂载（display:none 包着）。 */
+/** 槽内渲染：SlotTabs + 当前 active 面板（查阅类面板全挂载、display 切显隐）。 */
 const SlotView: React.FC<{
   slotId: SlotId;
   slot: WorkspaceLayoutV1['slots'][SlotId];
@@ -152,10 +152,10 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   ), []);
   const [theme, setTheme] = useState<ThemeName>(loadTheme);
 
-  // 拖拽中的面板（HTML5 drag；onDragEnd 不显式清空也行，drop 后 movePanel 会更新 layout，但保留一个状态以便可能的视觉反馈）
+  // 拖拽中的面板（HTML5 drag；靠 onDragEnd 清空，用于拆空槽热区）
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
 
-  // panelId → 实际 ReactNode（只含「进槽」的查阅类面板；写章/审稿/润色已回浮动窗、sidebar/aiChat/mindmap 走各自渲染路径，不在此）
+  // panelId → 实际 ReactNode（只含「进槽」的查阅类面板）
   const panelContent = useMemo<Record<PanelId, React.ReactNode>>(() => ({
     sidebar,
     aiChat,
@@ -170,7 +170,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
 
   // ===== P2：分隔条换库，比例用 useDefaultLayout 持久化；P0 像素只作首次 defaultSize 种子（L3，不双写）=====
   const leftRef = usePanelRef();
-  const bottomRef = usePanelRef();
 
   // 槽展开判断：right 由 layout 决定（P3 后灵感/参考/起名走 movePanel），ai 仍由 panelState。
   // 侧栏始终挂载走 collapse，不参与 flags.left（侧栏 Panel 恒在，只折叠）。
@@ -620,7 +619,6 @@ const DockLayout: React.FC<DockLayoutProps> = ({
             {bottomVisible && (
             <Panel
               id="bottom"
-              panelRef={bottomRef}
               minSize={BOTTOM_MIN_PX}
               defaultSize={400}
             >

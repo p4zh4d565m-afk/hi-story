@@ -63,11 +63,11 @@
 - MindMap Canvas hex 未改
 - 未在真实窗口做 2 分钟切主题手测
 
-### P3 编码记录（2026-09-12，未标落地）
+### P3 编码记录（2026-09-12 编码，2026-09-13 已落地）
 
-- **commit**：`cda1205`（模型+外壳）→ `0fd6268`（接线）→ `5c1c664`（槽内保 state）→ `0b0cbc0`（禁用半成品拖拽止血）→ `b80f966`（剥壳）→ `28ea4b8`（HTML5 拖拽）→ `c470500`（文档标已编码未落地）。
+- **commit**：`cda1205`（模型+外壳）→ `0fd6268`（接线）→ `5c1c664`（槽内保 state）→ `0b0cbc0`（禁用半成品拖拽止血）→ `b80f966`（剥壳）→ `28ea4b8`（HTML5 拖拽）→ `c470500`（文档）→ `6f13435`（第一批复核）→ `f8f6be1`（回浮动窗）→ `696d03a`（清残留）→ `8ca7189`（润色框拉伸）→ `2e5b9a7`（翻案入合同）→ `e2f40fd`（第二批拖拽）→ `7c5b635`（三问题修复）→ `62be1c4`（标落地）。
 - **实现报告**（工作区，不入库）：`workspace-p3-dock-report.md`
-- **定案落地情况**：见下方「P3 第二人复核」。**未标落地**，P4 不要开。
+- **定案落地情况**：两次产品翻案已入合同；P3 已落地（缩小后的范围：查阅类入槽 + 大工作面浮动）。P4 不要直接开（预设与「重启清空面板」冲突，见文末复核）。
 
 ### P3 第二人复核（2026-09-12，给实现者看）
 
@@ -683,7 +683,7 @@ interface WorkspaceLayoutV1 {
 
 ### P3 — 结构化停靠（拖放到槽）
 
-**优先级：中高，依赖 P2 的槽。计划：`docs/superpowers/plans/2026-09-12-workspace-p3-dock.md`（已编码，未收口；见文首「P3 第二人复核」）。**
+**优先级：中高，依赖 P2 的槽。计划：`docs/superpowers/plans/2026-09-12-workspace-p3-dock.md`（已落地，见文首实施进度）。**
 
 1. `WorkspaceLayoutV1` 管大纲/素材/伏笔/灵感/参考/起名 + 侧栏；**不**替换 `aiChatOpen`（AI 对话仍 P2 列），也**不**管写章/审稿/润色（保持浮动窗布尔）。
 2. `PanelChrome` + Drop Zone 预览。
@@ -761,7 +761,7 @@ interface WorkspaceLayoutV1 {
 6. **主题**：P1 与 P0 可并行（正交、互不阻塞）；Light 用暖纸墨字，Dark 保持现有林间稿纸。**澄清：并行 ≠ 混改。** P0 动 DockLayout 几何、P1 动 tailwind 颜色，两者都碰 DockLayout；每个 P 内部仍一步一提交，P0 收口 commit 完再开 P1 颜色改，避免回滚时互相牵连。
 7. **死代码**：`Layout.tsx` / `MainArea.tsx` / `ContextPanel.tsx` 一期保留，不强制删除。不在主路径，顺手删会把范围扯进无测试旧组件；P3 稳定后再标废弃或删。
 
-**开工顺序**：P0 止血（已 commit `cf9bbe0`）→ P1 主题（已 commit `d9c83cb`）→ P2 分隔条（已 commit `0e4e125` + 修复）→ P3 拖进槽（已编码 `cda1205`→`28ea4b8`，**未标落地**，见「P3 第二人复核」）→ P4 预设（P3 收口后再做）。
+**开工顺序**：P0 止血（已 commit `cf9bbe0`）→ P1 主题（已 commit `d9c83cb`）→ P2 分隔条（已 commit `0e4e125` + 修复）→ P3 拖进槽（已落地，见文首实施进度）→ P4 预设（等用户发话再写计划，不与「重启清空归属」冲突）。
 
 **P3 备忘：** `applyRightAuxExclusive` 的 `T extends Record<RightAuxKey, boolean>` 绑的是当前 `panelState` 三字段；抽 `WorkspaceLayoutV1` 时一并改泛型，P0/P1/P2 不提前重构。
 

@@ -1,16 +1,16 @@
 // Workspace 布局 React hook（P3）
-// 持有 WorkspaceLayoutV1 状态，动作（movePanel/closePanel/setActive）更新状态并写回 localStorage。
+// 持有 WorkspaceLayoutV1 状态，动作（movePanel/closePanel/setActive）只更新内存态。
 // 注意：本 hook 只管「归属」，不管「槽比例」（那是 react-resizable-panels 的 useDefaultLayout）。
+// 面板归属**不持久化**（产品决定：重启清空），因此这里不再写 localStorage，避免「看起来会恢复」的残留 JSON。
 
 import { useCallback, useState } from 'react';
 import {
   DEFAULT_LAYOUT, type WorkspaceLayoutV1, type PanelId, type SlotId,
   movePanel as movePanelModel, closePanel as closePanelModel, setActive as setActiveModel, panelSlot,
 } from './layout-model';
-import { LAYOUT_KEY, parseLayout, serializeLayout } from './layout-storage';
 
 function loadInitial(): WorkspaceLayoutV1 {
-  // 问题2：重启不恢复「打开的面板」，面板归属不持久化。启动一律回默认（侧栏 left，right/bottom 空）。
+  // 重启不恢复「打开的面板」：启动一律回默认（侧栏 left，right/bottom 空）。
   return DEFAULT_LAYOUT;
 }
 
@@ -19,11 +19,7 @@ export function useWorkspaceLayout() {
 
   const persist = useCallback((next: WorkspaceLayoutV1) => {
     setLayout(next);
-    if (typeof localStorage !== 'undefined') {
-      try {
-        localStorage.setItem(LAYOUT_KEY, serializeLayout(next));
-      } catch { /* 隐私模式等写失败时保持内存态 */ }
-    }
+    // 面板归属不持久化，刻意不写 localStorage。只保留内存态。
   }, []);
 
   const movePanel = useCallback((panelId: PanelId, target: SlotId | 'floating' | 'center') => {
