@@ -190,7 +190,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   // 否则刷新后持久化的 layout（含 right/AI）对不上当前渲染的 panel 数，defaultLayout 整体作废 → 回 defaultSize。
   // 推导抽到 split-flags 的纯函数，单测锁四种组合。
   const hPanelIds = useMemo<string[]>(() => horizontalPanelIds(flags), [flags]);
-  const vPanelIds = useMemo<string[]>(() => verticalPanelIds(), []);
+  const vPanelIds = useMemo<string[]>(() => verticalPanelIds(bottomVisible), [bottomVisible]);
   const cPanelIds = useMemo<string[]>(() => centerPanelIds(flags), [flags]);
 
   const { defaultLayout: hLayout, onLayoutChanged: onHLayout } = useDefaultLayout({
@@ -224,17 +224,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
     }
   }, [panelState.sidebarOpen, onToggleSidebar]);
 
-  // bottom 槽双向同步：有面板才展开（resize 到合理高度，expand() 只到 minSize=120 太矮）、挂条、生效 minSize；
-  // 无面板 collapse 到 0 + 不挂条（保住三个 AI 实例不卸）。
-  useEffect(() => {
-    if (bottomVisible) {
-      if (bottomRef.current?.isCollapsed()) {
-        bottomRef.current?.resize('40%');
-      }
-    } else {
-      bottomRef.current?.collapse();
-    }
-  }, [bottomVisible, bottomRef]);
+  // bottom 槽空时彻底卸载（与 right 一致），不再 collapse/expand，根治「空槽可拉 + useDefaultLayout 恢复高度」。
 
   useEffect(() => {
     applyTheme(theme);
@@ -627,13 +617,12 @@ const DockLayout: React.FC<DockLayoutProps> = ({
       </main>
             </Panel>
             {bottomVisible && <Separator className="h-1.5 bg-transparent hover:bg-accent/50" />}
+            {bottomVisible && (
             <Panel
               id="bottom"
               panelRef={bottomRef}
-              collapsible
-              collapsedSize={0}
-              minSize={bottomVisible ? BOTTOM_MIN_PX : 0}
-              defaultSize={0}
+              minSize={BOTTOM_MIN_PX}
+              defaultSize={400}
             >
               <SlotView
                 slotId="bottom"
@@ -646,6 +635,7 @@ const DockLayout: React.FC<DockLayoutProps> = ({
                 onDrop={(pid, target) => { onMovePanel(pid, target); setDraggingPanel(null); }}
               />
             </Panel>
+            )}
           </Group>
         </Panel>
         {rightVisible && <Separator className="w-1.5 bg-transparent hover:bg-accent/50" />}

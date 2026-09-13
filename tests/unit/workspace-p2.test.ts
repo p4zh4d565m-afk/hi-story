@@ -42,7 +42,8 @@ describe('panelIds（P2 修复 30c08f1 的回归锚点）', () => {
     expect(centerPanelIds({ left: true, ai: true, rightAux: false })).toEqual(['editor', 'ai']);
   });
 
-  it('vertical：恒为 main+bottom', () => {
-    expect(verticalPanelIds()).toEqual(['main', 'bottom']);
+  it('vertical：bottom 有面板才挂，否则只 main', () => {
+    expect(verticalPanelIds(true)).toEqual(['main', 'bottom']);
+    expect(verticalPanelIds(false)).toEqual(['main']);
   });
 });

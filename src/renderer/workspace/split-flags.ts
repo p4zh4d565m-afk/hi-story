@@ -58,7 +58,7 @@ export function centerPanelIds(flags: SplitOpenFlags): string[] {
   return flags.ai ? ['editor', 'ai'] : ['editor'];
 }
 
-/** center 纵向 Group（v）的 panel 序列：main + bottom 恒在（bottom 始终挂载、默认折叠）。 */
-export function verticalPanelIds(): string[] {
-  return ['main', 'bottom'];
+/** center 纵向 Group（v）的 panel 序列：main 恒在；bottom 有面板才挂（空时卸载，不可拉）。 */
+export function verticalPanelIds(bottomVisible: boolean): string[] {
+  return bottomVisible ? ['main', 'bottom'] : ['main'];
 }

@@ -10,12 +10,8 @@ import {
 import { LAYOUT_KEY, parseLayout, serializeLayout } from './layout-storage';
 
 function loadInitial(): WorkspaceLayoutV1 {
-  if (typeof localStorage === 'undefined') return DEFAULT_LAYOUT;
-  try {
-    return parseLayout(localStorage.getItem(LAYOUT_KEY));
-  } catch {
-    return DEFAULT_LAYOUT;
-  }
+  // 问题2：重启不恢复「打开的面板」，面板归属不持久化。启动一律回默认（侧栏 left，right/bottom 空）。
+  return DEFAULT_LAYOUT;
 }
 
 export function useWorkspaceLayout() {

@@ -41,7 +41,7 @@ import { createPlanningLoader } from './services/planning-loader';
 import { factsToHookDrafts, type ChapterExtractionFact } from './services/chapter-extraction-proposals';
 import { formatPlanningAuthorityContext } from './services/ai-prompts/planning';
 import { useWorkspaceLayout } from './workspace/useWorkspaceLayout';
-import { panelSlot, DEFAULT_SLOT, type PanelId, type SlotId } from './workspace/layout-model';
+import { panelSlot, isSlotVisible, DEFAULT_SLOT, type PanelId, type SlotId } from './workspace/layout-model';
 
 // Simple error boundary to prevent white screen from uncaught render errors
 class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { error: Error | null }> {
@@ -1224,6 +1224,7 @@ const App: React.FC = () => {
             editorFontSize={fontSizes.editor}
             onSetEditorFontSize={(p: FontSizePreset) => setFontSize('editor', p)}
             editorRef={editorRef}
+            hideStatusBar={isSlotVisible(workspaceLayout.layout, 'bottom')}
             onSearchInInspiration={(text) => {
               workspaceLayout.openOrFocus('inspiration', 'right');
               localStorage.setItem('hi-story-pending-inspiration-search', text);

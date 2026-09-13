@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import RichEditor, { type RichEditorHandle, type TextRange } from './editor/RichEditor';
-import WritingGoal from './WritingGoal';
 import ContextMenu from './ContextMenu';
 import type { MenuItem } from './ContextMenu';
 import type { Chapter, ChapterHistorySnapshot, Project } from '../types';
@@ -32,6 +31,8 @@ interface WritingAreaProps {
   onSetEditorFontSize?: (preset: 0 | 1 | 2 | 3) => void;
   /** 编辑器句柄（用于润色写回时程序化替换内容） */
   editorRef?: React.RefObject<RichEditorHandle | null>;
+  /** bottom 槽有面板时隐藏底部字数/状态栏（拖走恢复） */
+  hideStatusBar?: boolean;
 }
 
 const WritingArea: React.FC<WritingAreaProps> = ({
@@ -53,6 +54,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
   editorFontSize = 1,
   onSetEditorFontSize,
   editorRef,
+  hideStatusBar = false,
 }) => {
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeChapterRef = useRef(activeChapter);
@@ -574,14 +576,10 @@ const WritingArea: React.FC<WritingAreaProps> = ({
         )}
       </div>
 
-      {/* Writing goal tracker */}
-      <WritingGoal
-        projectId={activeProject.id}
-        totalWords={totalWords}
-        chapterCount={chapters.length}
-      />
+      {/* Writing goal tracker 已移除（问题3：删除写作目标栏） */}
 
-      {/* Status bar */}
+      {/* Status bar（bottom 有面板时隐藏，拖走恢复） */}
+      {!hideStatusBar && (
       <div className="px-4 py-1.5 border-t border-editor-700 bg-editor-800 flex items-center justify-between text-[10px] text-gray-600">
         <div className="flex items-center gap-4">
           {activeChapter && (
@@ -600,6 +598,7 @@ const WritingArea: React.FC<WritingAreaProps> = ({
           <span>Ctrl+S 保存</span>
         </div>
       </div>
+      )}
 
       {/* Context Menu */}
       <ContextMenu
