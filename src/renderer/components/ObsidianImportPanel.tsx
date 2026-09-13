@@ -13,6 +13,8 @@ interface ObsidianImportPanelProps {
   open: boolean;
   onClose: () => void;
   onImported: (summary: ObsidianImportSummary) => Promise<void>;
+  /** commit IPC 前、触及策划层时同步调用，用于作废旧 AI 写库代数（无 DB revision）。 */
+  onPlanningCommitStarted?: (projectId: string) => void;
 }
 
 const SLOT_LABELS: Record<ObsidianImportSlot, string> = {
@@ -26,7 +28,7 @@ const WORLD_CATEGORY_LABELS: Record<string, string> = {
 
 const LAYER_LABELS = { master: '总纲', volumes: '分卷纲', chapters: '章纲' } as const;
 
-const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open, onClose, onImported }) => {
+const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open, onClose, onImported, onPlanningCommitStarted }) => {
   const [prepareResult, setPrepareResult] = useState<ObsidianImportPrepareResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -300,6 +302,12 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
             worldOverrides: worldOverrides[c.relativePath] ?? [],
           };
         });
+      // 触及策划层的导入：在 commit IPC 前作废旧 AI 写库代数，避免旧生成结果在导入后覆盖新导入内容。
+      const touchesPlanning = selections.some(s =>
+        s.slots.some(slot => slot === 'master' || slot === 'volume' || slot === 'chapter' || slot === 'stage')
+      ) || ['master', 'volumes', 'chapters'].some(l => layerChoices[l as keyof ImportLayerChoices].action !== 'keep');
+      if (touchesPlanning) onPlanningCommitStarted?.(project.id);
+
       const summary = await guardRef.current.commit({
         projectId: project.id, operationId: opId, selections, layerChoices, storyOptionDraft: storyOptionDraft ?? undefined,
       });

@@ -382,7 +382,13 @@ const App: React.FC = () => {
   // 策划数据独立加载（A4a）：失败不阻断项目，坏 JSON 保留上次快照。
   const planningLoader = useMemo(() => createPlanningLoader({
     invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
-    onApply: (projectId, planning) => setPlanningSnapshot({ projectId, planning }),
+    onApply: (projectId, planning) => {
+      setPlanningSnapshot({ projectId, planning });
+    },
+    onError: (projectId, error) => {
+      // 同项目刷新失败：保留已有 committed 快照，只记错误，不清空。
+      console.error(`项目 ${projectId} 策划加载失败：`, error);
+    },
     isProjectCurrent: isActiveProject,
   }), [isActiveProject]);
 
@@ -1245,7 +1251,17 @@ const App: React.FC = () => {
             }}
           />
         }
-        planningArea={<PlanningWorkspace project={activeProject} onStartChapter={handleStartPlannedChapter} onRefreshImportedEntities={refreshImportedEntities} />}
+        planningArea={<PlanningWorkspace
+          project={activeProject}
+          onStartChapter={handleStartPlannedChapter}
+          onRefreshImportedEntities={refreshImportedEntities}
+          onPlanningCommitted={(projectId, planning) => {
+            planningLoader.applyCommitted(projectId, planning);
+          }}
+          onReloadPlanningCommitted={async (projectId) => (
+            await planningLoader.load(projectId)
+          ) === 'applied'}
+        />}
         aiChat={
           <AIChatPanel
             contextMessages={contextMessages}

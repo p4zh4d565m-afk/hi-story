@@ -7,12 +7,18 @@ import type { ProviderConfig } from '../../main/ai/provider';
 import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
 import { createProjectSelectionGuard } from '../services/project-data-loader';
 import { shouldApplyPlanningResult } from '../services/planning-generation-guard';
+import { capturePlanningWriteEpoch, reservePlanningWrite, isPlanningWriteCurrent } from '../services/planning-write-epoch';
+import { persistPlanning } from '../services/planning-persistence';
 import ObsidianImportPanel from './ObsidianImportPanel';
 
 interface PlanningWorkspaceProps {
   project: Project | null;
   onStartChapter?: (outline: ChapterOutline, mode: 'self' | 'ai') => Promise<void>;
   onRefreshImportedEntities?: (projectId: string) => Promise<boolean>;
+  /** 保存成功后用 IPC 返回的完整 PlanningIdea 立即更新 App committed。 */
+  onPlanningCommitted?: (projectId: string, planning: PlanningIdea | null) => void;
+  /** 后台写回失败/超时后，重新从库加载 committed，返回是否 applied。 */
+  onReloadPlanningCommitted?: (projectId: string) => Promise<boolean>;
 }
 
 interface SavedConfig {
@@ -40,6 +46,8 @@ async function loadFirstAiConfig(): Promise<ProviderConfig> {
   const selected = configs[0];
   const apiKey = await decrypt(selected.apiKey);
   if (!apiKey) throw new Error('AI 配置解密失败，请重新保存 API Key');
+  // name = ProviderFactory 供应商标识。现所有预设 name === id === providerId（含 custom），
+  // 本文件无 preset 数组，直接用 providerId 等价于 preset.name；将来若 name ≠ id，需在此引入名称映射。
   return snapshotAIRequestConfig({
     name: selected.providerId,
     apiKey,
@@ -48,7 +56,7 @@ async function loadFirstAiConfig(): Promise<ProviderConfig> {
   });
 }
 
-const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartChapter, onRefreshImportedEntities }) => {
+const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartChapter, onRefreshImportedEntities, onPlanningCommitted, onReloadPlanningCommitted }) => {
   const [idea, setIdea] = useState('');
   const [requirements, setRequirements] = useState('');
   const [options, setOptions] = useState<StoryOption[]>([]);
@@ -75,23 +83,35 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const currentProjectIdRef = useRef(project?.id ?? null);
   currentProjectIdRef.current = project?.id ?? null;
 
+  const applyPlanningSnapshot = (planning: PlanningIdea | null) => {
+    if (!planning) {
+      setIdea(''); setRequirements(''); setOptions([]); setSelectedOption(null); setStatus('draft');
+      setMasterOutline(null); setOutlineStatus('empty');
+      setVolumeOutlines([]); setVolumeStatus('empty');
+      setChapterOutlines([]); setChapterOutlineStatus('empty');
+      setStageClearedNotice(false);
+      return;
+    }
+    setIdea(planning.idea);
+    setRequirements(planning.requirements);
+    setOptions(planning.generatedOptions);
+    setSelectedOption(planning.selectedOption);
+    setStatus(planning.status);
+    setMasterOutline(planning.masterOutline);
+    setOutlineStatus(planning.outlineStatus);
+    setVolumeOutlines(planning.volumeOutlines);
+    setVolumeStatus(planning.volumeStatus);
+    setChapterOutlines(planning.chapterOutlines || []);
+    setChapterOutlineStatus(planning.chapterOutlineStatus || 'empty');
+    setStageClearedNotice(false);
+  };
+
   const loadPlanning = (projectId: string, ticket = projectLoadGuardRef.current.select(projectId)): Promise<boolean> => {
     return window.electronAPI.invoke('db:planning:findByProject', projectId).then((res: any) => {
       if (currentProjectIdRef.current !== projectId || !projectLoadGuardRef.current.isCurrent(ticket)) return false;
-      if (res?.success && res.data) {
-        const data = res.data as PlanningIdea;
-        setIdea(data.idea);
-        setRequirements(data.requirements);
-        setOptions(data.generatedOptions);
-        setSelectedOption(data.selectedOption);
-        setStatus(data.status);
-        setMasterOutline(data.masterOutline);
-        setOutlineStatus(data.outlineStatus);
-        setVolumeOutlines(data.volumeOutlines);
-        setVolumeStatus(data.volumeStatus);
-        setChapterOutlines(data.chapterOutlines || []);
-        setChapterOutlineStatus(data.chapterOutlineStatus || 'empty');
-        setStageClearedNotice(false);
+      if (res?.success) {
+        // success:true 且 data:null 是合法空策划，也算加载成功（不得让仅人物/世界观导入卡 refreshPending）
+        applyPlanningSnapshot((res.data as PlanningIdea) ?? null);
         return true;
       }
       return false;
@@ -139,62 +159,67 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     if (!project) return false;
     setSaving(true);
     try {
-      const res = await window.electronAPI.invoke('db:planning:save', {
-        projectId: project.id, idea, requirements, generatedOptions: nextOptions,
+      const outcome = await persistPlanning(window.electronAPI.invoke, project.id, {
+        idea, requirements, generatedOptions: nextOptions,
         selectedOption: nextSelected, status: nextStatus,
         masterOutline: nextOutline, outlineStatus: nextOutlineStatus,
         volumeOutlines: nextVolumes, volumeStatus: nextVolumeStatus,
         chapterOutlines: nextChapters, chapterOutlineStatus: nextChapterStatus,
-      }) as any;
-      if (!res?.success) throw new Error(res?.error || '保存策划内容失败');
-      setStatus(nextStatus);
-      setOutlineStatus(nextOutlineStatus);
-      setVolumeStatus(nextVolumeStatus);
-      setChapterOutlineStatus(nextChapterStatus);
-      return true;
-    } catch (err) {
-      setError((err as Error).message);
+      });
+      if (outcome.kind === 'saved') {
+        // 只当前项目才更新本地 UI 与 App committed；非当前项目只保留落库结果。
+        if (currentProjectIdRef.current === project.id) {
+          projectLoadGuardRef.current.select(project.id); // 作废策划页在途 load
+          applyPlanningSnapshot(outcome.planning);
+          onPlanningCommitted?.(project.id, outcome.planning);
+        }
+        return true;
+      }
+      if (outcome.kind === 'failed') {
+        setError(outcome.error);
+        return false;
+      }
+      // superseded（普通保存不带 expectedEpoch，理论上不会走到这里）
+      setError('策划已在保存期间被更新，本次保存未写入');
       return false;
     } finally { setSaving(false); }
   };
 
   // 只写库、不改 UI 的后台持久化：长任务完成但已切走项目时，把结果写回启动时的项目，
   // 不浪费已生成内容，也不污染当前界面（不 setState、不 setSaving）。
-  const persistPlanning = async (
+  const persistPlanningBackground = async (
     projectId: string,
-    payload: {
-      idea: string;
-      requirements: string;
-      status: PlanningIdea['status'];
-      selectedOption: number | null;
-      generatedOptions: StoryOption[];
-      masterOutline: MasterOutline | null;
-      outlineStatus: PlanningIdea['outlineStatus'];
-      volumeOutlines: VolumeOutline[];
-      volumeStatus: PlanningIdea['volumeStatus'];
-      chapterOutlines: ChapterOutline[];
-      chapterOutlineStatus: PlanningIdea['chapterOutlineStatus'];
-    },
+    payload: Parameters<typeof persistPlanning>[2],
+    expectedEpoch: number,
   ): Promise<boolean> => {
-    try {
-      const res = await window.electronAPI.invoke('db:planning:save', { projectId, ...payload }) as any;
-      if (!res?.success) throw new Error(res?.error || '保存策划内容失败');
+    const outcome = await persistPlanning(window.electronAPI.invoke, projectId, payload, { expectedEpoch });
+    if (outcome.kind === 'saved') {
+      // 当前项目才应用 UI + App committed；非当前项目只落库，重新进入时由 loader 读库。
+      if (shouldApplyPlanningResult(projectId, currentProjectIdRef.current)) {
+        projectLoadGuardRef.current.select(projectId);
+        applyPlanningSnapshot(outcome.planning);
+        onPlanningCommitted?.(projectId, outcome.planning);
+      }
       return true;
-    } catch {
+    }
+    if (outcome.kind === 'superseded') {
+      if (shouldApplyPlanningResult(projectId, currentProjectIdRef.current)) {
+        setError('策划已在生成期间被更新，本次 AI 结果未写入，以免覆盖较新保存');
+      }
       return false;
     }
+    // failed：token 不回滚；若该 failed token 仍当前且项目仍当前，reload 对齐 App committed。
+    if (shouldApplyPlanningResult(projectId, currentProjectIdRef.current) && isPlanningWriteCurrent(projectId, outcome.token)) {
+      await onReloadPlanningCommitted?.(projectId);
+    }
+    if (shouldApplyPlanningResult(projectId, currentProjectIdRef.current)) {
+      setError(outcome.error);
+    }
+    return false;
   };
 
-  // 长任务切走项目后：后台写回 startedId；若此时已切回原项目，再 loadPlanning 一次对齐界面。
-  // 返回 true 表示已处理（写回 + 可选刷新），false 表示写回失败。
-  const persistAndRefreshIfReturned = async (startedId: string, payload: Parameters<typeof persistPlanning>[1]): Promise<boolean> => {
-    const ok = await persistPlanning(startedId, payload);
-    if (ok && shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-      // 切回原项目：刷新一次，避免 A→B→A 快切时界面停在旧库
-      await loadPlanning(startedId);
-    }
-    return ok;
-  };
+  // 长任务完成：统一走 persistPlanningBackground（带 expectedEpoch 条件 reserve）。
+  // 返回 true 表示已处理，false 表示写回失败或过期。不再有单独的 persistAndRefreshIfReturned。
 
   const generate = async () => {
     if (!project || idea.trim().length < 10) {
@@ -202,6 +227,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       return;
     }
     const startedId = project.id;
+    const startedEpoch = capturePlanningWriteEpoch(startedId); // 长任务启动捕获写代数
     setLoading(true); setError('');
     try {
       const aiConfig = await loadFirstAiConfig();
@@ -217,22 +243,15 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         temperature: 0.8,
       });
       const generated = parseStoryOptions(raw);
-      // 长任务期间切走项目：结果后台写回 startedId，不污染当前 UI
-      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistAndRefreshIfReturned(startedId, {
-          idea, requirements, status: 'generated', selectedOption: null,
-          generatedOptions: generated, masterOutline: null, outlineStatus: 'empty',
-          volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
-        });
-        return;
+      // 条件 persist：写库前按 startedEpoch 比较，用户在生成期间保存过则 superseded，不覆盖较新保存。
+      const ok = await persistPlanningBackground(startedId, {
+        idea, requirements, status: 'generated', selectedOption: null,
+        generatedOptions: generated, masterOutline: null, outlineStatus: 'empty',
+        volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
+      }, startedEpoch);
+      if (ok && shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        setMatchedSkills(routed.data);
       }
-      setMatchedSkills(routed.data);
-      setOptions(generated);
-      setSelectedOption(null);
-      setMasterOutline(null); setOutlineStatus('empty');
-      setVolumeOutlines([]); setVolumeStatus('empty');
-      setChapterOutlines([]); setChapterOutlineStatus('empty');
-      await save('generated', null, generated, null, 'empty', [], 'empty', [], 'empty');
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     } finally {
@@ -252,6 +271,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const generateMasterOutline = async () => {
     if (!project || selectedOption === null || !options[selectedOption]) return;
     const startedId = project.id;
+    const startedEpoch = capturePlanningWriteEpoch(startedId);
     setOutlineLoading(true); setError('');
     try {
       const aiConfig = await loadFirstAiConfig();
@@ -272,19 +292,14 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         { maxTokens: 8192, temperature: 0.65 },
       );
       const outline = parseMasterOutline(raw);
-      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistAndRefreshIfReturned(startedId, {
-          idea, requirements, status: 'confirmed', selectedOption,
-          generatedOptions: options, masterOutline: outline, outlineStatus: 'generated',
-          volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
-        });
-        return;
+      const ok = await persistPlanningBackground(startedId, {
+        idea, requirements, status: 'confirmed', selectedOption,
+        generatedOptions: options, masterOutline: outline, outlineStatus: 'generated',
+        volumeOutlines: [], volumeStatus: 'empty', chapterOutlines: [], chapterOutlineStatus: 'empty',
+      }, startedEpoch);
+      if (ok && shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        setMatchedSkills(routed.data);
       }
-      setMatchedSkills(routed.data);
-      setMasterOutline(outline);
-      setVolumeOutlines([]); setVolumeStatus('empty');
-      setChapterOutlines([]); setChapterOutlineStatus('empty');
-      await save('confirmed', selectedOption, options, outline, 'generated', [], 'empty', [], 'empty');
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     }
@@ -326,6 +341,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const generateVolumes = async () => {
     if (!project || selectedOption === null || !masterOutline || outlineStatus !== 'locked') return;
     const startedId = project.id;
+    const startedEpoch = capturePlanningWriteEpoch(startedId);
     setVolumeLoading(true); setError('');
     try {
       const aiConfig = await loadFirstAiConfig();
@@ -344,20 +360,15 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         { maxTokens: 8192, temperature: 0.6 },
       );
       const volumes = parseVolumeOutlines(raw);
-      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistAndRefreshIfReturned(startedId, {
-          idea, requirements, status: 'confirmed', selectedOption,
-          generatedOptions: options, masterOutline, outlineStatus: 'locked',
-          volumeOutlines: volumes, volumeStatus: 'generated',
-          chapterOutlines: [], chapterOutlineStatus: 'empty',
-        });
-        return;
+      const ok = await persistPlanningBackground(startedId, {
+        idea, requirements, status: 'confirmed', selectedOption,
+        generatedOptions: options, masterOutline, outlineStatus: 'locked',
+        volumeOutlines: volumes, volumeStatus: 'generated',
+        chapterOutlines: [], chapterOutlineStatus: 'empty',
+      }, startedEpoch);
+      if (ok && shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        setMatchedSkills(routed.data);
       }
-      setMatchedSkills(routed.data);
-      setVolumeOutlines(volumes);
-      setChapterOutlines([]); setChapterOutlineStatus('empty');
-      setStageClearedNotice(false);
-      await save('confirmed', selectedOption, options, masterOutline, 'locked', volumes, 'generated', [], 'empty');
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     }
@@ -384,6 +395,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   const generateChapters = async (volumeIndex: number) => {
     if (!project || selectedOption === null || !masterOutline || volumeStatus !== 'locked') return;
     const startedId = project.id;
+    const startedEpoch = capturePlanningWriteEpoch(startedId);
     setChapterLoadingVolume(volumeIndex); setError('');
     try {
       const aiConfig = await loadFirstAiConfig();
@@ -404,19 +416,16 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
       const generated = parseChapterOutlines(raw, volumeIndex);
       const merged = [...chapterOutlines.filter(chapter => chapter.volumeIndex !== volumeIndex), ...generated]
         .sort((a, b) => a.chapterNumber - b.chapterNumber);
-      if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
-        await persistAndRefreshIfReturned(startedId, {
-          idea, requirements, status: 'confirmed', selectedOption,
-          generatedOptions: options, masterOutline, outlineStatus: 'locked',
-          volumeOutlines, volumeStatus: 'locked',
-          chapterOutlines: merged, chapterOutlineStatus: 'generated',
-        });
-        return;
+      const ok = await persistPlanningBackground(startedId, {
+        idea, requirements, status: 'confirmed', selectedOption,
+        generatedOptions: options, masterOutline, outlineStatus: 'locked',
+        volumeOutlines, volumeStatus: 'locked',
+        chapterOutlines: merged, chapterOutlineStatus: 'generated',
+      }, startedEpoch);
+      if (ok && shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
+        setMatchedSkills(routed.data);
+        setActiveVolume(volumeIndex);
       }
-      setMatchedSkills(routed.data);
-      setChapterOutlines(merged);
-      setActiveVolume(volumeIndex);
-      await save('confirmed', selectedOption, options, masterOutline, 'locked', volumeOutlines, 'locked', merged, 'generated');
     } catch (err) {
       if (shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) setError((err as Error).message);
     }
@@ -465,11 +474,13 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
           project={project}
           open={importOpen}
           onClose={() => setImportOpen(false)}
+          onPlanningCommitStarted={(projectId) => { reservePlanningWrite(projectId); }}
           onImported={async (summary) => {
             // R1：等待策划与实体刷新，任一失败则抛错，使面板停留 refreshPending
             const planningOk = await loadPlanning(project!.id);
+            const committedOk = await onReloadPlanningCommitted?.(project!.id);
             const entitiesOk = onRefreshImportedEntities ? await onRefreshImportedEntities(project!.id) : true;
-            if (!planningOk || !entitiesOk) throw new Error('导入已写入，但界面刷新失败');
+            if (!planningOk || committedOk === false || !entitiesOk) throw new Error('导入已写入，但界面刷新失败');
           }}
         />
 

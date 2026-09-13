@@ -23,16 +23,19 @@ describe('createPlanningLoader（代次守卫）', () => {
     expect(applied).toBe('p1');
   });
 
-  it('读失败（坏 JSON）返回 failed，onApply 收到 null 且不抛错', async () => {
-    let applied: PlanningIdea | null = mkPlanning();
+  it('读失败返回 failed，onApply 0 次、onError 1 次', async () => {
+    let applyCount = 0;
+    let errorCount = 0;
     const loader = createPlanningLoader({
       invoke: async () => ({ success: false, error: '策划数据损坏' }),
-      onApply: (_pid, planning) => { applied = planning; },
+      onApply: () => { applyCount += 1; },
+      onError: () => { errorCount += 1; },
       isProjectCurrent: () => true,
     });
     const status = await loader.load('p1');
     expect(status).toBe('failed');
-    expect(applied).toBeNull();
+    expect(applyCount).toBe(0);
+    expect(errorCount).toBe(1);
   });
 
   it('迟到回执被代次守卫丢弃（stale）', async () => {
@@ -52,5 +55,32 @@ describe('createPlanningLoader（代次守卫）', () => {
     expect(await first).toBe('stale');
     // 迟到回执未再次触发 onApply
     expect(appliedProjectIds).toEqual(['p2']);
+  });
+
+  it('成功且 data=null 是合法空策划', async () => {
+    let applied: PlanningIdea | null | undefined = mkPlanning();
+    const loader = createPlanningLoader({
+      invoke: async () => ({ success: true, data: null }),
+      onApply: (_pid, planning) => { applied = planning; },
+      isProjectCurrent: () => true,
+    });
+    expect(await loader.load('p1')).toBe('applied');
+    expect(applied).toBeNull();
+  });
+
+  it('applyCommitted 作废旧 load，迟到回执不得覆盖新保存', async () => {
+    let resolve!: (value: unknown) => void;
+    let applied: PlanningIdea | null = null;
+    const loader = createPlanningLoader({
+      invoke: () => new Promise(r => { resolve = r; }),
+      onApply: (_pid, planning) => { applied = planning; },
+      isProjectCurrent: () => true,
+    });
+    const oldLoad = loader.load('p1');
+    const committed = { ...mkPlanning(), idea: '新保存' };
+    expect(loader.applyCommitted('p1', committed)).toBe(true);
+    resolve({ success: true, data: { ...mkPlanning(), idea: '旧加载' } });
+    expect(await oldLoad).toBe('stale');
+    expect(applied?.idea).toBe('新保存');
   });
 });

@@ -14,7 +14,10 @@ interface PlanningLoaderOptions {
 /**
  * 独立加载策划数据（planning_ideas），失败不阻断项目（A4a）。
  * 与 obsidian-loader 同款 generation + projectId 双重守卫，避免迟到回执污染当前项目。
- * 策划坏 JSON 时 findByProject 返回 success:false，这里保留上次成功快照、不清空章节。
+ *
+ * 失败语义（P0 补 A）：`onApply` 仅在 `success === true` 时调用；`data === null` 是合法空策划。
+ * `success: false` 或抛错只走 `onError`，绝不 `onApply(null)` 清空已有 committed 快照。
+ * `applyCommitted` 让普通保存用 save IPC 返回值立即更新 committed，并作废在途 load（generation+1）。
  */
 export function createPlanningLoader(options: PlanningLoaderOptions) {
   let generation = 0;
@@ -40,8 +43,8 @@ export function createPlanningLoader(options: PlanningLoaderOptions) {
         const response = await options.invoke('db:planning:findByProject', projectId) as IpcResult<PlanningIdea | null>;
         if (!isCurrent(projectId, requestGeneration)) return 'stale';
         if (!response?.success) {
-          // 坏 JSON / 读取失败：保留上次成功快照，不抛错阻断项目
-          options.onApply(projectId, null);
+          // 坏 JSON / 读取失败：保留上次成功快照，不抛错阻断项目，但不清空 committed
+          options.onError?.(projectId, new Error(response?.error || '策划加载失败'));
           return 'failed';
         }
         options.onApply(projectId, response.data ?? null);
@@ -55,6 +58,14 @@ export function createPlanningLoader(options: PlanningLoaderOptions) {
           options.onLoadingChange?.(projectId, false);
         }
       }
+    },
+    /** 用保存返回值立即应用 committed，并作废在途 load（generation+1 防旧 load 覆盖新 save）。 */
+    applyCommitted: (projectId: string, planning: PlanningIdea | null): boolean => {
+      if (options.isProjectCurrent && !options.isProjectCurrent(projectId)) return false;
+      generation += 1;
+      currentProjectId = projectId;
+      options.onApply(projectId, planning);
+      return true;
     },
   };
 }
