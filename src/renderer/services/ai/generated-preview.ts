@@ -2,7 +2,7 @@
  * 写章预览分段：把模型输出的 HTML 切成 React 文本节点安全渲染，零 innerHTML。
  *
  * 写章 prompt 强制模型输出 <p>...</p>，保存路径仍存 HTML 原文（TipTap 吃 HTML）。
- * 预览不得 dangerouslySetInnerHTML，也不得只 htmlToPlainText 预览却 HTML 保存。
+ * 预览不得注入 HTML，也不得只 htmlToPlainText 预览却 HTML 保存。
  */
 export type GeneratedPreviewBlock =
   | { kind: 'paragraph'; text: string }

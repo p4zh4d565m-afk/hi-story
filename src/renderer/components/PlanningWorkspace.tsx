@@ -167,8 +167,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         chapterOutlines: nextChapters, chapterOutlineStatus: nextChapterStatus,
       });
       if (outcome.kind === 'saved') {
-        // 只当前项目才更新本地 UI 与 App committed；非当前项目只保留落库结果。
-        if (currentProjectIdRef.current === project.id) {
+        // 仅当项目仍当前且 token 仍 current 才更新本地 UI 与 App committed。
+        // 写库期间又有更新时 token 已失效：本次确实写库，但结果不再权威，不回退较新快照。
+        if (currentProjectIdRef.current === project.id && isPlanningWriteCurrent(project.id, outcome.token)) {
           projectLoadGuardRef.current.select(project.id); // 作废策划页在途 load
           applyPlanningSnapshot(outcome.planning);
           onPlanningCommitted?.(project.id, outcome.planning);
@@ -194,8 +195,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
   ): Promise<boolean> => {
     const outcome = await persistPlanning(window.electronAPI.invoke, projectId, payload, { expectedEpoch });
     if (outcome.kind === 'saved') {
-      // 当前项目才应用 UI + App committed；非当前项目只落库，重新进入时由 loader 读库。
-      if (shouldApplyPlanningResult(projectId, currentProjectIdRef.current)) {
+      // 仅当项目仍当前且 token 仍 current 才应用 UI + App committed。
+      // 非当前项目只落库，重新进入时由 loader 读库；token 失效则不回退较新快照。
+      if (shouldApplyPlanningResult(projectId, currentProjectIdRef.current) && isPlanningWriteCurrent(projectId, outcome.token)) {
         projectLoadGuardRef.current.select(projectId);
         applyPlanningSnapshot(outcome.planning);
         onPlanningCommitted?.(projectId, outcome.planning);
