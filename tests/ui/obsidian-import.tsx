@@ -106,6 +106,12 @@ async function run(): Promise<Result[]> {
     check('A3 扫描出章纲候选', document.body.textContent?.includes('章节细纲') ?? false);
     check('A4 扫描出人物候选', document.body.textContent?.includes('沈屿') ?? false);
     check('A5 扫描出世界观候选', document.body.textContent?.includes('主要场景') ?? false);
+    check('A5b 纵向分隔条存在', !!document.querySelector('[data-separator]'));
+    check('A5c 候选面板存在', !!document.getElementById('candidates'));
+    check('A5d 方案面板存在', !!document.getElementById('plan'));
+    const planPanel = document.getElementById('plan');
+    check('A5e 确认导入钉在方案面板内', !!(planPanel && Array.from(planPanel.querySelectorAll('button')).some(b => b.textContent?.includes('确认导入'))));
+    check('A5f 候选文件在上方面板', !!(document.getElementById('candidates')?.textContent?.includes('候选文件')));
 
     const confirmBtn = findButton('确认导入');
     check('A6 确认导入按钮存在', !!confirmBtn);

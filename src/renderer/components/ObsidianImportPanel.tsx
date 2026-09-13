@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Group, Panel, Separator } from 'react-resizable-panels';
 import type {
   ObsidianImportCandidate, ObsidianImportPrepareResult, ObsidianImportSummary, Project,
   ObsidianImportSlot, ImportLayerChoices, StoryOption, ImportCharacterOverride, ImportWorldOverride,
@@ -7,6 +8,12 @@ import { createObsidianImportGuard } from '../services/obsidian-import-guard';
 import { computeFinalVolumes, overlayStages } from '../../main/obsidian/final-volumes';
 import { mergeCharacterOverrides, mergeWorldOverrides, findDuplicateSourceKeys } from '../../main/obsidian/override-merge';
 import { computeLayerFinalState } from '../../main/obsidian/layer-actions';
+import {
+  OBSIDIAN_IMPORT_DEFAULT_LAYOUT,
+  OBSIDIAN_IMPORT_MIN_PX,
+  OBSIDIAN_IMPORT_SPLIT_IDS,
+  shouldShowObsidianImportSplit,
+} from './obsidian-import-split';
 
 interface ObsidianImportPanelProps {
   project: Project | null;
@@ -578,6 +585,174 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
     );
   };
 
+  const showSplit = shouldShowObsidianImportSplit({ hasPrepareResult: !!prepareResult, loading });
+
+  const planForm = (
+    <>
+      {storyOptionDraft && (
+        <div className="rounded border border-float-700 p-3">
+          <p className="text-xs font-semibold text-gray-200 mb-2">Obsidian 导入方案（自动构造故事方向）</p>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[11px] text-gray-400">标题<input value={storyOptionDraft.title} disabled={frozen} onChange={e => editStory('title', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+            <label className="text-[11px] text-gray-400">一句话<input value={storyOptionDraft.logline} disabled={frozen} onChange={e => editStory('logline', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+            <label className="text-[11px] text-gray-400">核心体验<input value={storyOptionDraft.corePromise} disabled={frozen} onChange={e => editStory('corePromise', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+            <label className="text-[11px] text-gray-400">主要冲突<input value={storyOptionDraft.centralConflict} disabled={frozen} onChange={e => editStory('centralConflict', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+            <label className="text-[11px] text-gray-400">结局方向<input value={storyOptionDraft.endingDirection} disabled={frozen} onChange={e => editStory('endingDirection', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+            <label className="text-[11px] text-gray-400">主角（可空）<input value={storyOptionDraft.protagonist} disabled={frozen} onChange={e => editStory('protagonist', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        {(Object.keys(LAYER_LABELS) as Array<keyof ImportLayerChoices>).map(layer => (
+          <label key={layer} className="flex items-center gap-1">
+            <select value={layerChoices[layer].action} disabled={frozen}
+              onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], action: e.target.value as any } })); }}
+              className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
+              <option value="keep">{LAYER_LABELS[layer]}：保留</option>
+              <option value="fill">{LAYER_LABELS[layer]}：填空</option>
+              <option value="replace">{LAYER_LABELS[layer]}：替换</option>
+              <option value="clear">{LAYER_LABELS[layer]}：清空</option>
+            </select>
+            {(() => {
+              const layerKey = layer === 'master' ? 'master' : layer === 'volumes' ? 'volumes' : 'chapters';
+              const isLocked = target?.layers[layerKey].status === 'locked';
+              const needUnlock = isLocked && ((layerChoices[layer].action === 'replace' || layerChoices[layer].action === 'clear') || (layer === 'volumes' && hasStageSelected));
+              return needUnlock ? (
+                <span className="flex items-center gap-1 text-[11px] text-amber-300">
+                  <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={frozen} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
+                  解锁
+                </span>
+              ) : null;
+            })()}
+          </label>
+        ))}
+      </div>
+
+      {blockReasons.length > 0 && (
+        <div className="text-[11px] text-red-300 space-y-0.5">
+          {blockReasons.map((r, i) => <p key={i}>⛔ {r}</p>)}
+        </div>
+      )}
+    </>
+  );
+
+  const planActions = (
+    <div className="flex items-center justify-between">
+      <p className="text-[11px] text-gray-500">预计：新建 {stats.create} · 覆盖 {stats.update} · 跳过 {stats.skip}</p>
+      {refreshPending ? (
+        <div className="flex items-center gap-2">
+          <button onClick={() => savedSummary && retryRefresh(savedSummary)} disabled={refreshing}
+            className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
+            {refreshing ? '刷新中…' : '重试刷新'}
+          </button>
+          <button onClick={onClose} disabled={refreshing}
+            className="px-3 py-2 rounded bg-float-700 text-xs text-gray-300 hover:bg-float-600 disabled:opacity-40">
+            关闭
+          </button>
+        </div>
+      ) : (
+        <button onClick={commit} disabled={!canCommit}
+          className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
+          {committing ? '导入中…' : '确认导入'}
+        </button>
+      )}
+    </div>
+  );
+
+  const candidatePane = (
+    <div className="h-full min-h-0 flex">
+      <aside className="w-72 border-r border-float-700 flex flex-col">
+        <div className="p-2 text-xs text-gray-500">候选文件（{candidates.length}）</div>
+        <div className="flex-1 overflow-y-auto">
+          {candidates.map(c => (
+            <div key={c.relativePath} className={`border-l-2 ${selectedCandidate?.relativePath === c.relativePath ? 'border-accent bg-float-700' : 'border-transparent hover:bg-float-800'}`}>
+              <label className="flex items-start gap-2 px-3 py-2 cursor-pointer" onClick={() => setSelectedPath(c.relativePath)}>
+                <input type="checkbox" checked={selectedSet.has(c.relativePath)} disabled={frozen}
+                  onChange={e => { markEdited(); setSelectedSet(prev => { const next = new Set(prev); e.target.checked ? next.add(c.relativePath) : next.delete(c.relativePath); return next; }); }} />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-xs font-medium text-gray-200 truncate">{c.name}</span>
+                  <span className="block text-[10px] text-gray-500">{c.kind} · {c.slots.map(s => SLOT_LABELS[s]).join('、') || '未分类'}</span>
+                </span>
+              </label>
+            </div>
+          ))}
+        </div>
+      </aside>
+
+      <main className="flex-1 min-w-0 overflow-y-auto p-5">
+        {selectedCandidate ? (
+          <div>
+            <h3 className="text-sm font-semibold text-white mb-2">{selectedCandidate.name}</h3>
+            <p className="text-xs text-gray-500 mb-4">{selectedCandidate.relativePath}</p>
+            {selectedCandidate.issues.length > 0 && (
+              <div className="mb-4 space-y-1">
+                {selectedCandidate.issues.map((issue, i) => (
+                  <p key={i} className={`text-xs ${issue.severity === 'blocking' ? 'text-red-300' : 'text-amber-300'}`}>
+                    {issue.severity === 'blocking' ? '⛔' : '⚠'} {issue.message}
+                  </p>
+                ))}
+              </div>
+            )}
+            {guardRef.current.getReparseState(project?.id ?? '', selectedCandidate.relativePath) === 'failed' && (
+              <div className="mb-4 flex items-center gap-2">
+                <p className="text-xs text-red-300">该候选重新解析失败</p>
+                <button onClick={() => retryReparse(selectedCandidate)} disabled={committing}
+                  className="px-2 py-1 bg-float-800 rounded text-xs text-gray-200 disabled:opacity-40">
+                  重新解析
+                </button>
+              </div>
+            )}
+            <div className="mb-4">
+              <p className="text-xs text-gray-500 mb-1">槽位</p>
+              <div className="flex gap-2 flex-wrap">
+                {(['master', 'volume', 'chapter', 'stage', 'character', 'world'] as ObsidianImportSlot[]).map(slot => (
+                  <label key={slot} className="text-xs text-gray-300 flex items-center gap-1">
+                    <input type="checkbox" disabled={frozen} checked={selectedCandidate.slots.includes(slot)} onChange={e => setSlot(selectedCandidate, slot, e.target.checked)} />
+                    {SLOT_LABELS[slot]}
+                  </label>
+                ))}
+              </div>
+            </div>
+            {selectedCandidate.slots.includes('chapter') && (
+              <div className="mb-4">
+                <p className="text-xs text-gray-500 mb-1">章纲卷归属</p>
+                <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
+                  onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
+                  className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
+                  <option value="">选择卷…</option>
+                  {finalVolumes.length === 0 ? (
+                    <option value="" disabled>本次无分卷纲</option>
+                  ) : (
+                    finalVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
+                  )}
+                </select>
+              </div>
+            )}
+            {selectedCandidate.slots.includes('stage') && (
+              <div className="mb-4">
+                <p className="text-xs text-gray-500 mb-1">阶段归属卷</p>
+                <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
+                  onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
+                  className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
+                  <option value="">选择卷…</option>
+                  {finalVolumes.length === 0 ? (
+                    <option value="" disabled>本次无分卷纲</option>
+                  ) : (
+                    finalVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
+                  )}
+                </select>
+              </div>
+            )}
+            {renderFields(selectedCandidate)}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">选择左侧文件查看解析结果</p>
+        )}
+      </main>
+    </div>
+  );
+
   return (
     <div className="fixed inset-0 z-[110] bg-black/60 flex items-center justify-center p-8" onMouseDown={e => { if (e.target === e.currentTarget && !committing && !refreshing) onClose(); }}>
       <div className="w-full max-w-6xl h-[85vh] bg-float-900 border border-float-700 rounded-lg shadow-2xl flex flex-col overflow-hidden">
@@ -592,173 +767,42 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
         {loading && <p className="px-5 py-3 text-sm text-gray-400">正在扫描 Obsidian 目录…</p>}
         {error && <p className="px-5 py-3 text-sm text-red-300">{error}</p>}
 
-        {prepareResult && !loading && (
-          <div className="flex-1 min-h-0 flex">
-            <aside className="w-72 border-r border-float-700 flex flex-col">
-              <div className="p-2 text-xs text-gray-500">候选文件（{candidates.length}）</div>
-              <div className="flex-1 overflow-y-auto">
-                {candidates.map(c => (
-                  <div key={c.relativePath} className={`border-l-2 ${selectedCandidate?.relativePath === c.relativePath ? 'border-accent bg-float-700' : 'border-transparent hover:bg-float-800'}`}>
-                    <label className="flex items-start gap-2 px-3 py-2 cursor-pointer" onClick={() => setSelectedPath(c.relativePath)}>
-                      <input type="checkbox" checked={selectedSet.has(c.relativePath)} disabled={frozen}
-                        onChange={e => { markEdited(); setSelectedSet(prev => { const next = new Set(prev); e.target.checked ? next.add(c.relativePath) : next.delete(c.relativePath); return next; }); }} />
-                      <span className="flex-1 min-w-0">
-                        <span className="block text-xs font-medium text-gray-200 truncate">{c.name}</span>
-                        <span className="block text-[10px] text-gray-500">{c.kind} · {c.slots.map(s => SLOT_LABELS[s]).join('、') || '未分类'}</span>
-                      </span>
-                    </label>
+        {showSplit ? (
+          <div className="flex-1 min-h-0">
+            <Group
+              id={OBSIDIAN_IMPORT_SPLIT_IDS.group}
+              orientation="vertical"
+              className="h-full w-full"
+              defaultLayout={OBSIDIAN_IMPORT_DEFAULT_LAYOUT}
+            >
+              <Panel
+                id={OBSIDIAN_IMPORT_SPLIT_IDS.candidates}
+                minSize={OBSIDIAN_IMPORT_MIN_PX.candidates}
+              >
+                {candidatePane}
+              </Panel>
+              <Separator className="h-1.5 bg-float-700 hover:bg-accent/50" />
+              <Panel
+                id={OBSIDIAN_IMPORT_SPLIT_IDS.plan}
+                minSize={OBSIDIAN_IMPORT_MIN_PX.plan}
+              >
+                <div className="h-full min-h-0 flex flex-col">
+                  <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3 flex flex-col gap-2">
+                    {planForm}
                   </div>
-                ))}
-              </div>
-            </aside>
-
-            <main className="flex-1 min-w-0 overflow-y-auto p-5">
-              {selectedCandidate ? (
-                <div>
-                  <h3 className="text-sm font-semibold text-white mb-2">{selectedCandidate.name}</h3>
-                  <p className="text-xs text-gray-500 mb-4">{selectedCandidate.relativePath}</p>
-                  {selectedCandidate.issues.length > 0 && (
-                    <div className="mb-4 space-y-1">
-                      {selectedCandidate.issues.map((issue, i) => (
-                        <p key={i} className={`text-xs ${issue.severity === 'blocking' ? 'text-red-300' : 'text-amber-300'}`}>
-                          {issue.severity === 'blocking' ? '⛔' : '⚠'} {issue.message}
-                        </p>
-                      ))}
-                    </div>
-                  )}
-                  {/* R3：reparse 失败重试入口 */}
-                  {guardRef.current.getReparseState(project?.id ?? '', selectedCandidate.relativePath) === 'failed' && (
-                    <div className="mb-4 flex items-center gap-2">
-                      <p className="text-xs text-red-300">该候选重新解析失败</p>
-                      <button onClick={() => retryReparse(selectedCandidate)} disabled={committing}
-                        className="px-2 py-1 bg-float-800 rounded text-xs text-gray-200 disabled:opacity-40">
-                        重新解析
-                      </button>
-                    </div>
-                  )}
-                  {/* 槽位勾选 */}
-                  <div className="mb-4">
-                    <p className="text-xs text-gray-500 mb-1">槽位</p>
-                    <div className="flex gap-2 flex-wrap">
-                      {(['master', 'volume', 'chapter', 'stage', 'character', 'world'] as ObsidianImportSlot[]).map(slot => (
-                        <label key={slot} className="text-xs text-gray-300 flex items-center gap-1">
-                          <input type="checkbox" disabled={frozen} checked={selectedCandidate.slots.includes(slot)} onChange={e => setSlot(selectedCandidate, slot, e.target.checked)} />
-                          {SLOT_LABELS[slot]}
-                        </label>
-                      ))}
-                    </div>
+                  <div className="px-5 py-3 border-t border-float-700 shrink-0">
+                    {planActions}
                   </div>
-                  {/* 章纲卷归属：只要有 chapter 槽位就显示，用户可随时修改归属 */}
-                  {selectedCandidate.slots.includes('chapter') && (
-                    <div className="mb-4">
-                      <p className="text-xs text-gray-500 mb-1">章纲卷归属</p>
-                      <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
-                        onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
-                        className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
-                        <option value="">选择卷…</option>
-                        {finalVolumes.length === 0 ? (
-                          <option value="" disabled>本次无分卷纲</option>
-                        ) : (
-                          finalVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
-                        )}
-                      </select>
-                    </div>
-                  )}
-                  {/* 阶段候选归属卷：value = 最终卷数组下标，未归属显示占位 */}
-                  {selectedCandidate.slots.includes('stage') && (
-                    <div className="mb-4">
-                      <p className="text-xs text-gray-500 mb-1">阶段归属卷</p>
-                      <select value={volumeAssign[selectedCandidate.relativePath] ?? ''} disabled={frozen}
-                        onChange={e => setVolumeFor(selectedCandidate, e.target.value === '' ? null : Number(e.target.value))}
-                        className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
-                        <option value="">选择卷…</option>
-                        {finalVolumes.length === 0 ? (
-                          <option value="" disabled>本次无分卷纲</option>
-                        ) : (
-                          finalVolumes.map((v, i) => <option key={i} value={i}>第 {i + 1} 卷：{v.title || v.chapterRange || '未命名'}</option>)
-                        )}
-                      </select>
-                    </div>
-                  )}
-                  {renderFields(selectedCandidate)}
                 </div>
-              ) : (
-                <p className="text-sm text-gray-500">选择左侧文件查看解析结果</p>
-              )}
-            </main>
+              </Panel>
+            </Group>
           </div>
+        ) : (
+          <footer className="px-5 py-3 border-t border-float-700 flex flex-col gap-2">
+            {planForm}
+            {planActions}
+          </footer>
         )}
-
-        <footer className="px-5 py-3 border-t border-float-700 flex flex-col gap-2">
-          {/* 故事方向表单 */}
-          {storyOptionDraft && (
-            <div className="rounded border border-float-700 p-3">
-              <p className="text-xs font-semibold text-gray-200 mb-2">Obsidian 导入方案（自动构造故事方向）</p>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="text-[11px] text-gray-400">标题<input value={storyOptionDraft.title} disabled={frozen} onChange={e => editStory('title', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">一句话<input value={storyOptionDraft.logline} disabled={frozen} onChange={e => editStory('logline', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">核心体验<input value={storyOptionDraft.corePromise} disabled={frozen} onChange={e => editStory('corePromise', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">主要冲突<input value={storyOptionDraft.centralConflict} disabled={frozen} onChange={e => editStory('centralConflict', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">结局方向<input value={storyOptionDraft.endingDirection} disabled={frozen} onChange={e => editStory('endingDirection', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-                <label className="text-[11px] text-gray-400">主角（可空）<input value={storyOptionDraft.protagonist} disabled={frozen} onChange={e => editStory('protagonist', e.target.value)} className="w-full mt-0.5 px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200" /></label>
-              </div>
-            </div>
-          )}
-
-          <div className="flex items-center gap-2">
-            {(Object.keys(LAYER_LABELS) as Array<keyof ImportLayerChoices>).map(layer => (
-              <label key={layer} className="flex items-center gap-1">
-                <select value={layerChoices[layer].action} disabled={frozen}
-                  onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], action: e.target.value as any } })); }}
-                  className="px-2 py-1 bg-float-900 border border-float-700 rounded text-xs text-gray-200">
-                  <option value="keep">{LAYER_LABELS[layer]}：保留</option>
-                  <option value="fill">{LAYER_LABELS[layer]}：填空</option>
-                  <option value="replace">{LAYER_LABELS[layer]}：替换</option>
-                  <option value="clear">{LAYER_LABELS[layer]}：清空</option>
-                </select>
-                {(() => {
-                  const layerKey = layer === 'master' ? 'master' : layer === 'volumes' ? 'volumes' : 'chapters';
-                  const isLocked = target?.layers[layerKey].status === 'locked';
-                  // 锁定且（替换/清空）或（勾了阶段）时显示解锁，否则锁定项目导入阶段无入口
-                  const needUnlock = isLocked && ((layerChoices[layer].action === 'replace' || layerChoices[layer].action === 'clear') || (layer === 'volumes' && hasStageSelected));
-                  return needUnlock ? (
-                    <span className="flex items-center gap-1 text-[11px] text-amber-300">
-                      <input type="checkbox" checked={layerChoices[layer].unlockLocked} disabled={frozen} onChange={e => { markEdited(); setLayerChoices(prev => ({ ...prev, [layer]: { ...prev[layer], unlockLocked: e.target.checked } })); }} />
-                      解锁
-                    </span>
-                  ) : null;
-                })()}
-              </label>
-            ))}
-          </div>
-
-          {blockReasons.length > 0 && (
-            <div className="text-[11px] text-red-300 space-y-0.5">
-              {blockReasons.map((r, i) => <p key={i}>⛔ {r}</p>)}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <p className="text-[11px] text-gray-500">预计：新建 {stats.create} · 覆盖 {stats.update} · 跳过 {stats.skip}</p>
-            {refreshPending ? (
-              <div className="flex items-center gap-2">
-                <button onClick={() => savedSummary && retryRefresh(savedSummary)} disabled={refreshing}
-                  className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
-                  {refreshing ? '刷新中…' : '重试刷新'}
-                </button>
-                <button onClick={onClose} disabled={refreshing}
-                  className="px-3 py-2 rounded bg-float-700 text-xs text-gray-300 hover:bg-float-600 disabled:opacity-40">
-                  关闭
-                </button>
-              </div>
-            ) : (
-              <button onClick={commit} disabled={!canCommit}
-                className="px-4 py-2 rounded bg-accent text-xs text-white hover:bg-accent-hover disabled:opacity-40">
-                {committing ? '导入中…' : '确认导入'}
-              </button>
-            )}
-          </div>
-        </footer>
       </div>
     </div>
   );
