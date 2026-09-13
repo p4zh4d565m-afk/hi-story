@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, WritingSkill, WritingSkillSummary, ObsidianImportSummary } from '../types';
 import { decrypt } from '../services/crypto';
 import { aiService } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
+import type { ProviderConfig } from '../../main/ai/provider';
 import { buildChapterOutlinesPrompt, buildMasterOutlinePrompt, buildStoryOptionsPrompt, buildVolumeOutlinesPrompt, parseChapterOutlines, parseMasterOutline, parseStoryOptions, parseVolumeOutlines } from '../services/ai-prompts/planning';
 import { createProjectSelectionGuard } from '../services/project-data-loader';
 import { shouldApplyPlanningResult } from '../services/planning-generation-guard';
@@ -31,20 +33,19 @@ const BASE_URLS: Record<string, string> = {
   moonshot: 'https://api.moonshot.cn/v1',
 };
 
-async function configureFirstAi(): Promise<SavedConfig> {
+async function loadFirstAiConfig(): Promise<ProviderConfig> {
   const raw = localStorage.getItem('hi-story-ai-configs');
   const configs: SavedConfig[] = raw ? JSON.parse(raw) : [];
   if (!configs.length) throw new Error('请先在 AI 设置中添加一个可用模型');
   const selected = configs[0];
   const apiKey = await decrypt(selected.apiKey);
   if (!apiKey) throw new Error('AI 配置解密失败，请重新保存 API Key');
-  aiService.configure(
-    selected.providerId,
+  return snapshotAIRequestConfig({
+    name: selected.providerId,
     apiKey,
-    selected.model,
-    selected.baseUrl || BASE_URLS[selected.providerId] || '',
-  );
-  return { ...selected, apiKey };
+    model: selected.model,
+    baseUrl: selected.baseUrl || BASE_URLS[selected.providerId],
+  });
 }
 
 const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartChapter, onRefreshImportedEntities }) => {
@@ -203,7 +204,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     const startedId = project.id;
     setLoading(true); setError('');
     try {
-      const aiConfig = await configureFirstAi();
+      const aiConfig = await loadFirstAiConfig();
       const routed = await window.electronAPI.invoke('skills:route', `小说创意选题、卖点、人物：${idea}`, 3) as any;
       if (!routed?.success || !routed.data?.length) throw new Error('没有匹配到可用的写作 Skill');
       const fullSkills: WritingSkill[] = [];
@@ -211,8 +212,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         const detail = await window.electronAPI.invoke('skills:get', summary.id) as any;
         if (detail?.success) fullSkills.push(detail.data);
       }
-      const raw = await aiService.chat(buildStoryOptionsPrompt(project, idea, requirements, fullSkills), {
-        model: aiConfig.model,
+      const raw = await aiService.chat(aiConfig, buildStoryOptionsPrompt(project, idea, requirements, fullSkills), {
         maxTokens: 4096,
         temperature: 0.8,
       });
@@ -254,7 +254,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     const startedId = project.id;
     setOutlineLoading(true); setError('');
     try {
-      const aiConfig = await configureFirstAi();
+      const aiConfig = await loadFirstAiConfig();
       const routed = await window.electronAPI.invoke(
         'skills:route',
         '生成长篇小说全书总纲、主线结构、人物成长和整体情绪节奏',
@@ -267,8 +267,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         if (detail?.success) fullSkills.push(detail.data);
       }
       const raw = await aiService.chat(
+        aiConfig,
         buildMasterOutlinePrompt(project, options[selectedOption], requirements, fullSkills),
-        { model: aiConfig.model, maxTokens: 8192, temperature: 0.65 },
+        { maxTokens: 8192, temperature: 0.65 },
       );
       const outline = parseMasterOutline(raw);
       if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
@@ -327,7 +328,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     const startedId = project.id;
     setVolumeLoading(true); setError('');
     try {
-      const aiConfig = await configureFirstAi();
+      const aiConfig = await loadFirstAiConfig();
       const routed = await window.electronAPI.invoke(
         'skills:route', '把锁定的全书总纲拆成分卷纲，安排每卷主线、人物成长和情绪节奏', 4,
       ) as any;
@@ -338,8 +339,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         if (detail?.success) fullSkills.push(detail.data);
       }
       const raw = await aiService.chat(
+        aiConfig,
         buildVolumeOutlinesPrompt(project, options[selectedOption], masterOutline, requirements, fullSkills),
-        { model: aiConfig.model, maxTokens: 8192, temperature: 0.6 },
+        { maxTokens: 8192, temperature: 0.6 },
       );
       const volumes = parseVolumeOutlines(raw);
       if (!shouldApplyPlanningResult(startedId, currentProjectIdRef.current)) {
@@ -384,7 +386,7 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
     const startedId = project.id;
     setChapterLoadingVolume(volumeIndex); setError('');
     try {
-      const aiConfig = await configureFirstAi();
+      const aiConfig = await loadFirstAiConfig();
       const routed = await window.electronAPI.invoke(
         'skills:route', '把分卷纲拆成逐章章纲，设计每章目标、冲突、节拍、人物变化、爽点和章末钩子', 5,
       ) as any;
@@ -395,8 +397,9 @@ const PlanningWorkspace: React.FC<PlanningWorkspaceProps> = ({ project, onStartC
         if (detail?.success) fullSkills.push(detail.data);
       }
       const raw = await aiService.chat(
+        aiConfig,
         buildChapterOutlinesPrompt(project, options[selectedOption], masterOutline, volumeOutlines, volumeIndex, requirements, fullSkills),
-        { model: aiConfig.model, maxTokens: 16384, temperature: 0.55 },
+        { maxTokens: 16384, temperature: 0.55 },
       );
       const generated = parseChapterOutlines(raw, volumeIndex);
       const merged = [...chapterOutlines.filter(chapter => chapter.volumeIndex !== volumeIndex), ...generated]

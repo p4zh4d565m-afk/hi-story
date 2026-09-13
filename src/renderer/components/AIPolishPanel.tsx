@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import type { ChatMessage } from '../../main/ai/provider';
+import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
 import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { POLISH_SYSTEM_PROMPT, buildPolishUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { Chapter, Character, WorldEntry } from '../types';
 import type { TextRange } from './editor/RichEditor';
@@ -49,7 +50,19 @@ interface SavedConfig {
   apiKey: string;
   model: string;
   label: string;
+  baseUrl?: string;
 }
+
+const PROVIDERS: { id: string; name: string; baseUrl: string }[] = [
+  { id: 'claude', name: 'claude', baseUrl: 'https://api.anthropic.com' },
+  { id: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { id: 'deepseek', name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1' },
+  { id: 'doubao', name: 'doubao', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'volcengine', name: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'qwen', name: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { id: 'zhipu', name: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'moonshot', name: 'moonshot', baseUrl: 'https://api.moonshot.cn/v1' },
+];
 
 const AI_CONFIGS_KEY = 'hi-story-ai-configs';
 
@@ -109,6 +122,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
   const [editablePolishText, setEditablePolishText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [aiReady, setAiReady] = useState(false);
+  const [requestBase, setRequestBase] = useState<ProviderConfig | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [initDone, setInitDone] = useState(false);
   const [applied, setApplied] = useState(false);
@@ -208,30 +222,29 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
         if (configs.length === 0) {
           setConfigError('请先在 AI 对话面板配置 API Key（点击 ⚙️ 图标）');
           setAiReady(false);
+          setRequestBase(null);
           return;
         }
         const active = configs[0];
-        const providerNames: Record<string, string> = {
-          claude: 'claude', openai: 'openai', deepseek: 'deepseek',
-          doubao: 'doubao', volcengine: 'volcengine', qwen: 'qwen',
-          zhipu: 'zhipu', moonshot: 'moonshot',
-        };
-        const provider = providerNames[active.providerId] || 'custom';
-        const baseUrls: Record<string, string> = {
-          claude: 'https://api.anthropic.com', openai: 'https://api.openai.com/v1',
-          deepseek: 'https://api.deepseek.com/v1',
-          doubao: 'https://ark.cn-beijing.volces.com/api/v3',
-          volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
-          qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          zhipu: 'https://open.bigmodel.cn/api/paas/v4',
-          moonshot: 'https://api.moonshot.cn/v1',
-        };
-        aiService.configure(provider, active.apiKey, active.model, baseUrls[active.providerId] || '');
+        const preset = PROVIDERS.find(p => p.id === active.providerId);
+        if (!preset && !active.baseUrl) {
+          setConfigError(`未识别的提供商：${active.providerId}`);
+          setAiReady(false);
+          setRequestBase(null);
+          return;
+        }
+        setRequestBase({
+          name: preset?.name ?? active.providerId,
+          apiKey: active.apiKey,
+          model: active.model,
+          baseUrl: active.baseUrl || preset?.baseUrl,
+        });
         setAiReady(true);
         setConfigError(null);
       } catch (e) {
         setConfigError('AI 配置加载失败');
         setAiReady(false);
+        setRequestBase(null);
       } finally {
         setInitDone(true);
       }
@@ -274,6 +287,10 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
       setError('没有可润色的内容，请先选择章节或选中文字。');
       return;
     }
+    if (!requestBase) {
+      setError('AI 未配置');
+      return;
+    }
 
     setPolishing(true);
     setError(null);
@@ -303,7 +320,12 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      const generator = aiService.chatStream(messages, { temperature: 0.5, maxTokens: 8192 }, projectId);
+      const generator = aiService.chatStream(
+        snapshotAIRequestConfig(requestBase),
+        messages,
+        { temperature: 0.5, maxTokens: 8192 },
+        projectId,
+      );
       let fullText = '';
       for await (const token of generator) {
         fullText = token;
@@ -317,7 +339,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
     } finally {
       setPolishing(false);
     }
-  }, [sourceText, projectId, projectName, typeTags, characters, worldEntries]);
+  }, [sourceText, projectId, projectName, typeTags, characters, worldEntries, requestBase]);
 
   // ===== 接受润色 =====
   const handleAccept = useCallback(() => {

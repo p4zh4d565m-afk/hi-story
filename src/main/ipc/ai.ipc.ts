@@ -2,6 +2,7 @@ import { ipcMain } from 'electron';
 import { ProviderFactory } from '../ai/provider-factory';
 import type { ChatMessage, ChatOptions, ProviderConfig } from '../ai/provider';
 import { streamRegistry } from '../ai/stream-registry';
+import { normalizeStreamProjectId } from '../ai/stream-project-id';
 
 // Provider caching is handled by ProviderFactory internally.
 // Always use ProviderFactory.create() for singleton, invalidate via ProviderFactory.invalidateCache().
@@ -36,9 +37,7 @@ export function registerAIIpc(): void {
   // 一期起 chatStream 必须带 projectId，用于流注册表与取消校验。
   ipcMain.handle('ai:chatStream', async (event, config: ProviderConfig, messages: ChatMessage[], options?: ChatOptions, projectId?: string) => {
     try {
-      if (!projectId) {
-        return { success: false, error: '缺少 projectId，无法启动可取消的 AI 流' };
-      }
+      const pid = normalizeStreamProjectId(projectId);
       const provider = ProviderFactory.create(config);
       const sender = event.sender;
       const streamId = `stream_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -49,7 +48,7 @@ export function registerAIIpc(): void {
       streamRegistry.register(streamId, {
         controller,
         senderId: sender.id,
-        projectId,
+        projectId: pid,
         terminal: false,
       });
 

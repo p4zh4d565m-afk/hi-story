@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import type { ChatMessage } from '../../main/ai/provider';
+import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
 import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
@@ -198,6 +199,7 @@ interface SavedConfig {
   apiKey: string;
   model: string;
   label: string;
+  baseUrl?: string;
 }
 
 const AI_CONFIGS_KEY = 'hi-story-ai-configs';
@@ -250,6 +252,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
   // ===== AI 配置 =====
   const [aiReady, setAiReady] = useState(false);
+  const [requestBase, setRequestBase] = useState<ProviderConfig | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [initDone, setInitDone] = useState(false);
 
@@ -260,6 +263,10 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+  const runBatchRef = useRef<(nodes: OutlineNode[], startIndex: number) => Promise<void>>(async () => {});
+  const generateAndSaveSummaryRef = useRef<(
+    projectId: string, chapterId: string, chapterTitle: string, content: string,
+  ) => Promise<void>>(async () => {});
 
   // ===== 批量生成 + 断点续写（P2）=====
   const [batchMode, setBatchMode] = useState(false);
@@ -364,22 +371,30 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         if (configs.length === 0) {
           setConfigError('请先在 AI 对话面板配置 API Key（点击 ⚙️ 图标）');
           setAiReady(false);
+          setRequestBase(null);
           return;
         }
         // 找激活的配置，或使用第一个
         const active = configs[0];
         const preset = PROVIDERS.find(p => p.id === active.providerId);
-        if (!preset) {
+        if (!preset && !active.baseUrl) {
           setConfigError(`未识别的提供商：${active.providerId}`);
           setAiReady(false);
+          setRequestBase(null);
           return;
         }
-        aiService.configure(active.providerId, active.apiKey, active.model, preset.baseUrl);
+        setRequestBase({
+          name: preset?.name ?? active.providerId,
+          apiKey: active.apiKey,
+          model: active.model,
+          baseUrl: active.baseUrl || preset?.baseUrl,
+        });
         setAiReady(true);
         setConfigError(null);
       } catch (e) {
         setConfigError('AI 配置加载失败');
         setAiReady(false);
+        setRequestBase(null);
       } finally {
         setInitDone(true);
       }
@@ -513,14 +528,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
     setBatchProgress({ total: ordered.length, completed: 0, current: ordered[0]?.title, results: [] });
     setBatchPaused(false);
-    await runBatch(ordered, 0);
-  }, [selectedOutlineIds, outlineNodes, aiReady, styleGuide, targetWords, extraRequirement, projectId, characters, chapters, includeContext, includeCharacters, includeWorld]);
+    await runBatchRef.current(ordered, 0);
+  }, [selectedOutlineIds, outlineNodes]);
 
   const handleBatchResume = useCallback(() => {
     setBatchPaused(false);
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
-    runBatch(ordered, batchProgress.completed);
-  }, [selectedOutlineIds, outlineNodes, batchProgress, aiReady, styleGuide, targetWords, extraRequirement, projectId, characters, chapters, includeContext, includeCharacters, includeWorld]);
+    runBatchRef.current(ordered, batchProgress.completed);
+  }, [selectedOutlineIds, outlineNodes, batchProgress.completed]);
 
   const handleBatchReset = useCallback(() => {
     setBatchProgress({ total: 0, completed: 0, results: [] });
@@ -528,6 +543,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }, [projectId]);
 
   const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number) => {
+    if (!requestBase) return;
     // 批量模式：一次性加载创作罗盘/风格指纹/钩子/叙事事实层（这些在整个批量中不变）
     const compassCtx = ContextBuilder.getCompassContext(projectId);
     const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
@@ -594,10 +610,12 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         // 流式生成到面板
         setGeneratedContent('');
         const startedProjectId = projectId;
-        const generator = aiService.chatStream(messages, {
-          temperature: 0.7, maxTokens: targetWords * 3,
-          ...(writeModel ? { model: writeModel } : {}),
-        }, startedProjectId);
+        const generator = aiService.chatStream(
+          snapshotAIRequestConfig(requestBase, writeModel),
+          messages,
+          { temperature: 0.7, maxTokens: targetWords * 3 },
+          startedProjectId,
+        );
         let fullText = '';
         for await (const token of generator) {
           if (projectIdRef.current !== startedProjectId) break;
@@ -634,7 +652,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     setBatchProgress(p => ({ ...p, current: undefined }));
     // 清除进度
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
-  }, [projectId, projectName, typeTags, style, chapters, characters, worldEntries, outlineNodes, includeCharacters, includeWorld, includeContext, styleGuide, extraRequirement, targetWords, writeModel, obsidianContext, onSaveAsChapter]);
+  }, [projectId, projectName, typeTags, style, chapters, characters, worldEntries, outlineNodes, includeCharacters, includeWorld, includeContext, styleGuide, extraRequirement, targetWords, writeModel, obsidianContext, onSaveAsChapter, requestBase]);
+  runBatchRef.current = runBatch;
 
   // ===== 生成章节（单章）=====
   const handleGenerate = useCallback(async () => {
@@ -643,7 +662,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       setError('请先选择一个大纲节点');
       return;
     }
-    if (!aiReady) {
+    if (!aiReady || !requestBase) {
       setError('AI 未配置，请在 AI 对话面板配置 API Key');
       return;
     }
@@ -707,11 +726,12 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
       // 流式生成
       const startedProjectId = projectId;
-      const generator = aiService.chatStream(messages, {
-        temperature: 0.7,
-        maxTokens: targetWords * 3,
-        ...(writeModel ? { model: writeModel } : {}),
-      }, startedProjectId);
+      const generator = aiService.chatStream(
+        snapshotAIRequestConfig(requestBase, writeModel),
+        messages,
+        { temperature: 0.7, maxTokens: targetWords * 3 },
+        startedProjectId,
+      );
       let fullText = '';
       for await (const token of generator) {
         if (projectIdRef.current !== startedProjectId) break;
@@ -727,7 +747,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     } finally {
       setGenerating(false);
     }
-  }, [getContext, aiReady, styleGuide, targetWords, extraRequirement, projectId, obsidianContext, writeModel]);
+  }, [getContext, aiReady, requestBase, styleGuide, targetWords, extraRequirement, projectId, obsidianContext, writeModel]);
 
   // ===== 停止生成 =====
   const handleStop = useCallback(async () => {
@@ -751,12 +771,13 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
     // 异步生成章节摘要 + 抽取叙事事实（后台执行，不阻塞 UI）
     if (aiReady) {
-      generateAndSaveSummary(projectId, chapterId, title || 'AI 生成章节', generatedContent);
+      void generateAndSaveSummaryRef.current(projectId, chapterId, title || 'AI 生成章节', generatedContent);
     }
-  }, [generatedContent, onSaveAsChapter, aiReady, characters, projectName, preferredTitle, projectId, onPersistExtraction]);
+  }, [generatedContent, onSaveAsChapter, aiReady, preferredTitle, projectId]);
 
   // ===== 后台生成章节摘要 + 抽取叙事事实（合并为一次 AI 调用）=====
   const generateAndSaveSummary = useCallback(async (projectId: string, chapterId: string, chapterTitle: string, content: string) => {
+    if (!requestBase) return;
     try {
       const userPrompt = buildSummaryUserPrompt(
         chapterTitle,
@@ -770,11 +791,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       ];
 
       // 事实抽取需要更大输出空间（每条事实约 80-100 tokens）
-      const response = await aiService.chat(messages, {
-        temperature: 0.3,
-        maxTokens: 2048,
-        ...(summaryModel ? { model: summaryModel } : {}),
-      });
+      const response = await aiService.chat(
+        snapshotAIRequestConfig(requestBase, summaryModel),
+        messages,
+        { temperature: 0.3, maxTokens: 2048 },
+      );
 
       // 解析 AI 返回的 JSON
       let jsonStr = response.trim();
@@ -795,7 +816,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     } catch (e) {
       console.warn('章节摘要/事实抽取失败（不影响正文保存）：', e);
     }
-  }, [aiReady, characters, onPersistExtraction]);
+  }, [characters, onPersistExtraction, requestBase, summaryModel]);
+  generateAndSaveSummaryRef.current = generateAndSaveSummary;
 
   // ===== 复制到剪贴板 =====
   const handleCopy = useCallback(async () => {

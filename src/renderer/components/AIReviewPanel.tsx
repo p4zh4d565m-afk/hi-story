@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import type { ChatMessage } from '../../main/ai/provider';
+import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
 import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import {
   REVIEW_SYSTEM_PROMPT,
   buildReviewUserPrompt,
@@ -61,7 +62,19 @@ interface SavedConfig {
   apiKey: string;
   model: string;
   label: string;
+  baseUrl?: string;
 }
+
+const PROVIDERS: { id: string; name: string; baseUrl: string }[] = [
+  { id: 'claude', name: 'claude', baseUrl: 'https://api.anthropic.com' },
+  { id: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { id: 'deepseek', name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1' },
+  { id: 'doubao', name: 'doubao', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'volcengine', name: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'qwen', name: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { id: 'zhipu', name: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'moonshot', name: 'moonshot', baseUrl: 'https://api.moonshot.cn/v1' },
+];
 
 const AI_CONFIGS_KEY = 'hi-story-ai-configs';
 
@@ -103,6 +116,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [result, setResult] = useState<AIReviewResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [aiReady, setAiReady] = useState(false);
+  const [requestBase, setRequestBase] = useState<ProviderConfig | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [initDone, setInitDone] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -211,31 +225,29 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         if (configs.length === 0) {
           setConfigError('请先在 AI 对话面板配置 API Key（点击 ⚙️ 图标）');
           setAiReady(false);
+          setRequestBase(null);
           return;
         }
         const active = configs[0];
-        // 直接使用已保存的配置
-        const providerNames: Record<string, string> = {
-          claude: 'claude', openai: 'openai', deepseek: 'deepseek',
-          doubao: 'doubao', volcengine: 'volcengine', qwen: 'qwen',
-          zhipu: 'zhipu', moonshot: 'moonshot',
-        };
-        const provider = providerNames[active.providerId] || 'custom';
-        const baseUrls: Record<string, string> = {
-          claude: 'https://api.anthropic.com', openai: 'https://api.openai.com/v1',
-          deepseek: 'https://api.deepseek.com/v1',
-          doubao: 'https://ark.cn-beijing.volces.com/api/v3',
-          volcengine: 'https://ark.cn-beijing.volces.com/api/v3',
-          qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          zhipu: 'https://open.bigmodel.cn/api/paas/v4',
-          moonshot: 'https://api.moonshot.cn/v1',
-        };
-        aiService.configure(provider, active.apiKey, active.model, baseUrls[active.providerId] || '');
+        const preset = PROVIDERS.find(p => p.id === active.providerId);
+        if (!preset && !active.baseUrl) {
+          setConfigError(`未识别的提供商：${active.providerId}`);
+          setAiReady(false);
+          setRequestBase(null);
+          return;
+        }
+        setRequestBase({
+          name: preset?.name ?? active.providerId,
+          apiKey: active.apiKey,
+          model: active.model,
+          baseUrl: active.baseUrl || preset?.baseUrl,
+        });
         setAiReady(true);
         setConfigError(null);
       } catch (e) {
         setConfigError('AI 配置加载失败');
         setAiReady(false);
+        setRequestBase(null);
       } finally {
         setInitDone(true);
       }
@@ -254,7 +266,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       setError('请先选择要审查的章节');
       return;
     }
-    if (!aiReady) {
+    if (!aiReady || !requestBase) {
       setError('AI 未配置');
       return;
     }
@@ -380,7 +392,12 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       ];
 
       let response = '';
-      const generator = aiService.chatStream(messages, { temperature: 0.3, maxTokens: 4096 }, projectId);
+      const generator = aiService.chatStream(
+        snapshotAIRequestConfig(requestBase),
+        messages,
+        { temperature: 0.3, maxTokens: 4096 },
+        projectId,
+      );
       for await (const token of generator) {
         response = token;
       }
@@ -420,13 +437,17 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setReviewing(false);
     }
-  }, [selectedChapterId, aiReady, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, chapterOutlines, obsidianContext]);
+  }, [selectedChapterId, aiReady, requestBase, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, chapterOutlines, obsidianContext]);
 
   // ===== AI 自动修复 =====
   const handleAutoRevise = useCallback(async () => {
     if (!result) return;
     const chapter = chapters.find(ch => ch.id === selectedChapterId);
     if (!chapter) return;
+    if (!requestBase) {
+      setError('AI 未配置');
+      return;
+    }
 
     setRevising(true);
     setError(null);
@@ -473,7 +494,12 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      const generator = aiService.chatStream(messages, { temperature: 0.4, maxTokens: 8192 }, projectId);
+      const generator = aiService.chatStream(
+        snapshotAIRequestConfig(requestBase),
+        messages,
+        { temperature: 0.4, maxTokens: 8192 },
+        projectId,
+      );
       let fullText = '';
       for await (const token of generator) {
         fullText = token;
@@ -485,7 +511,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setRevising(false);
     }
-  }, [selectedChapterId, result, chapters, projectId, characters, worldEntries, obsidianContext]);
+  }, [selectedChapterId, result, chapters, projectId, characters, worldEntries, obsidianContext, requestBase]);
 
   // ===== 接受修订 =====
   const handleAcceptRevision = useCallback(async () => {

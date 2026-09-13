@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { aiService } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
+import type { ProviderConfig } from '../../main/ai/provider';
 import { decryptConfigs } from '../services/crypto';
 import { generateCharacterNames, generateFactionNames, generateLocationNames, generateItemNames, generateTechniqueNames, generateCreatureNames } from '../services/name-generator';
 
@@ -452,6 +454,7 @@ const NameGenerator: React.FC<NameGeneratorProps> = ({ open, onClose }) => {
   const [aiAvailable, setAiAvailable] = useState(false);
   const [source, setSource] = useState<'builtin' | 'ai'>('builtin'); // 当前名字来源
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestConfigRef = useRef<ProviderConfig | null>(null);
 
   // ── 初始化：加载 AI 配置（解密 API Key，与 AIChatPanel 共享）──
   useEffect(() => {
@@ -468,10 +471,14 @@ const NameGenerator: React.FC<NameGeneratorProps> = ({ open, onClose }) => {
         const cfg = decrypted[0];
         const providerId = cfg.providerId || cfg.name; // 兼容两种字段
         const provider = PROVIDERS.find(p => p.id === providerId || p.name === providerId);
-        const baseUrl = provider?.baseUrl || '';
         const model = cfg.model || provider?.defaultModel || '';
-        console.log('[起名助手] AI 配置成功:', { name: cfg.name || providerId, model, baseUrl: baseUrl.slice(0, 40) + '...' });
-        aiService.configure(cfg.name || providerId, cfg.apiKey, model, baseUrl);
+        requestConfigRef.current = snapshotAIRequestConfig({
+          name: provider?.name || providerId,
+          apiKey: cfg.apiKey,
+          model,
+          baseUrl: cfg.baseUrl || provider?.baseUrl,
+        });
+        console.log('[起名助手] AI 配置成功:', { name: provider?.name || providerId, model });
         setAiAvailable(true);
       } catch (err) {
         console.warn('[起名助手] AI 配置加载失败:', (err as Error).message);
@@ -497,10 +504,12 @@ const NameGenerator: React.FC<NameGeneratorProps> = ({ open, onClose }) => {
     let aiNames: string[] = [];
 
     // ── 先试在线 AI ──
-    if (aiAvailable) {
+    const requestConfig = requestConfigRef.current;
+    if (requestConfig) {
       try {
         const systemPrompt = buildPrompt(cat, sty, gen, sur, er);
         const rawResponse = await aiService.chat(
+          requestConfig,
           [{ role: 'user', content: '请开始生成。' }],
           { maxTokens: 500, temperature: 0.9, systemPrompt },
         );

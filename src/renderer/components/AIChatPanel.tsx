@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import type { ChatMessage } from '../../main/ai/provider';
-import { aiService, type ChatOptions, isSilentAiStreamEnd } from '../services/ai.service';
+import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { encrypt, decrypt } from '../services/crypto';
 import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
 import { createCreativeDecisionLoader } from '../services/creative-decision-loader';
@@ -34,6 +35,7 @@ interface SavedConfig {
   apiKey: string;
   model: string;
   label: string;
+  baseUrl?: string;
 }
 
 interface AIChatPanelProps {
@@ -386,18 +388,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     });
   }, []);
 
-  // Sync to aiService when active config changes
-  useEffect(() => {
-    if (activeConfig && activeProvider) {
-      aiService.configure(
-        activeProvider.name,
-        activeConfig.apiKey,
-        activeConfig.model,
-        activeProvider.baseUrl,
-      );
-    }
-  }, [activeConfigId, activeConfig?.apiKey, activeConfig?.model]);
-
   // 项目切换时只从 SQLite 加载；旧项目的迟到结果会被 loader 丢弃。
   useEffect(() => {
     conversationLoader.invalidate();
@@ -630,7 +620,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             })),
             { role: 'user', content: userMessage.content },
           ];
-          return aiService.chatStream(chatMessages, { model: requestConfig.model, maxTokens: 2048 }, requestProjectId);
+          const requestProvider = PROVIDERS.find(p => p.id === requestConfig.providerId);
+          const config = snapshotAIRequestConfig({
+            name: requestProvider?.name ?? requestConfig.providerId,
+            apiKey: requestConfig.apiKey,
+            model: requestConfig.model,
+            baseUrl: requestConfig.baseUrl || requestProvider?.baseUrl,
+          });
+          return aiService.chatStream(config, chatMessages, { maxTokens: 2048 }, requestProjectId);
         },
         onProgress: content => {
           if (projectIdRef.current === requestProjectId && activeThreadIdRef.current === requestThreadId) {
@@ -708,10 +705,18 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setExtractingMessageId(message.id);
     setError(null);
     try {
+      const requestProvider = PROVIDERS.find(p => p.id === requestConfig.providerId);
+      const config = snapshotAIRequestConfig({
+        name: requestProvider?.name ?? requestConfig.providerId,
+        apiKey: requestConfig.apiKey,
+        model: requestConfig.model,
+        baseUrl: requestConfig.baseUrl || requestProvider?.baseUrl,
+      });
       let extractedText = '';
       for await (const text of aiService.chatStream(
+        config,
         buildDecisionExtractionMessages(message.content),
-        { model: requestConfig.model, maxTokens: 2048, temperature: 0.1 },
+        { maxTokens: 2048, temperature: 0.1 },
         requestProjectId,
       )) {
         extractedText = text;

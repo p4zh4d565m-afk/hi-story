@@ -6,6 +6,7 @@ import WorldEntryCard from './WorldEntryCard';
 import RelationshipGraph from './RelationshipGraph';
 import { htmlToPlainText } from '../services/ai-prompts';
 import { aiService } from '../services/ai.service';
+import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { decrypt } from '../services/crypto';
 
 // ============================================================
@@ -69,7 +70,19 @@ interface SavedConfig {
   apiKey: string;
   model: string;
   label: string;
+  baseUrl?: string;
 }
+
+const PROVIDERS: { id: string; name: string; baseUrl: string }[] = [
+  { id: 'claude', name: 'claude', baseUrl: 'https://api.anthropic.com' },
+  { id: 'openai', name: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { id: 'deepseek', name: 'deepseek', baseUrl: 'https://api.deepseek.com/v1' },
+  { id: 'doubao', name: 'doubao', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'volcengine', name: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3' },
+  { id: 'qwen', name: 'qwen', baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1' },
+  { id: 'zhipu', name: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'moonshot', name: 'moonshot', baseUrl: 'https://api.moonshot.cn/v1' },
+];
 
 const AI_CONFIGS_KEY = 'hi-story-ai-configs';
 
@@ -176,16 +189,16 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
       const configs = await loadConfigsDecrypted();
       if (configs.length === 0) { setStyleError('未配置 AI'); return; }
       const active = configs[0];
-      const baseUrls: Record<string, string> = {
-        claude: 'https://api.anthropic.com', openai: 'https://api.openai.com/v1',
-        deepseek: 'https://api.deepseek.com/v1', doubao: 'https://ark.cn-beijing.volces.com/api/v3',
-        volcengine: 'https://ark.cn-beijing.volces.com/api/v3', qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-        zhipu: 'https://open.bigmodel.cn/api/paas/v4', moonshot: 'https://api.moonshot.cn/v1',
-      };
-      aiService.configure(active.providerId, active.apiKey, active.model, baseUrls[active.providerId] || '');
+      const preset = PROVIDERS.find(p => p.id === active.providerId);
+      const config = snapshotAIRequestConfig({
+        name: preset?.name ?? active.providerId,
+        apiKey: active.apiKey,
+        model: active.model,
+        baseUrl: active.baseUrl || preset?.baseUrl,
+      });
 
       const plainText = htmlToPlainText(chapterContent).slice(0, 4000);
-      const response = await aiService.chat([
+      const response = await aiService.chat(config, [
         { role: 'system', content: STYLE_ANALYSIS_PROMPT },
         { role: 'user', content: `请分析以下章节的写作风格：\n\n${plainText}` },
       ], { temperature: 0.3, maxTokens: 1024 });

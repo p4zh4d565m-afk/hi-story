@@ -1,20 +1,19 @@
-import type { ChatMessage } from '../../main/ai/provider';
+import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
+import { snapshotAIRequestConfig } from './ai/request-config';
 
 export interface AIService {
-  chat: (messages: ChatMessage[], options?: ChatOptions) => Promise<string>;
-  /** 流式对话。projectId 用于取消校验与切项目拒收；不传则无法取消/隔离。 */
-  chatStream: (messages: ChatMessage[], options?: ChatOptions, projectId?: string) => AsyncGenerator<string>;
+  chat: (config: ProviderConfig, messages: ChatMessage[], options?: ChatCallOptions) => Promise<string>;
+  /** 流式对话。projectId 必填，用于取消校验与切项目拒收。 */
+  chatStream: (config: ProviderConfig, messages: ChatMessage[], options: ChatCallOptions | undefined, projectId: string) => AsyncGenerator<string>;
   /** 停止：真正 abort 该项目下所有活跃流，对应 generator 抛「已停止」，不会保存。 */
   cancelActiveStreams: (projectId: string) => Promise<void>;
   /** 作废某项目下所有活跃流：结束对应 generator（抛 AI_IGNORED_MESSAGE），后续 token 不再 yield。切项目用，不 abort 主进程请求。 */
   ignoreProjectStreams: (projectId: string) => void;
   validateKey: (provider: string, apiKey: string, model: string, baseUrl?: string) => Promise<boolean>;
   getModels: (provider: string) => Promise<string[]>;
-  configure: (provider: string, apiKey: string, model?: string, baseUrl?: string) => void;
 }
 
-export interface ChatOptions {
-  model?: string;
+export interface ChatCallOptions {
   maxTokens?: number;
   temperature?: number;
   systemPrompt?: string;
@@ -37,27 +36,10 @@ export function isSilentAiStreamEnd(message: string): boolean {
 }
 
 class AIServiceImpl implements AIService {
-  private currentProvider: string = 'claude';
-  private currentApiKey: string = '';
-  private currentModel: string = 'claude-sonnet-4-6';
-  private currentBaseUrl: string = '';
   private streamBridges = new Map<string, StreamBridge>();
 
-  configure(provider: string, apiKey: string, model?: string, baseUrl?: string) {
-    this.currentProvider = provider;
-    this.currentApiKey = apiKey;
-    if (model) this.currentModel = model;
-    if (baseUrl) this.currentBaseUrl = baseUrl;
-  }
-
-  async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
-    const config: any = {
-      name: this.currentProvider,
-      apiKey: this.currentApiKey,
-      model: options?.model || this.currentModel,
-    };
-    if (this.currentBaseUrl) config.baseUrl = this.currentBaseUrl;
-
+  async chat(inputConfig: ProviderConfig, messages: ChatMessage[], options?: ChatCallOptions): Promise<string> {
+    const config = snapshotAIRequestConfig(inputConfig);
     if (!config.apiKey) {
       throw new Error('请先添加 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
     }
@@ -68,6 +50,25 @@ class AIServiceImpl implements AIService {
   }
 
   /**
+   * 同步外壳：调用瞬间拷贝快照并校验 projectId，再进入内部 async generator。
+   * 不能把快照放到 generator 函数体第一行，否则拿到 generator 后改原 config 会串到 IPC。
+   */
+  chatStream(
+    inputConfig: ProviderConfig,
+    messages: ChatMessage[],
+    options: ChatCallOptions | undefined,
+    projectId: string,
+  ): AsyncGenerator<string> {
+    const config = snapshotAIRequestConfig(inputConfig);
+    const pid = String(projectId ?? '').trim();
+    if (!pid) throw new Error('chatStream 需要 projectId');
+    if (!config.apiKey) {
+      throw new Error('请先添加 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
+    }
+    return this.runChatStream(config, messages, options, pid);
+  }
+
+  /**
    * 真正的 SSE 流式对话
    * 使用主进程的 ai:chatStream IPC + webContents 事件，
    * 每个 token 到达时立即 yield，用户能看到逐字输出的效果。
@@ -75,27 +76,21 @@ class AIServiceImpl implements AIService {
    * 一期起：调用时登记 streamId → projectId 映射；收到事件时若映射被作废（切项目）
    * 或已取消，则不 yield。取消由 cancelStream 唤醒并抛错，避免 for-await 永远挂住。
    */
-  async *chatStream(messages: ChatMessage[], options?: ChatOptions, projectId?: string): AsyncGenerator<string> {
-    const config: any = {
-      name: this.currentProvider,
-      apiKey: this.currentApiKey,
-      model: options?.model || this.currentModel,
-    };
-    if (this.currentBaseUrl) config.baseUrl = this.currentBaseUrl;
-
-    if (!config.apiKey) {
-      throw new Error('请先添加 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
-    }
-
+  private async *runChatStream(
+    config: ProviderConfig,
+    messages: ChatMessage[],
+    options: ChatCallOptions | undefined,
+    projectId: string,
+  ): AsyncGenerator<string> {
     // 调用主进程真正的流式 IPC（会立即返回 streamId）
-    const result = await window.electronAPI.invoke('ai:chatStream', config, messages, options, projectId ?? '') as any;
+    const result = await window.electronAPI.invoke('ai:chatStream', config, messages, options, projectId) as any;
     if (!result.success) {
       throw new Error(result.error || 'AI 请求失败');
     }
 
     const { streamId } = result.data as { streamId: string };
 
-    const bridge: StreamBridge = { projectId: projectId ?? '', ignored: false, cancelled: false, wake: null };
+    const bridge: StreamBridge = { projectId, ignored: false, cancelled: false, wake: null };
     this.streamBridges.set(streamId, bridge);
 
     // 用 Promise 驱动的队列桥接 IPC 事件和 async generator
@@ -162,7 +157,7 @@ class AIServiceImpl implements AIService {
         // 之前有积累文本但还没 yield，现在补一次
         if (Date.now() - lastYieldTime > 30 && fullText) {
           yield fullText;
-          lastYieldTime = now;
+          lastYieldTime = Date.now();
         }
         // 等待下一个事件
         await new Promise<void>((resolve) => { pendingResolve = resolve; });
