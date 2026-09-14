@@ -6,7 +6,7 @@
 >
 > **修订依据：** `docs/superpowers/plans/2026-09-13-p0-provider-planning-preview-review.md` 第七节。本文已按该节默认值改写，**不要再执行旧版 7 个 Task**。
 >
-> **施工进度（2026-09-14）：** P0 三片 + Obsidian 导入分隔已快进合入 `feature/skill-engine`（HEAD `6ff75e1`），未 push。历史交接见 `docs/superpowers/plans/2026-09-13-p0-status.md`。
+> **施工进度（2026-09-14）：** P0 三片 + Obsidian 导入分隔已快进合入 `feature/skill-engine`（代码 `6ff75e1`，文档 `8a622f5`），现已在 `origin/feature/skill-engine`。历史交接见 `docs/superpowers/plans/2026-09-13-p0-status.md`。
 >
 > **执行：** 独立 git worktree + 三片**顺序**实施 + 每片「规格符合性 + 代码质量」双重审查。三片不要并行（都可能改 `AIWritePanel`）。共享 checkout 不写 P0。不 push。任务级 commit 仅在用户已授权「独立 worktree 内按原子片提交」时执行，否则不启动 Subagent-Driven 执行。
 >

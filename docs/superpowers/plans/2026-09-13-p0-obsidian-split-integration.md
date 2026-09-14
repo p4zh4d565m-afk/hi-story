@@ -1,8 +1,8 @@
 # P0 + Obsidian 导入分隔 双线整合（2026-09-13 晚 · 三片完成 · 最终门已过）
 
-> **状态（2026-09-14）：** 已随 P0 快进合入 `feature/skill-engine`（`6ff75e1`），未 push。下文是合入前的整合记录。
+> **状态（2026-09-14）：** 已随 P0 快进合入 `feature/skill-engine`（`6ff75e1` / `8a622f5`），现已在 `origin/feature/skill-engine`。下文是合入前的整合记录。
 >
-> **给下一位开发者 / 用户：** 两条线在 `ObsidianImportPanel.tsx` 正交合并（布局 + commit 前 reserve）。代码已合入 `feature/skill-engine`。P1 仍未授权，不要 push。
+> **给下一位开发者 / 用户：** 两条线在 `ObsidianImportPanel.tsx` 正交合并（布局 + commit 前 reserve）。代码已合入 `feature/skill-engine` 且已在 origin。P1 仍未授权。
 >
 > **合同 / 计划 / 审查：**
 > - `docs/superpowers/specs/2026-09-13-ai-production-current-contract.md`
@@ -13,7 +13,7 @@
 
 ## 0. 一句话状况
 
-P0 三片（Provider / Planning / Preview）**全部提交**；另一位开发者的 Obsidian 导入弹窗纵向分隔**已并入**；两线在 `ObsidianImportPanel.tsx` 的冲突**已手工正交合并**；**整分支最终门已过**。**尚未 push、尚未合回主工作区。** P1 仍未授权。
+P0 三片（Provider / Planning / Preview）**全部提交**；另一位开发者的 Obsidian 导入弹窗纵向分隔**已并入**；两线在 `ObsidianImportPanel.tsx` 的冲突**已手工正交合并**；**整分支最终门已过**。以下为合入前记录。P1 仍未授权。
 
 | 项 | 状态 |
 |---|---|

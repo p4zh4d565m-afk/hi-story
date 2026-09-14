@@ -2,7 +2,7 @@
 
 > **范围：** `81856da..6ff75e1`（Provider / Planning / Preview / Obsidian 分隔 + 两处收口修复）  
 > **性质：** 合入前收口核对。三片未做当时的隔离 fresh review；本文件按片补规格符合性与代码质量结论，并记录已接受偏差。  
-> **合入：** 已快进到 `feature/skill-engine`，**未 push**。
+> **合入：** 已快进到 `feature/skill-engine`（含 Important 收口 `9e8728b` / `6ff75e1` 与文档 `8a622f5`）。合入当时未 push；现已与 `origin/feature/skill-engine` 对齐。
 
 ## 总评
 

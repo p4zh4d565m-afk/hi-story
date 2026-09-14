@@ -4,7 +4,7 @@
 >
 > **状态：** P0 短计划已按 `docs/superpowers/plans/2026-09-13-p0-provider-planning-preview-review.md` 第七节修订，**按三片顺序施工**。P1 及以后未批准，禁止写迁移、禁止按讨论稿修改 5～10 编码、禁止创建叙事时间 Spec。
 >
-> **施工进度（2026-09-14）：** P0 三片 + Obsidian 导入分隔已快进合入 `feature/skill-engine`（`81856da..6ff75e1`），**未 push**。进度说明见 `docs/superpowers/plans/2026-09-13-p0-status.md`。P1 仍未批准。
+> **施工进度（2026-09-14）：** P0 三片 + Obsidian 导入分隔已快进合入 `feature/skill-engine`（`81856da..6ff75e1`，文档 `8a622f5`），现已在 `origin/feature/skill-engine`。进度说明见 `docs/superpowers/plans/2026-09-13-p0-status.md`。P1 仍未批准。
 
 ## 已批准：P0（无数据库迁移）
 
