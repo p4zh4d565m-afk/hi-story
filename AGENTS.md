@@ -8,13 +8,13 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 npm run dev              # Run dev (tsc main + electron + vite renderer)
 npm run build            # Production build (main + renderer)
 npm run start            # Rebuild native modules then launch electron
-npm run test             # Run vitest tests
+npm run test             # Electron-as-Node vitest（--pool=forks）
 npm run electron:rebuild # Rebuild better-sqlite3 for Electron's Node version
 ```
 
 **`npx vite build`** 用于验证前端打包，不执行完整 TypeScript 类型检查；主进程与 preload 使用 `npm run build:main` 验证。`tsconfig.main.json` 必须包含 `src/preload/**/*`，否则桥接代码不会更新。
 
-Windows 下若 `npm run test` 的 Unix `rm` 不可用，或 Vitest 遇到 better-sqlite3 的 Node/Electron ABI 不匹配，可临时设置 `ELECTRON_RUN_AS_NODE=1`，用 `node_modules/electron/dist/electron.exe node_modules/vitest/vitest.mjs run` 执行测试，结束后恢复环境变量，无需覆盖应用使用的原生模块。
+`npm run test` 已用 Electron-as-Node 跑 vitest，并强制 `--pool=forks`。Windows 上默认 threads 池会让 better-sqlite3 直接 `0xC0000409`。模块必须是 Electron ABI 130，不要用系统 Node 覆盖。worktree 若缺 `electron.exe`，先 `node node_modules/electron/install.js`；sqlite 可在 `node_modules/better-sqlite3` 下 `npx prebuild-install --runtime electron --target 33.4.11`。
 
 ## Architecture
 

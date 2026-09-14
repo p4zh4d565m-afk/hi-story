@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 npm run dev              # Run dev (tsc main + electron + vite renderer)
 npm run build            # Production build (main + renderer)
 npm run start            # Rebuild native modules then launch electron
-npm run test             # Run vitest tests
+npm run test             # Electron-as-Node vitest（--pool=forks）
 npm run electron:rebuild # Rebuild better-sqlite3 for Electron's Node version
 ```
 
@@ -72,7 +72,7 @@ Every IPC handler wraps its repository call in try/catch and returns `IpcResult<
 
 ### Native module: better-sqlite3
 
-Native Node module compiled against Electron's V8. After `npm install`, run `npm run electron:rebuild`. If the app crashes with `NODE_MODULE_VERSION` mismatch, rebuild is needed.
+Native Node module compiled against Electron's V8（ABI 130）。After `npm install`, run `npm run electron:rebuild`，或在 `node_modules/better-sqlite3` 下 `npx prebuild-install --runtime electron --target 33.4.11`。If the app crashes with `NODE_MODULE_VERSION` mismatch, rebuild is needed. `npm run test` 走 Electron-as-Node 且强制 `--pool=forks`：Windows 上默认 threads 会把 sqlite 打成 `0xC0000409`。worktree 若缺 `dist/electron.exe`，先 `node node_modules/electron/install.js`。
 
 ### TipTap editor
 
