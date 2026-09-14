@@ -337,7 +337,7 @@ npx vite build
 - `workspace-p2.test.ts` 6/6（含 `splitPanelIds` 纯函数锚点）；`workspace-p0` 12/12；`theme` 4/4；写作 UI 12/12；`npx vite build` 通过
 - 主体 `0e4e125`，手测接线修复 `30c08f1`，文档 `b3fb979`
 - 手测：拖条、侧栏 24px 轨并恢复、刷新比例、空 bottom 拖不出空白带
-- **复核建议第 2 条已落地**：`splitPanelIds`（`horizontalPanelIds`/`centerPanelIds`/`verticalPanelIds`）抽成纯函数并加 3 条单测，锁「有/无右栏、有/无 AI」组合。关 AI/关右栏/1000 宽顶栏三项手测**待补**。
+- **复核建议第 2 条已落地**：`splitPanelIds`（`horizontalPanelIds`/`centerPanelIds`/`verticalPanelIds`）抽成纯函数并加 3 条单测，锁「有/无右栏、有/无 AI」组合。关 AI/关右栏/1000 宽顶栏三项手测**已补测通过**（2026-09-12）。
 
 **P2 已落地。**
 
@@ -347,8 +347,8 @@ npx vite build
 
 1. **先写 P3 计划再编码**，不要接着拖放。
 2. 把 `panelIds` 组合抽纯函数补进 `workspace-p2.test.ts`，锁住 `30c08f1` 的刷新丢比例。
-3. P3 才给 bottom 挂 Separator / `minSize={120}`；无面板时不要让 `BOTTOM_MIN_PX` 生效。`bottomRef` 目前从未 `collapse()`。
-4. 手测若还没做：关 AI、关右栏、约 1000 宽顶栏仍可点——补测或补记录。
+3. P3 才给 bottom 挂 Separator / `minSize={120}`；无面板时不要让 `BOTTOM_MIN_PX` 生效。`bottomRef` 目前从未 `collapse()`。**已写入 P3 计划约束与定案，编码时按那份做。**
+4. 手测已补：关 AI、关右栏、约 1000 宽顶栏仍可点。
 5. P3 仍以 `node tests/ui/run-writing-workspace.cjs` 为门。
 
 ---
