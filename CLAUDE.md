@@ -62,6 +62,10 @@ The save mechanism has been hardened against data-loss race conditions:
 
 4. **`handleSaveChapter` in App.tsx checks `res.success`** before updating local state — silent DB write failures no longer masquerade as successful saves.
 
+### Planning committed snapshot
+
+AI 对话只读 App 持有的 committed `PlanningIdea`，不得把策划页未保存草稿送进模型。`createPlanningLoader`：仅 `success:true` 才 `onApply`（`data===null` 是合法空策划）；失败走 `onError`，同项目不得清空已有快照。普通保存用 `db:planning:save` 返回值立刻 `onPlanningCommitted`。触及策划的 Obsidian 导入在 commit IPC 前必须调用必填回调 `onPlanningCommitStarted` → `reservePlanningWrite`。写库仲裁是进程内 `Map<projectId, number>` epoch，invoke 前同步比较+递增，失败不回滚；`saved` 回执还须 `isPlanningWriteCurrent` 才更新 UI。P0 不加 DB revision。
+
 ### IPC contract
 
 Every IPC handler wraps its repository call in try/catch and returns `IpcResult<T>`. The renderer **must check `res.success`** before using the data.
@@ -125,6 +129,8 @@ resources/
 - **工作区 P1 主题（2026-09-12）** — CSS 变量令牌 + 顶栏浅色/深色切换（`hi-story-theme`）；Dark 外观与旧色板一致。写章/审稿/润色灰底与按钮显式白字未扫。
 - **工作区 P2 分隔条与折叠（2026-09-12）** — 手写三条横向 splitter 换成 `react-resizable-panels` v4（`Group`/`Panel`/`Separator`/`useDefaultLayout`/`usePanelRef`）；仅侧栏折叠成 24px 边轨，AI/右栏关闭仍卸载；加纵向空 bottom 槽占位（P2 不渲染分隔条，P3 才放面板）。比例用 `useDefaultLayout` 持久化，P0 的 `hi-story-panel-widths` 只作首次种子不双写。核心在 `src/renderer/workspace/split-flags.ts`。单测 `tests/unit/workspace-p2.test.ts` 3/3，写作 UI 12/12。**手测修复两 bug（`30c08f1`）**：侧栏点 ☰ 未真 collapse 需双向同步 `expand/collapse`；条件渲染面板需给 `useDefaultLayout` 传 `panelIds` 否则刷新回默认。几何无 Electron E2E，靠手测，无自动回归锁。**第二人复核：** 先写 P3 计划再编码；`panelIds` 应抽纯函数单测；空 bottom 的 `minSize={120}` 是 P3 雷。详见 Spec「P2 收口第二人复核」。
 - **工作区 P3 拖放进槽（2026-09-13 已落地）** — `WorkspaceLayoutV1` 管大纲/素材/伏笔/灵感/参考/起名入 right + 侧栏归属；**写章/审稿/润色保持浮动窗**（产品实测翻案，走布尔 + `display:none` 保活）；AI 对话不迁。拖拽 HTML5 drag（SlotTabs 标签 + 槽 onDrop + 拖拽期空槽热区）；空 bottom 卸载（有面板才挂 Separator）；顶栏 `openOrFocus` 不再把已拖走面板拽回默认槽；**面板归属不持久化，重启清空**（只保留槽比例）。删 WritingGoal，bottom 有面板时隐藏底部字数/状态栏。**技术债**：侧栏 `layout.slots.left` 未消费；拖拽无 Electron E2E。核心 `src/renderer/workspace/layout-model.ts` + `useWorkspaceLayout.ts`。单测 `workspace-layout` 17/17、`workspace-p2` 6/6，全量 373，写作 UI 12/12。
+- **Obsidian 导入弹窗纵向分隔（2026-09-13 已落地）** — 候选/详情与导入方案之间用现有 `react-resizable-panels` 纵向 Group，默认 65/35、不写 localStorage；「确认导入」钉在下半底部。扫描中/失败不挂空分隔条。核心 `obsidian-import-split.ts`。与长篇生产 P0 同分支合入。拖动几何仍靠手测。
+- **长篇生产 P0（2026-09-14 已合入 `feature/skill-engine`，未 push）** — 请求级 Provider 快照、策划 committed 快照 + 写库 epoch、写章预览分段文本节点（零 innerHTML）。含 Obsidian 导入分隔。HEAD `6ff75e1`。合同 `docs/superpowers/specs/2026-09-13-ai-production-current-contract.md`。已接受偏差：无 `planningLoadError` UI（失败只 `console.error`）。P1 未授权；讨论稿第 1–11 节仍禁止编码。
 
 ## Git 远程仓库
 
