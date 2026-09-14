@@ -80,6 +80,37 @@ describe('buildNarrativeAsOfContext', () => {
     ).toThrow();
   });
 
+  it('同一事件不在状态事实与事件两栏重复出现', () => {
+    const ctx = buildNarrativeAsOfContext({
+      taskType: 'chat',
+      hasActiveChapter: false,
+      targetChapterId: null,
+      chapters,
+      aliases: [],
+      transitions: [],
+      facts: [{
+        id: 'e1',
+        factType: 'event',
+        chapterId: 'c1',
+        description: '林岚在废站捡到铜钥',
+      }, {
+        id: 's1',
+        factType: 'location',
+        chapterId: 'c1',
+        stateKey: 'location|林岚|位于',
+        description: '林岚还在废站',
+      }],
+      hooks: [],
+      debts: [],
+      knowledge: [],
+    });
+    expect(ctx.facts.map((f) => f.id)).toEqual(['s1']);
+    expect(ctx.events.map((e) => e.id)).toEqual(['e1']);
+    expect((ctx.textBlock.match(/林岚在废站捡到铜钥/g) ?? []).length).toBe(1);
+    expect(ctx.textBlock).toContain('状态事实：');
+    expect(ctx.textBlock).toContain('事件：');
+  });
+
   it('textBlock 输出事实/钩子/知识的业务内容而非仅 id', () => {
     const ctx = buildNarrativeAsOfContext({
       taskType: 'chat',

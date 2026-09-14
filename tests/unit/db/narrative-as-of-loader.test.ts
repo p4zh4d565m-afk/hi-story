@@ -3,7 +3,9 @@ import Database from 'better-sqlite3';
 import { runMigrations } from '../../../src/main/db/migrations';
 import { ChapterRepo } from '../../../src/main/db/repositories/chapter.repo';
 import { StoryFactsRepo } from '../../../src/main/db/repositories/story-facts.repo';
+import { NarrativeTransitionRepo, makeSnapshot } from '../../../src/main/db/repositories/narrative-transition.repo';
 import { loadNarrativeAsOfFromDb } from '../../../src/main/ai/narrative-as-of-loader';
+import { deriveDebtOverdue } from '../../../src/main/ai/narrative-state-reducer';
 
 function seedProject(db: Database.Database) {
   const now = new Date().toISOString();
@@ -100,5 +102,174 @@ describe('loadNarrativeAsOfFromDb', () => {
     });
     expect(planning.mode).toBe('planning_only');
     expect(planning.textBlock).toContain('不注入运行时事实');
+  });
+
+  it('P1-1 墓碑来源章的 hook 即使后续有 resolved 转换也不进入 as-of', () => {
+    const chapters = new ChapterRepo(db);
+    const tomb = chapters.create({ projectId: 'p1', title: '墓碑章', content: '<p>旧</p>' }).data!;
+    const later = chapters.create({ projectId: 'p1', title: '后章', content: '<p>后</p>' }).data!;
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO narrative_hooks (
+        id, project_id, chapter_id, hook_type, description, intensity, status,
+        resolved_in_chapter_id, created_at, updated_at, subject
+      ) VALUES ('h-tomb','p1',?,'mystery','应被排除',4,'resolved',?,?,?,'车票')
+    `).run(tomb.id, later.id, now, now);
+    const transitions = new NarrativeTransitionRepo(db);
+    db.transaction(() => {
+      const created = transitions.append({
+        projectId: 'p1',
+        targetTable: 'narrative_hooks',
+        targetId: 'h-tomb',
+        kind: 'created',
+        atChapterId: tomb.id,
+        afterSnapshot: makeSnapshot({ status: 'open', chapterId: tomb.id, description: '应被排除' }),
+      });
+      if (!created.success) throw new Error(created.error);
+      const resolved = transitions.append({
+        projectId: 'p1',
+        targetTable: 'narrative_hooks',
+        targetId: 'h-tomb',
+        kind: 'resolved',
+        atChapterId: later.id,
+        afterSnapshot: makeSnapshot({
+          status: 'resolved',
+          chapterId: tomb.id,
+          description: '应被排除',
+          resolvedInChapterId: later.id,
+        }),
+      });
+      if (!resolved.success) throw new Error(resolved.error);
+    })();
+    expect(chapters.remove(tomb.id).success).toBe(true);
+
+    const ctx = loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'chat',
+      targetChapterId: later.id,
+      hasActiveChapter: true,
+    });
+    expect(ctx.mode).toBe('through_target');
+    expect(ctx.hooks.map((h) => h.id)).not.toContain('h-tomb');
+    expect(ctx.textBlock).not.toContain('应被排除');
+  });
+
+  it('P1-2 快照漏字段时 as-of 不得泄漏当前投影的未来描述', () => {
+    const chapters = new ChapterRepo(db);
+    const c1 = chapters.create({ projectId: 'p1', title: '五十', content: '<p>1</p>' }).data!;
+    const c2 = chapters.create({ projectId: 'p1', title: '八十', content: '<p>2</p>' }).data!;
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO narrative_hooks (
+        id, project_id, chapter_id, hook_type, description, intensity, status,
+        created_at, updated_at, subject
+      ) VALUES ('h1','p1',?,'mystery','未来描述',4,'resolved',?,?,'车票')
+    `).run(c1.id, now, now);
+    const transitions = new NarrativeTransitionRepo(db);
+    db.transaction(() => {
+      const created = transitions.append({
+        projectId: 'p1',
+        targetTable: 'narrative_hooks',
+        targetId: 'h1',
+        kind: 'created',
+        atChapterId: c1.id,
+        afterSnapshot: makeSnapshot({ status: 'open', chapterId: c1.id }),
+      });
+      if (!created.success) throw new Error(created.error);
+      const resolved = transitions.append({
+        projectId: 'p1',
+        targetTable: 'narrative_hooks',
+        targetId: 'h1',
+        kind: 'resolved',
+        atChapterId: c2.id,
+        afterSnapshot: makeSnapshot({ status: 'resolved', description: '未来描述', chapterId: c1.id }),
+      });
+      if (!resolved.success) throw new Error(resolved.error);
+    })();
+
+    const ctx = loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'chat',
+      targetChapterId: c1.id,
+      hasActiveChapter: true,
+    });
+    expect(ctx.mode).toBe('through_target');
+    expect(ctx.hooks).toHaveLength(1);
+    expect(ctx.hooks[0]!.status).toBe('open');
+    expect(ctx.hooks[0]!.description).toBeUndefined();
+    expect(ctx.textBlock).not.toContain('未来描述');
+  });
+
+  it('P1-3 project_latest 无转换时仍显示旧 hook 投影', () => {
+    const chapters = new ChapterRepo(db);
+    const ch = chapters.create({ projectId: 'p1', title: '一', content: '<p>1</p>' }).data!;
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO narrative_hooks (
+        id, project_id, chapter_id, hook_type, description, intensity, status,
+        created_at, updated_at, subject
+      ) VALUES ('h-legacy','p1',?,'mystery','旧投影',4,'open',?,?,'车票')
+    `).run(ch.id, now, now);
+
+    const ctx = loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'chat',
+      targetChapterId: null,
+      hasActiveChapter: false,
+    });
+    expect(ctx.mode).toBe('project_latest');
+    expect(ctx.hooks.map((h) => h.id)).toEqual(['h-legacy']);
+    expect(ctx.textBlock).toContain('旧投影');
+  });
+
+  it('P1-4 逾期派生对不存在/墓碑目标章显式抛错', () => {
+    const chapters = new ChapterRepo(db);
+    const live = chapters.create({ projectId: 'p1', title: '活章', content: '<p>1</p>' }).data!;
+    const tomb = chapters.create({ projectId: 'p1', title: '墓碑', content: '<p>2</p>' }).data!;
+    expect(chapters.remove(tomb.id).success).toBe(true);
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO narrative_debts (
+        id, project_id, chapter_id, description, debt_type, promised_by_chapter, status,
+        created_at, updated_at, subject
+      ) VALUES ('d1','p1',?,'揭晓站长','reveal',3,'unpaid',?,?,'站长')
+    `).run(live.id, now, now);
+
+    const ctx = loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'chat',
+      targetChapterId: live.id,
+      hasActiveChapter: true,
+    });
+    const debt = ctx.debts[0]!;
+    const positions = db.prepare(
+      `SELECT id, project_id, sort_order, deleted_sort_order, deleted_at FROM chapters WHERE project_id = 'p1'`,
+    ).all() as Array<{
+      id: string;
+      project_id: string;
+      sort_order: number | null;
+      deleted_sort_order: number | null;
+      deleted_at: string | null;
+    }>;
+    const chapterPositions = positions.map((r) => ({
+      id: r.id,
+      projectId: r.project_id,
+      sortOrder: r.deleted_at ? null : r.sort_order,
+      deletedSortOrder: r.deleted_sort_order,
+    }));
+    expect(() =>
+      deriveDebtOverdue(debt, chapterPositions, [], { id: 'missing', projectId: 'p1', sortOrder: 9, deletedSortOrder: null }),
+    ).toThrow();
+    expect(() =>
+      deriveDebtOverdue(
+        { ...debt, dueChapterId: tomb.id },
+        chapterPositions,
+        [],
+        chapterPositions.find((c) => c.id === live.id)!,
+      ),
+    ).not.toThrow();
+    expect(() =>
+      deriveDebtOverdue(debt, chapterPositions, [], chapterPositions.find((c) => c.id === tomb.id)!),
+    ).toThrow();
   });
 });

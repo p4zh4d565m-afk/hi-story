@@ -212,7 +212,7 @@ describe('narrative-state-reducer', () => {
       { id: 'f1', factType: 'event', chapterId: 'tomb', stateKey: 'e1' },
       { id: 'f2', factType: 'event', chapterId: 'alive', stateKey: 'e2' },
     ];
-    const r = reduceStateFactsAsOf(facts, [], chapters, [], ch('alive', 0), 'through_target');
+    const r = accumulateEventsAsOf(facts, [], chapters, [], ch('alive', 0), 'through_target');
     expect(r.data?.map((f) => f.id)).toEqual(['f2']);
     expect(facts[0].chapterId).toBe('tomb');
   });
@@ -257,6 +257,18 @@ describe('narrative-state-reducer', () => {
     const r = reduceStateFactsAsOf(facts, [], baseChapters, [], ch('ch70', 2), 'before_target');
     expect(r.data).toHaveLength(1);
     expect(r.data![0].id).toBe('s2');
+  });
+
+  it('状态折叠不含 event：累计只走 accumulateEventsAsOf', () => {
+    const facts: FactInput[] = [
+      { id: 's1', factType: 'location', chapterId: 'ch50', stateKey: 'loc|林岚|位于', object: '废站' },
+      { id: 'e1', factType: 'event', chapterId: 'ch50', description: '林岚捡到铜钥' },
+    ];
+    const states = reduceStateFactsAsOf(facts, [], baseChapters, [], ch('ch60', 1), 'before_target');
+    expect(states.data?.map((f) => f.id)).toEqual(['s1']);
+    expect(states.data?.some((f) => f.factType === 'event')).toBe(false);
+    const events = accumulateEventsAsOf(facts, [], baseChapters, [], ch('ch60', 1), 'before_target');
+    expect(events.data?.map((f) => f.id)).toEqual(['e1']);
   });
 
   // —— T17 ——
@@ -573,7 +585,7 @@ describe('narrative-state-reducer', () => {
       const facts: FactInput[] = [
         { id: 'f-m', factType: 'event', chapterId: 'merged', stateKey: 'e' },
       ];
-      const r = reduceStateFactsAsOf(facts, all, chapters, aliases, ch('ch60', 2), 'through_target');
+      const r = accumulateEventsAsOf(facts, all, chapters, aliases, ch('ch60', 2), 'through_target');
       expect(r.data?.some((f) => f.id === 'f-m')).toBe(true);
       expect(all).toEqual(frozen);
     });

@@ -52,19 +52,32 @@ describe('Migration v21（叙事时间接入）', () => {
   });
 
   it('旧 fact_type=hook 在升级后 archived=1', () => {
-    // 模拟：先插项目与 hook 事实（迁移已跑，直接插）
+    const db2 = new Database(':memory:');
+    db2.pragma('foreign_keys = ON');
+    runMigrations(db2, 20);
+
     const now = new Date().toISOString();
-    db.prepare(
+    db2.prepare(
       `INSERT INTO projects (id, name, type_tags, style, summary, created_at, updated_at) VALUES ('p1','t','[]','','',?,?)`,
     ).run(now, now);
-    db.prepare(
-      `INSERT INTO story_facts (id, project_id, fact_type, subject, predicate, object, description, status, archived, created_at)
-       VALUES ('f1','p1','hook','s','p','o','d','active',0,?)`,
+    db2.prepare(
+      `INSERT INTO story_facts (id, project_id, fact_type, subject, predicate, object, description, status, created_at)
+       VALUES ('f-hook','p1','hook','s','p','o','旧钩子事实','active',?)`,
     ).run(now);
-    // 再跑归档逻辑（迁移已对空表跑过；这里手动复现 UPDATE）
-    db.prepare(`UPDATE story_facts SET archived = 1 WHERE fact_type = 'hook'`).run();
-    const row = db.prepare(`SELECT archived FROM story_facts WHERE id = 'f1'`).get() as { archived: number };
+    const v20cols = new Set(
+      (db2.prepare(`PRAGMA table_info(story_facts)`).all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    expect(v20cols.has('archived')).toBe(false);
+
+    runMigrations(db2);
+
+    const row = db2.prepare(`SELECT archived, fact_type FROM story_facts WHERE id = 'f-hook'`).get() as {
+      archived: number;
+      fact_type: string;
+    };
+    expect(row.fact_type).toBe('hook');
     expect(row.archived).toBe(1);
+    db2.close();
   });
 
   it('backfillChapterOutlineIds 为缺 id 的章纲补 UUID', () => {
@@ -149,22 +162,38 @@ describe('Migration v21（叙事时间接入）', () => {
   it('迁移失败时版本不登记（原子回滚）', () => {
     const db2 = new Database(':memory:');
     db2.pragma('foreign_keys = ON');
-    // 只跑到 v20 的简易路径：完整 runMigrations 到 21 后删掉 21 再注入坏 after
-    runMigrations(db2);
-    db2.prepare('DELETE FROM _migrations WHERE version = 21').run();
-    // 破坏：删除 chapters 再尝试手工模拟失败事务
-    let failed = false;
-    try {
-      db2.transaction(() => {
-        db2.exec(`ALTER TABLE chapters ADD COLUMN deleted_at TEXT`); // 已存在会失败
-        db2.prepare('INSERT INTO _migrations (version) VALUES (21)').run();
-      })();
-    } catch {
-      failed = true;
-    }
-    expect(failed).toBe(true);
+    runMigrations(db2, 20);
+
+    const now = new Date().toISOString();
+    db2.prepare(
+      `INSERT INTO projects (id, name, type_tags, style, summary, created_at, updated_at) VALUES ('p1','t','[]','','',?,?)`,
+    ).run(now, now);
+    db2.prepare(
+      `INSERT INTO story_facts (id, project_id, fact_type, subject, predicate, object, description, status, created_at)
+       VALUES ('f-hook','p1','hook','s','p','o','旧钩子事实','active',?)`,
+    ).run(now);
+    db2.exec(`
+      CREATE TRIGGER fail_v21_midway BEFORE UPDATE ON story_facts
+      BEGIN SELECT RAISE(ABORT, 'injected v21 fail'); END;
+    `);
+
+    expect(() => runMigrations(db2)).toThrow(/injected v21 fail/);
+
     const v = db2.prepare('SELECT MAX(version) as v FROM _migrations').get() as { v: number };
     expect(v.v).toBe(20);
+    const tables = db2.prepare(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name = 'narrative_transitions'`,
+    ).all();
+    expect(tables).toEqual([]);
+    const cols = new Set(
+      (db2.prepare(`PRAGMA table_info(story_facts)`).all() as Array<{ name: string }>).map((c) => c.name),
+    );
+    expect(cols.has('archived')).toBe(false);
+    const hook = db2.prepare(`SELECT id, fact_type FROM story_facts WHERE id = 'f-hook'`).get() as {
+      id: string;
+      fact_type: string;
+    };
+    expect(hook.fact_type).toBe('hook');
     db2.close();
   });
 });

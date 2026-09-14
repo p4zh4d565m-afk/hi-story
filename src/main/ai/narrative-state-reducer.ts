@@ -346,9 +346,8 @@ export function reduceStateFactsAsOf(
     recordInScope(f.chapterId, chapters, aliases, target, mode),
   );
 
-  // 状态型：同 stateKey 取最后一条（按章节故事位置）
+  // 状态型：同 stateKey 取最后一条。event 只走 accumulateEventsAsOf，避免 Context 双栏重复。
   const stateTypes = new Set(['location', 'possession', 'relationship', 'emotional_state']);
-  const events = inScope.filter((f) => !stateTypes.has(f.factType));
   const states = inScope.filter((f) => stateTypes.has(f.factType));
 
   const byKey = new Map<string, FactInput>();
@@ -362,11 +361,8 @@ export function reduceStateFactsAsOf(
     byKey.set(key, f);
   }
 
-  // 事件在 reduceStateFactsAsOf 中也按「最后」不累计——累计走 accumulateEventsAsOf
-  // 但 T4b/T10 用 reduceStateFactsAsOf 测 event 可见性，因此事件全部保留
-  const result = [...byKey.values(), ...events];
   void transitions;
-  return { data: result, historyWarnings: emptyWarnings() };
+  return { data: [...byKey.values()], historyWarnings: emptyWarnings() };
 }
 
 export function accumulateEventsAsOf(
