@@ -18,6 +18,7 @@ import {
   reduceHookAsOf,
   reduceDebtAsOf,
   reduceKnowledgeAsOf,
+  deriveDebtOverdue,
   storyPositionOf,
 } from './narrative-state-reducer';
 
@@ -88,7 +89,9 @@ export function buildNarrativeAsOfContext(req: NarrativeAsOfRequest): NarrativeA
   for (const d of req.debts) {
     const r = reduceDebtAsOf(d, req.transitions, req.chapters, req.aliases, target, mode);
     warnings.push(...r.historyWarnings);
-    if (r.data) debts.push(r.data);
+    if (!r.data) continue;
+    const overdue = deriveDebtOverdue(r.data, req.chapters, req.aliases, target);
+    debts.push(overdue ? { ...r.data, status: 'overdue' } : r.data);
   }
 
   const knowledge: KnowledgeInput[] = [];

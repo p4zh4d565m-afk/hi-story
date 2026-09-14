@@ -5,7 +5,6 @@ import { ChapterRepo } from '../../../src/main/db/repositories/chapter.repo';
 import { StoryFactsRepo } from '../../../src/main/db/repositories/story-facts.repo';
 import { NarrativeTransitionRepo, makeSnapshot } from '../../../src/main/db/repositories/narrative-transition.repo';
 import { loadNarrativeAsOfFromDb } from '../../../src/main/ai/narrative-as-of-loader';
-import { deriveDebtOverdue } from '../../../src/main/ai/narrative-state-reducer';
 
 function seedProject(db: Database.Database) {
   const now = new Date().toISOString();
@@ -222,54 +221,70 @@ describe('loadNarrativeAsOfFromDb', () => {
     expect(ctx.textBlock).toContain('旧投影');
   });
 
-  it('P1-4 逾期派生对不存在/墓碑目标章显式抛错', () => {
+  it('P1-4 写章/对话对缺失或墓碑目标章显式抛错', () => {
     const chapters = new ChapterRepo(db);
     const live = chapters.create({ projectId: 'p1', title: '活章', content: '<p>1</p>' }).data!;
     const tomb = chapters.create({ projectId: 'p1', title: '墓碑', content: '<p>2</p>' }).data!;
     expect(chapters.remove(tomb.id).success).toBe(true);
+
+    expect(() => loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'write',
+      targetChapterId: 'missing',
+      hasActiveChapter: true,
+    })).toThrow();
+    expect(() => loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'chat',
+      targetChapterId: tomb.id,
+      hasActiveChapter: true,
+    })).toThrow();
+    expect(() => loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'write',
+      targetChapterId: live.id,
+      hasActiveChapter: true,
+    })).not.toThrow();
+  });
+
+  it('as-of 越过期限章后把 unpaid 债务派生为 overdue', () => {
+    const chapters = new ChapterRepo(db);
+    const c1 = chapters.create({ projectId: 'p1', title: '一', content: '<p>1</p>' }).data!;
+    const c2 = chapters.create({ projectId: 'p1', title: '二', content: '<p>2</p>' }).data!;
     const now = new Date().toISOString();
     db.prepare(`
       INSERT INTO narrative_debts (
-        id, project_id, chapter_id, description, debt_type, promised_by_chapter, status,
+        id, project_id, chapter_id, description, debt_type, status,
         created_at, updated_at, subject
-      ) VALUES ('d1','p1',?,'揭晓站长','reveal',3,'unpaid',?,?,'站长')
-    `).run(live.id, now, now);
+      ) VALUES ('d-due','p1',?,'揭晓站长身份','reveal','unpaid',?,?,'站长')
+    `).run(c1.id, now, now);
+    const transitions = new NarrativeTransitionRepo(db);
+    db.transaction(() => {
+      const created = transitions.append({
+        projectId: 'p1',
+        targetTable: 'narrative_debts',
+        targetId: 'd-due',
+        kind: 'created',
+        atChapterId: c1.id,
+        afterSnapshot: makeSnapshot({
+          status: 'unpaid',
+          chapterId: c1.id,
+          description: '揭晓站长身份',
+          dueChapterId: c1.id,
+        }),
+      });
+      if (!created.success) throw new Error(created.error);
+    })();
 
     const ctx = loadNarrativeAsOfFromDb(db, {
       projectId: 'p1',
       taskType: 'chat',
-      targetChapterId: live.id,
+      targetChapterId: c2.id,
       hasActiveChapter: true,
     });
-    const debt = ctx.debts[0]!;
-    const positions = db.prepare(
-      `SELECT id, project_id, sort_order, deleted_sort_order, deleted_at FROM chapters WHERE project_id = 'p1'`,
-    ).all() as Array<{
-      id: string;
-      project_id: string;
-      sort_order: number | null;
-      deleted_sort_order: number | null;
-      deleted_at: string | null;
-    }>;
-    const chapterPositions = positions.map((r) => ({
-      id: r.id,
-      projectId: r.project_id,
-      sortOrder: r.deleted_at ? null : r.sort_order,
-      deletedSortOrder: r.deleted_sort_order,
-    }));
-    expect(() =>
-      deriveDebtOverdue(debt, chapterPositions, [], { id: 'missing', projectId: 'p1', sortOrder: 9, deletedSortOrder: null }),
-    ).toThrow();
-    expect(() =>
-      deriveDebtOverdue(
-        { ...debt, dueChapterId: tomb.id },
-        chapterPositions,
-        [],
-        chapterPositions.find((c) => c.id === live.id)!,
-      ),
-    ).not.toThrow();
-    expect(() =>
-      deriveDebtOverdue(debt, chapterPositions, [], chapterPositions.find((c) => c.id === tomb.id)!),
-    ).toThrow();
+    expect(ctx.debts).toHaveLength(1);
+    expect(ctx.debts[0]!.status).toBe('overdue');
+    expect(ctx.textBlock).toContain('overdue');
+    expect(ctx.textBlock).toContain('揭晓站长身份');
   });
 });
