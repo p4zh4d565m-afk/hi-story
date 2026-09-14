@@ -1,4 +1,5 @@
 import type { Chapter, ChapterOutline, MasterOutline, PlanningIdea, Project, StoryOption, VolumeOutline, VolumeStage, WritingSkill } from '../../types';
+import { assignChapterOutlineIds } from '../../../main/ai/narrative-planning-key';
 
 export function buildStoryOptionsPrompt(
   project: Project,
@@ -346,5 +347,5 @@ export function parseChapterOutlines(raw: string, expectedVolumeIndex?: number):
     }
     previous = chapter.chapterNumber;
   }
-  return parsed.chapters;
+  return assignChapterOutlineIds(parsed.chapters, () => crypto.randomUUID());
 }

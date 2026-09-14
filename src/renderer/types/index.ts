@@ -134,6 +134,8 @@ export interface Chapter {
   sortOrder: number;
   summary: string;           // AI 生成的章节摘要（100-200字）
   planningOutline: ChapterOutline | null; // 创建正文时冻结的章纲快照
+  /** 正文绑定的规划章纲稳定 id（v21）；未绑定时为 null */
+  planningOutlineId?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -557,6 +559,8 @@ export interface VolumeOutline {
 }
 
 export interface ChapterOutline {
+  /** 稳定身份（v21 起持久化；旧数据迁移补齐） */
+  id?: string;
   volumeIndex: number;
   chapterNumber: number;
   title: string;

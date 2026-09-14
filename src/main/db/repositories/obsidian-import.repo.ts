@@ -9,6 +9,7 @@ import { validateObsidianCommitInput } from '../../obsidian/import-validator';
 import { simulateFinalEntityNames, characterIncoming, worldIncoming } from '../../obsidian/entity-name-simulator';
 import { computeFinalVolumes, overlayStages } from '../../obsidian/final-volumes';
 import { computeLayerFinalState } from '../../obsidian/layer-actions';
+import { assignChapterOutlineIds } from '../../ai/narrative-planning-key';
 import type {
   IpcResult, ObsidianCommitInput, ObsidianImportPrepareResult, ObsidianImportTargetState,
   ObsidianImportSummary, ObsidianImportReparseInput, ObsidianImportReparseResult,
@@ -299,7 +300,14 @@ export class ObsidianImportRepo {
       if (r.drafts.volumes.length) volumes.push(...r.drafts.volumes);
       for (const ch of r.drafts.chapters) {
         // 收窄 ImportChapterDraft → ChapterOutline（validateFinalState 已保证 number 非空）
-        chapters.push({ volumeIndex: ch.volumeIndex as number, chapterNumber: ch.chapterNumber as number, title: ch.title, pov: ch.pov, chapterGoal: ch.chapterGoal, openingSituation: ch.openingSituation, centralConflict: ch.centralConflict, keyBeats: ch.keyBeats, reveal: ch.reveal, characterChange: ch.characterChange, emotionalBeat: ch.emotionalBeat, payoff: ch.payoff, endingHook: ch.endingHook });
+        chapters.push({
+          id: ch.id,
+          volumeIndex: ch.volumeIndex as number,
+          chapterNumber: ch.chapterNumber as number,
+          title: ch.title, pov: ch.pov, chapterGoal: ch.chapterGoal, openingSituation: ch.openingSituation,
+          centralConflict: ch.centralConflict, keyBeats: ch.keyBeats, reveal: ch.reveal,
+          characterChange: ch.characterChange, emotionalBeat: ch.emotionalBeat, payoff: ch.payoff, endingHook: ch.endingHook,
+        });
       }
       if (r.drafts.stages.length) stages.push(...r.drafts.stages);
       characters.push(...r.drafts.characters);
@@ -309,7 +317,14 @@ export class ObsidianImportRepo {
     // 策划层（仅当涉及策划时）
     const touchesPlanning = master || volumes.length > 0 || chapters.length > 0 || stages.length > 0 || input.layerChoices.master.action !== 'keep' || input.layerChoices.volumes.action !== 'keep' || input.layerChoices.chapters.action !== 'keep';
     if (touchesPlanning) {
-      summary.planning = this.applyPlanning(projectId, input, master, volumes, chapters, stages);
+      summary.planning = this.applyPlanning(
+        projectId,
+        input,
+        master,
+        volumes,
+        assignChapterOutlineIds(chapters, () => uuidv4()),
+        stages,
+      );
     }
 
     // 人物

@@ -23,6 +23,7 @@ import CharacterEditDialog from './components/CharacterEditDialog';
 import RelationEditDialog from './components/RelationEditDialog';
 import { useProject } from './hooks/useProject';
 import { ContextBuilder } from '../main/ai/context-builder';
+import { findChapterForOutline } from '../main/ai/narrative-planning-key';
 import { decrypt } from './services/crypto';
 import { aiService } from './services/ai.service';
 import type { ProviderConfig } from '../main/ai/provider';
@@ -34,6 +35,7 @@ import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
 import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
 import { createProjectDataLoader } from './services/project-data-loader';
+import { createChapterDeletion, fixActiveChapterId } from './services/chapter-deletion';
 import { createImportedEntitiesRefresher } from './services/imported-entities-refresher';
 import { createObsidianLoader } from './services/obsidian-loader';
 import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './services/ai-runtime-context-loader';
@@ -76,7 +78,8 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 
 const App: React.FC = () => {
   const { projects, activeProject, loading: projectsLoading, creating: creatingProject,
-    setActiveProjectId, isActiveProject, createProject, updateProject, deleteProject } = useProject();
+    setActiveProjectId, isActiveProject, snapshotProjectSelection, isProjectSelectionCurrent,
+    createProject, updateProject, deleteProject } = useProject();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -409,15 +412,26 @@ const App: React.FC = () => {
   useEffect(() => {
     const projectId = activeProject?.id;
     setAiRuntimeContext(null);
-    if (projectId) void aiRuntimeContextLoader.load(projectId);
-    else aiRuntimeContextLoader.invalidate();
-  }, [activeProject?.id, aiRuntimeContextLoader]);
+    if (projectId) {
+      void aiRuntimeContextLoader.load(projectId, {
+        taskType: 'chat',
+        targetChapterId: activeChapter?.id ?? null,
+        hasActiveChapter: !!activeChapter,
+      });
+    } else {
+      aiRuntimeContextLoader.invalidate();
+    }
+  }, [activeProject?.id, activeChapter?.id, aiRuntimeContextLoader]);
 
   const refreshAiRuntimeContext = useCallback(async () => {
     if (!activeProject) return;
-    const status = await aiRuntimeContextLoader.load(activeProject.id);
+    const status = await aiRuntimeContextLoader.load(activeProject.id, {
+      taskType: 'chat',
+      targetChapterId: activeChapter?.id ?? null,
+      hasActiveChapter: !!activeChapter,
+    });
     if (status === 'failed') throw new Error('AI 运行时上下文刷新失败');
-  }, [activeProject, aiRuntimeContextLoader]);
+  }, [activeProject, activeChapter?.id, aiRuntimeContextLoader]);
 
   const refreshObsidian = useCallback(() => {
     if (activeProject) void obsidianLoader.load(activeProject.id);
@@ -487,35 +501,38 @@ const App: React.FC = () => {
     });
   }, [chapters, pushUndo]);
 
+  // 应用完整章节列表：同步修正活动章（当前活动章被删时落到第一章或 null）。
+  // 所有「覆盖 chapters」的入口（删除/撤销/重做）都走这里，避免留下悬空 activeChapterId。
+  const applyChapterList = useCallback((list: Chapter[]) => {
+    setChapters(list);
+    setActiveChapterId(prev => fixActiveChapterId(prev, list));
+  }, []);
+
+  // 章节删除/撤销/重做编排：双层守卫（项目选择 ticket + 同项目操作序号）。
+  const chapterDeletion = useMemo(() => createChapterDeletion({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    snapshotSelection: snapshotProjectSelection,
+    isSelectionCurrent: isProjectSelectionCurrent,
+    applyChapters: applyChapterList,
+    alert,
+  }), [snapshotProjectSelection, isProjectSelectionCurrent, applyChapterList]);
+
   const handleDeleteChapter = useCallback(async (id: string) => {
     const ch = chapters.find(c => c.id === id);
     if (!ch) return;
 
-    // 执行删除
-    const res = await window.electronAPI.invoke('db:chapter:remove', id) as any;
-    if (!res || !res.success) {
-      alert('删除失败：' + (res?.error || '未知错误'));
-      return;
-    }
-    setChapters(prev => prev.filter(ch => ch.id !== id));
-    if (activeChapterId === id) { const r = chapters.filter(ch => ch.id !== id); setActiveChapterId(r[0]?.id ?? null); }
+    // 删除编排在 chapterDeletion 服务里（双层守卫 + 活动章修正），
+    // 这里只负责：DB 删除成功后才入撤销栈（失败已 alert 并 return）。
+    const ok = await chapterDeletion.deleteChapter(ch);
+    if (!ok) return;
 
-    // 推入撤销栈（命令模式）
     pushUndo({
       id: 'undo_' + Date.now(),
       label: `删除章节「${ch.title}」`,
-      undo: async () => {
-        const res = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
-        if (res.success && res.data) {
-          setChapters(prev => [...prev, res.data].sort((a, b) => a.sortOrder - b.sortOrder));
-        }
-      },
-      redo: async () => {
-        await window.electronAPI.invoke('db:chapter:remove', ch.id);
-        setChapters(prev => prev.filter(c => c.id !== ch.id));
-      },
+      undo: chapterDeletion.buildUndo(ch),
+      redo: chapterDeletion.buildRedo(ch),
     });
-  }, [activeChapterId, chapters, pushUndo]);
+  }, [chapters, pushUndo, chapterDeletion]);
 
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
@@ -557,12 +574,13 @@ const App: React.FC = () => {
     if (!activeProject) return;
     setWorkspaceMode('writing');
     if (mode === 'self') {
-      const existing = chapters.find(chapter => chapter.planningOutline?.volumeIndex === outline.volumeIndex && chapter.planningOutline?.chapterNumber === outline.chapterNumber);
+      const existing = findChapterForOutline(chapters, outline);
       if (existing) { setActiveChapterId(existing.id); return; }
       const res = await window.electronAPI.invoke('db:chapter:create', {
         projectId: activeProject.id,
         title: `第${outline.chapterNumber}章 ${outline.title}`,
         planningOutline: outline,
+        planningOutlineId: outline.id ?? null,
       }) as any;
       if (res?.success && res.data) { setChapters(previous => [...previous, res.data]); setActiveChapterId(res.data.id); }
       return;
@@ -1125,6 +1143,9 @@ const App: React.FC = () => {
       ? planningSnapshot.planning
       : null;
     const planningContext = formatPlanningAuthorityContext(planning, activeChapter);
+    const asOfText = aiRuntimeContext?.projectId === activeProject.id
+      ? aiRuntimeContext.narrativeAsOfText
+      : undefined;
     const messages = ContextBuilder.build({
       project: activeProject,
       currentChapter: activeChapter ?? undefined,
@@ -1132,15 +1153,22 @@ const App: React.FC = () => {
       worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
       outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
       obsidianDocuments: obsidianDocuments.length > 0 ? obsidianDocuments : undefined,
-      storyFacts: aiRuntimeContext?.projectId === activeProject.id
-        ? aiRuntimeContext.storyFacts : undefined,
-      characterKnowledge: aiRuntimeContext?.projectId === activeProject.id
-        ? aiRuntimeContext.characterKnowledge : undefined,
+      // 有 as-of 文本时不再双注入原始事实/知识
+      storyFacts: asOfText
+        ? undefined
+        : (aiRuntimeContext?.projectId === activeProject.id ? aiRuntimeContext.storyFacts : undefined),
+      characterKnowledge: asOfText
+        ? undefined
+        : (aiRuntimeContext?.projectId === activeProject.id
+          ? aiRuntimeContext.characterKnowledge
+          : undefined),
+      narrativeAsOfText: asOfText,
       planningContext,
     });
-    const narrativeContext = aiRuntimeContext?.projectId === activeProject.id
-      ? aiRuntimeContext.narrativeContext
-      : '';
+    // as-of 已进 ContextBuilder；旧 hooks 字符串通道仅作无 as-of 时的兜底
+    const narrativeContext = asOfText
+      ? ''
+      : (aiRuntimeContext?.projectId === activeProject.id ? aiRuntimeContext.narrativeContext : '');
     return narrativeContext
       ? [...messages, { role: 'system' as const, content: narrativeContext }]
       : messages;

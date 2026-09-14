@@ -17,6 +17,7 @@ import { registerObsidianIpc } from './obsidian.ipc';
 import { registerObsidianImportIpc } from './obsidian-import.ipc';
 import { registerConversationIpc } from './conversation.ipc';
 import { registerCreativeDecisionIpc } from './creative-decision.ipc';
+import { registerNarrativeTimeIpc } from './narrative-time.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -41,4 +42,5 @@ export function registerAllIpc(): void {
   registerObsidianImportIpc();
   registerConversationIpc();
   registerCreativeDecisionIpc();
+  registerNarrativeTimeIpc();
 }

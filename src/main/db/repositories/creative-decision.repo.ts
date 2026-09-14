@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import { findDecisionRelatedItems } from './decision-related-items';
+import { NarrativeTransitionRepo, makeSnapshot, rowToNarrativeInput, type TransitionKind } from './narrative-transition.repo';
+import { deriveStateKey } from '../../ai/narrative-state-reducer';
 import type {
   ConfirmCreativeDecisionsInput,
   CreateCreativeDecisionProposalsInput,
@@ -29,6 +31,26 @@ const TARGET_TABLE_BY_TYPE: Record<DecisionType, TargetTable> = {
   narrative_hook: 'narrative_hooks',
   narrative_debt: 'narrative_debts',
 };
+
+// 状态型事实的类型集合：与 StoryFactsRepo.batchUpsert 一致，需写 state_key 供 as-of 按状态身份折叠
+const STATE_FACT_TYPES = new Set(['location', 'possession', 'relationship', 'emotional_state']);
+
+/** 状态型事实计算 state_key（含 version）；非状态型返回 null。 */
+function computeStateKey(payload: {
+  factType: string;
+  subject: string;
+  predicate: string;
+  object: string;
+}): { key: string; version: number } | null {
+  if (!STATE_FACT_TYPES.has(payload.factType)) return null;
+  return deriveStateKey({
+    factType: payload.factType as 'location' | 'possession' | 'relationship' | 'emotional_state',
+    subject: payload.subject,
+    predicate: payload.predicate,
+    object: payload.object,
+    ...(payload.factType === 'relationship' ? { directed: true } : {}),
+  } as Parameters<typeof deriveStateKey>[0]);
+}
 
 export class CreativeDecisionRepo {
   constructor(private db: Database.Database) {}
@@ -198,6 +220,7 @@ export class CreativeDecisionRepo {
             ? this.applyRevision(decision)
             : this.applyNewDecision(decision);
           effects.push(...applied);
+          this.appendTransitionsForEffects(decision, applied);
           const now = new Date().toISOString();
           this.db.prepare(`
             UPDATE creative_decisions
@@ -399,22 +422,68 @@ export class CreativeDecisionRepo {
     if (!active.includes(row.status)) throw new Error('只能修订活跃目标');
   }
 
+  private appendTransitionsForEffects(
+    decision: CreativeDecision,
+    effects: CreativeDecisionEffect[],
+  ): void {
+    const transitions = new NarrativeTransitionRepo(this.db);
+    const pending: import('../../ai/narrative-state-reducer').Transition[] = [];
+    for (const effect of effects) {
+      const payload = decision.payload as {
+        chapterId?: string | null;
+        learnedAtChapterId?: string | null;
+      };
+      const atChapterId = payload.chapterId ?? payload.learnedAtChapterId ?? null;
+      if (!atChapterId) continue;
+      let kind: TransitionKind = 'created';
+      if (effect.operation === 'supersede') kind = 'superseded';
+      else if (effect.operation === 'insert') kind = 'created';
+      else if (effect.operation === 'update') {
+        const after = effect.after as { status?: string } | null;
+        if (after?.status === 'resolved') kind = 'resolved';
+        else if (after?.status === 'paid') kind = 'paid';
+        else if (after?.status === 'partially_resolved') kind = 'partially_resolved';
+        else if (after?.status === 'abandoned') kind = 'abandoned';
+        else if (after?.status === 'waived') kind = 'waived';
+        else kind = 'created'; // 字段修订仍记一条完整快照
+      }
+      const afterRow = effect.after ?? this.requireTargetRow(effect.targetTable, decision.projectId, effect.targetId);
+      const appended = transitions.append({
+        projectId: decision.projectId,
+        targetTable: effect.targetTable as 'story_facts' | 'character_knowledge' | 'narrative_hooks' | 'narrative_debts',
+        targetId: effect.targetId,
+        kind,
+        atChapterId,
+        afterSnapshot: makeSnapshot(rowToNarrativeInput(
+          effect.targetTable as 'story_facts' | 'character_knowledge' | 'narrative_hooks' | 'narrative_debts',
+          afterRow,
+        )),
+        decisionId: decision.id,
+        pendingInTx: pending,
+      });
+      if (!appended.success || !appended.data) throw new Error(appended.error || '转换写入失败');
+      pending.push(appended.data);
+    }
+  }
+
   private applyNewDecision(decision: CreativeDecision): CreativeDecisionEffect[] {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     switch (decision.type) {
-      case 'story_fact':
+      case 'story_fact': {
+        const stateKey = computeStateKey(decision.payload);
         this.db.prepare(`
           INSERT INTO story_facts (
             id, project_id, chapter_id, fact_type, subject, predicate, object,
-            description, status, source_decision_id, source_kind, created_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'author_decision', ?)
+            description, status, source_decision_id, source_kind, state_key, state_key_version, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'author_decision', ?, ?, ?)
         `).run(
           id, decision.projectId, decision.payload.chapterId ?? null, decision.payload.factType,
           decision.payload.subject, decision.payload.predicate, decision.payload.object,
-          decision.payload.description, decision.id, now,
+          decision.payload.description, decision.id, stateKey?.key ?? null, stateKey?.version ?? 1, now,
         );
         break;
+      }
       case 'character_knowledge':
         this.db.prepare(`
           INSERT INTO character_knowledge (
@@ -467,15 +536,16 @@ export class CreativeDecisionRepo {
     if (decision.type === 'story_fact') {
       if (before.status !== 'active') throw new Error('只能修订活跃事实');
       const newId = crypto.randomUUID();
+      const stateKey = computeStateKey(decision.payload);
       this.db.prepare(`
         INSERT INTO story_facts (
           id, project_id, chapter_id, fact_type, subject, predicate, object,
-          description, status, source_decision_id, source_kind, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'author_decision', ?)
+          description, status, source_decision_id, source_kind, state_key, state_key_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, 'author_decision', ?, ?, ?)
       `).run(
         newId, decision.projectId, decision.payload.chapterId ?? null, decision.payload.factType,
         decision.payload.subject, decision.payload.predicate, decision.payload.object,
-        decision.payload.description, decision.id, now,
+        decision.payload.description, decision.id, stateKey?.key ?? null, stateKey?.version ?? 1, now,
       );
       this.db.prepare(`
         UPDATE story_facts SET status = 'superseded', superseded_by = ?

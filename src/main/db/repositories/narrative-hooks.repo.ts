@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import type { IpcResult, NarrativeHook, NarrativeDebt } from '../../../renderer/types';
+import { NarrativeTransitionRepo, makeSnapshot } from './narrative-transition.repo';
 
 // ============================================================
 // 叙事钩子 + 叙事债务 — 数据访问层（P1 — 网文追读力）
@@ -134,9 +135,30 @@ export class NarrativeHooksRepo {
     return this.findById(id);
   }
 
-  /** 标记钩子在某章被回收 */
+  /** 标记钩子在某章被回收（投影 + 转换同行） */
   resolve(id: string, chapterId: string): IpcResult<NarrativeHook> {
-    return this.update(id, { status: 'resolved', resolvedInChapterId: chapterId });
+    try {
+      const tx = this.db.transaction(() => {
+        const existing = this.findById(id);
+        if (!existing.success || !existing.data) throw new Error('钩子不存在');
+        const updated = this.update(id, { status: 'resolved', resolvedInChapterId: chapterId });
+        if (!updated.success || !updated.data) throw new Error(updated.error || '钩子更新失败');
+        const transitions = new NarrativeTransitionRepo(this.db);
+        const appended = transitions.append({
+          projectId: updated.data.projectId,
+          targetTable: 'narrative_hooks',
+          targetId: id,
+          kind: 'resolved',
+          atChapterId: chapterId,
+          afterSnapshot: makeSnapshot(updated.data),
+        });
+        if (!appended.success) throw new Error(appended.error || '转换写入失败');
+        return updated.data;
+      });
+      return { success: true, data: tx() };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
   }
 
   remove(id: string): IpcResult<void> {
@@ -196,9 +218,30 @@ export class NarrativeHooksRepo {
     return this.findDebtById(id);
   }
 
-  /** 标记债务已偿还 */
+  /** 标记债务已偿还（投影 + 转换同行） */
   payDebt(id: string, chapterId: string): IpcResult<NarrativeDebt> {
-    return this.updateDebt(id, { status: 'paid', paidInChapterId: chapterId });
+    try {
+      const tx = this.db.transaction(() => {
+        const existing = this.findDebtById(id);
+        if (!existing.success || !existing.data) throw new Error('债务不存在');
+        const updated = this.updateDebt(id, { status: 'paid', paidInChapterId: chapterId });
+        if (!updated.success || !updated.data) throw new Error(updated.error || '债务更新失败');
+        const transitions = new NarrativeTransitionRepo(this.db);
+        const appended = transitions.append({
+          projectId: updated.data.projectId,
+          targetTable: 'narrative_debts',
+          targetId: id,
+          kind: 'paid',
+          atChapterId: chapterId,
+          afterSnapshot: makeSnapshot(updated.data),
+        });
+        if (!appended.success) throw new Error(appended.error || '转换写入失败');
+        return updated.data;
+      });
+      return { success: true, data: tx() };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
   }
 
   removeDebt(id: string): IpcResult<void> {
@@ -212,7 +255,7 @@ export class NarrativeHooksRepo {
   getHooksAndDebtsContext(projectId: string, maxTokens: number = 800): string {
     const currentChapter = this.db.prepare(`
       SELECT COALESCE(MAX(sort_order), 0) AS sort_order
-      FROM chapters WHERE project_id = ?
+      FROM chapters WHERE project_id = ? AND deleted_at IS NULL
     `).get(projectId) as { sort_order: number };
     const hookRows = this.db.prepare(`
       SELECT hook.*, due.sort_order AS due_sort_order

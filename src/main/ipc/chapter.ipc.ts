@@ -48,7 +48,7 @@ export function registerChapterIpc(): void {
     }
   });
 
-  ipcMain.handle('db:chapter:remove', (_event, id: string): IpcResult<void> => {
+  ipcMain.handle('db:chapter:remove', (_event, id: string): IpcResult<Chapter[]> => {
     try {
       return getRepo().remove(id);
     } catch (err) {
@@ -56,7 +56,7 @@ export function registerChapterIpc(): void {
     }
   });
 
-  ipcMain.handle('db:chapter:restore', (_event, data: Chapter): IpcResult<Chapter> => {
+  ipcMain.handle('db:chapter:restore', (_event, data: Chapter): IpcResult<Chapter[]> => {
     try {
       return getRepo().restore(data);
     } catch (err) {

@@ -8,13 +8,15 @@ function deferred<T>() {
 }
 
 describe('AI 运行时上下文加载器', () => {
-  it('原子加载钩子债务、事实与人物知识', async () => {
+  it('原子加载 as-of 截面、事实与人物知识', async () => {
     const channels: string[] = [];
     const applied: unknown[] = [];
     const loader = createAiRuntimeContextLoader({
       invoke: async (channel) => {
         channels.push(channel);
-        if (channel === 'db:narrativeHooks:getContext') return { success: true, data: '确认钩子' };
+        if (channel === 'db:narrative:buildAsOfContext') {
+          return { success: true, data: { mode: 'project_latest', textBlock: '确认截面', historyWarningCount: 0 } };
+        }
         if (channel === 'db:storyFacts:findRecentActive') return { success: true, data: [{ id: 'fact-1' }] };
         return { success: true, data: [{ id: 'knowledge-1' }] };
       },
@@ -24,13 +26,15 @@ describe('AI 运行时上下文加载器', () => {
     await expect(loader.load('project-a')).resolves.toBe('applied');
 
     expect(channels).toEqual([
-      'db:narrativeHooks:getContext',
+      'db:narrative:buildAsOfContext',
       'db:storyFacts:findRecentActive',
       'db:storyFacts:findAllKnowledgeByProject',
     ]);
     expect(applied).toEqual([{
       projectId: 'project-a',
-      narrativeContext: '确认钩子',
+      narrativeAsOfText: '确认截面',
+      narrativeAsOfMode: 'project_latest',
+      narrativeContext: '确认截面',
       storyFacts: [{ id: 'fact-1' }],
       characterKnowledge: [{ id: 'knowledge-1' }],
     }]);
@@ -50,12 +54,19 @@ describe('AI 运行时上下文加载器', () => {
 
     const first = loader.load('project-a');
     const second = loader.load('project-a');
+    // 第二轮：asOf / facts / knowledge
     requests.slice(3, 6).forEach((request, index) => request.resolve({
-      success: true, data: index === 0 ? '最新确认状态' : [],
+      success: true,
+      data: index === 0
+        ? { mode: 'project_latest', textBlock: '最新确认状态', historyWarningCount: 0 }
+        : [],
     }));
     await expect(second).resolves.toBe('applied');
     requests.slice(0, 3).forEach((request, index) => request.resolve({
-      success: true, data: index === 0 ? '旧状态' : [],
+      success: true,
+      data: index === 0
+        ? { mode: 'project_latest', textBlock: '旧状态', historyWarningCount: 0 }
+        : [],
     }));
     await expect(first).resolves.toBe('stale');
 
@@ -67,7 +78,9 @@ describe('AI 运行时上下文加载器', () => {
     const loader = createAiRuntimeContextLoader({
       invoke: async channel => channel === 'db:storyFacts:findRecentActive'
         ? { success: false, error: '事实读取失败' }
-        : { success: true, data: channel === 'db:narrativeHooks:getContext' ? '钩子' : [] },
+        : channel === 'db:narrative:buildAsOfContext'
+          ? { success: true, data: { mode: 'project_latest', textBlock: '截面', historyWarningCount: 0 } }
+          : { success: true, data: [] },
       onApply: snapshot => applied.push(snapshot),
     });
 

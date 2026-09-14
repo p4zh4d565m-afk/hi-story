@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { runMigrations } from '../../../src/main/db/migrations';
 import { ChapterRepo } from '../../../src/main/db/repositories/chapter.repo';
 
 describe('ChapterRepo.create（A1：同步写入 content 与 word_count）', () => {
@@ -9,21 +10,11 @@ describe('ChapterRepo.create（A1：同步写入 content 与 word_count）', () 
   beforeEach(() => {
     db = new Database(':memory:');
     db.pragma('foreign_keys = ON');
-    db.exec(`
-      CREATE TABLE chapters (
-        id TEXT PRIMARY KEY,
-        project_id TEXT NOT NULL,
-        title TEXT NOT NULL DEFAULT '',
-        content TEXT NOT NULL DEFAULT '',
-        status TEXT NOT NULL DEFAULT 'draft',
-        word_count INTEGER NOT NULL DEFAULT 0,
-        summary TEXT NOT NULL DEFAULT '',
-        sort_order INTEGER NOT NULL DEFAULT 0,
-        planning_outline TEXT NOT NULL DEFAULT '',
-        created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
-      );
-    `);
+    runMigrations(db);
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO projects (id, name, type_tags, style, summary, created_at, updated_at) VALUES ('p1','t','[]','','',?,?)`,
+    ).run(now, now);
     repo = new ChapterRepo(db);
   });
 
@@ -35,7 +26,6 @@ describe('ChapterRepo.create（A1：同步写入 content 与 word_count）', () 
     const html = '<p>第一章正文</p><p>第二段</p>';
     const res = repo.create({ projectId: 'p1', title: '第一章', content: html });
     expect(res.success).toBe(true);
-    // 去掉 HTML 标签与空白后的字符数：第一章正文第二段 = 8 个字符
     expect(res.data?.wordCount).toBe(8);
     expect(res.data?.content).toBe(html);
     expect(res.data?.id).toBeTruthy();
@@ -45,5 +35,18 @@ describe('ChapterRepo.create（A1：同步写入 content 与 word_count）', () 
     const res = repo.create({ projectId: 'p1', title: '空章' });
     expect(res.success).toBe(true);
     expect(res.data?.wordCount).toBe(0);
+  });
+
+  it('create 从章纲 id 写入 planningOutlineId', () => {
+    const outline = {
+      id: 'out-1', volumeIndex: 0, chapterNumber: 1, title: '入局', pov: '主角',
+      chapterGoal: 'g', openingSituation: 'o', centralConflict: 'c', keyBeats: ['a', 'b', 'd'],
+      reveal: 'r', characterChange: 'ch', emotionalBeat: 'e', payoff: 'p', endingHook: 'h',
+    };
+    const res = repo.create({ projectId: 'p1', title: '第一章', planningOutline: outline });
+    expect(res.success).toBe(true);
+    expect(res.data?.planningOutlineId).toBe('out-1');
+    const row = db.prepare(`SELECT planning_outline_id as id FROM chapters WHERE id = ?`).get(res.data!.id) as { id: string };
+    expect(row.id).toBe('out-1');
   });
 });
