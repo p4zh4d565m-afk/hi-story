@@ -299,6 +299,8 @@ const App: React.FC = () => {
 
   // ===== 项目数据加载 =====
   const loadedProjectIdRef = useRef<string | null>(null);
+  // 章节结构操作（删/恢复/重做）代次：防止迟到的 findByProject 回执覆盖较新的操作结果
+  const chapterOpsSeqRef = useRef(0);
   const resetProjectData = useCallback(() => {
     setChapters([]); setActiveChapterId(null);
     setOutlineNodes([]); setActiveOutlineNodeId(null);
@@ -510,13 +512,23 @@ const App: React.FC = () => {
       return;
     }
 
-    // 软删会重排其余活跃章的 sort_order，须从 DB 拉完整列表，不能只 filter 本地数组
+    // 软删会重排其余活跃章的 sort_order，须从 DB 拉完整列表，不能只 filter 本地数组。
+    // 代次守卫：每次刷新递增代次，仅当回执仍是最新代次且项目未切换时才应用。
     const activeProjectId = activeProject?.id;
-    const allRes = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
-    if (allRes?.success && Array.isArray(allRes.data) && isActiveProject(activeProjectId)) {
+    const refreshAfterOp = async (): Promise<boolean> => {
+      const opSeq = ++chapterOpsSeqRef.current;
+      const allRes = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
+      if (!allRes?.success || !Array.isArray(allRes.data)) {
+        if (isActiveProject(activeProjectId)) console.error('章节列表刷新失败：', allRes?.error);
+        return false;
+      }
+      if (chapterOpsSeqRef.current !== opSeq) return false; // 已有更新的操作，丢弃本次回执
+      if (!isActiveProject(activeProjectId)) return false;
       setChapters(allRes.data);
       if (activeChapterId === id) setActiveChapterId(allRes.data[0]?.id ?? null);
-    }
+      return true;
+    };
+    await refreshAfterOp();
 
     // 推入撤销栈（命令模式）
     pushUndo({
@@ -524,19 +536,11 @@ const App: React.FC = () => {
       label: `删除章节「${ch.title}」`,
       undo: async () => {
         const r = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
-        if (r?.success) {
-          const restored = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
-          if (restored?.success && Array.isArray(restored.data) && isActiveProject(activeProjectId)) {
-            setChapters(restored.data);
-          }
-        }
+        if (r?.success) await refreshAfterOp();
       },
       redo: async () => {
         await window.electronAPI.invoke('db:chapter:remove', ch.id);
-        const removed = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
-        if (removed?.success && Array.isArray(removed.data) && isActiveProject(activeProjectId)) {
-          setChapters(removed.data);
-        }
+        await refreshAfterOp();
       },
     });
   }, [activeChapterId, chapters, pushUndo, activeProject?.id, isActiveProject]);

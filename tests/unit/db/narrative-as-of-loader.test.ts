@@ -4,6 +4,7 @@ import { runMigrations } from '../../../src/main/db/migrations';
 import { ChapterRepo } from '../../../src/main/db/repositories/chapter.repo';
 import { StoryFactsRepo } from '../../../src/main/db/repositories/story-facts.repo';
 import { NarrativeTransitionRepo, makeSnapshot } from '../../../src/main/db/repositories/narrative-transition.repo';
+import { CreativeDecisionRepo } from '../../../src/main/db/repositories/creative-decision.repo';
 import { loadNarrativeAsOfFromDb } from '../../../src/main/ai/narrative-as-of-loader';
 
 function seedProject(db: Database.Database) {
@@ -286,5 +287,82 @@ describe('loadNarrativeAsOfFromDb', () => {
     expect(ctx.debts[0]!.status).toBe('overdue');
     expect(ctx.textBlock).toContain('overdue');
     expect(ctx.textBlock).toContain('揭晓站长身份');
+  });
+
+  it('回归 confirmMany 确认状态事实写 state_key，as-of 按状态身份折叠而非当成无锚旧数据', () => {
+    const chapters = new ChapterRepo(db);
+    const c1 = chapters.create({ projectId: 'p1', title: '一', content: '<p>1</p>' }).data!;
+    const c2 = chapters.create({ projectId: 'p1', title: '二', content: '<p>2</p>' }).data!;
+    const decisions = new CreativeDecisionRepo(db);
+
+    // 作者在 c1 确认「林岚位于废站」（新增路径 applyNewDecision）
+    const p1 = decisions.createChapterExtractionProposals({
+      projectId: 'p1',
+      drafts: [{
+        type: 'story_fact',
+        title: '林岚位置',
+        rationale: '测试',
+        payload: {
+          factType: 'location',
+          subject: '林岚',
+          predicate: '位于',
+          object: '废站',
+          description: '林岚还在废站',
+          chapterId: c1.id,
+        },
+      }],
+    });
+    expect(p1.success).toBe(true);
+    expect(decisions.confirmMany({ projectId: 'p1', decisionIds: [p1.data![0].id] }).success).toBe(true);
+
+    // 作者修订为「林岚位于客栈」（修订路径 applyRevision，同 state_key）
+    const rev = decisions.createRevision({
+      projectId: 'p1',
+      parentDecisionId: p1.data![0].id,
+      draft: {
+        type: 'story_fact',
+        title: '林岚位置修正',
+        rationale: '测试',
+        payload: {
+          factType: 'location',
+          subject: '林岚',
+          predicate: '位于',
+          object: '客栈',
+          description: '林岚在客栈',
+          chapterId: c2.id,
+        },
+      },
+    });
+    expect(rev.success).toBe(true);
+    expect(decisions.confirmMany({ projectId: 'p1', decisionIds: [rev.data!.id] }).success).toBe(true);
+
+    // 确认后 DB 里 location 事实应带 state_key（非 NULL）
+    const factRows = db.prepare(
+      `SELECT state_key, status FROM story_facts WHERE fact_type = 'location' ORDER BY created_at ASC`,
+    ).all() as Array<{ state_key: string | null; status: string }>;
+    expect(factRows.length).toBe(2);
+    expect(factRows.every((r) => r.state_key != null)).toBe(true);
+
+    // 写章 c2（before_target，不含 c2 章）：c2 之前的正确状态是「废站」。
+    // 若 state_key 缺失，「废站」会被当成无锚旧数据在历史截面排除（这正是要堵的 bug）。
+    const writeCtx = loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'write',
+      targetChapterId: c2.id,
+      hasActiveChapter: true,
+    });
+    expect(writeCtx.textBlock).toContain('废站');
+    expect(writeCtx.textBlock).not.toContain('客栈');
+
+    // 对话 c2（through_target，含 c2 章）：修订生效，按 state_key 折叠为「客栈」
+    const chatCtx = loadNarrativeAsOfFromDb(db, {
+      projectId: 'p1',
+      taskType: 'chat',
+      targetChapterId: c2.id,
+      hasActiveChapter: true,
+    });
+    expect(chatCtx.textBlock).toContain('客栈');
+    expect(chatCtx.textBlock).not.toContain('废站');
+    expect(chatCtx.facts.filter((f) => f.factType === 'location')).toHaveLength(1);
   });
 });
