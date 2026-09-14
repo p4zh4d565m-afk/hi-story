@@ -12,35 +12,6 @@ import { ContextBuilder } from '../../main/ai/context-builder';
 // 叙事事实层格式化工具 — 复用 context-builder 的分类标签
 // ============================================================
 
-const FACT_TYPE_LABELS: Record<string, string> = {
-  location: '📍 位置',
-  possession: '🎒 持有',
-  relationship: '🤝 关系',
-  knowledge: '🧠 认知',
-  event: '⚡ 事件',
-  emotional_state: '💭 情感',
-  hook: '🪝 伏笔',
-};
-
-interface StoryFact {
-  id: string;
-  factType: string;
-  subject: string;
-  predicate: string;
-  object: string;
-  description: string;
-  status: string;
-  chapterId?: string | null;
-  createdAt: string;
-}
-
-interface CharacterKnowledge {
-  id: string;
-  characterName: string;
-  factDescription: string;
-  source: string;
-}
-
 /** 将章纲字段格式化为「内容提要」摘要文本（A4b：代写/批量以章纲为结构输入） */
 function formatChapterOutlineSummary(outline: ChapterOutline): string {
   const lines: string[] = [];
@@ -54,58 +25,6 @@ function formatChapterOutlineSummary(outline: ChapterOutline): string {
   if (outline.emotionalBeat) lines.push(`情绪体验：${outline.emotionalBeat}`);
   if (outline.payoff) lines.push(`爽点/回报：${outline.payoff}`);
   if (outline.endingHook) lines.push(`章末钩子：${outline.endingHook}`);
-  return lines.join('\n');
-}
-
-/** 将叙事事实列表格式化为 AI 可读的上下文文本 */
-function formatFactsContext(facts: StoryFact[]): string | null {
-  if (!facts || facts.length === 0) return null;
-
-  const byType: Record<string, StoryFact[]> = {};
-  for (const f of facts) {
-    if (!byType[f.factType]) byType[f.factType] = [];
-    byType[f.factType].push(f);
-  }
-
-  const lines: string[] = [];
-  for (const [type, items] of Object.entries(byType)) {
-    const label = FACT_TYPE_LABELS[type] || type;
-    lines.push(`### ${label}`);
-    const shown = items.slice(0, 8);
-    for (const item of shown) {
-      lines.push(`- ${item.description}`);
-    }
-    if (items.length > 8) {
-      lines.push(`  *(还有 ${items.length - 8} 条，已省略)*`);
-    }
-    lines.push('');
-  }
-  return lines.join('\n');
-}
-
-/** 将角色知识列表格式化为 AI 可读的上下文文本 */
-function formatKnowledgeContext(knowledge: CharacterKnowledge[]): string | null {
-  if (!knowledge || knowledge.length === 0) return null;
-
-  const byChar: Record<string, CharacterKnowledge[]> = {};
-  for (const k of knowledge) {
-    const name = k.characterName || '未知角色';
-    if (!byChar[name]) byChar[name] = [];
-    byChar[name].push(k);
-  }
-
-  const lines: string[] = [];
-  for (const [name, items] of Object.entries(byChar)) {
-    lines.push(`### ${name}`);
-    const shown = items.slice(0, 5);
-    for (const item of shown) {
-      lines.push(`- 知道「${item.factDescription}」—— 来源：${item.source}`);
-    }
-    if (items.length > 5) {
-      lines.push(`  *(还有 ${items.length - 5} 条，已省略)*`);
-    }
-    lines.push('');
-  }
   return lines.join('\n');
 }
 
@@ -127,21 +46,6 @@ async function loadNarrativeAsOfForWrite(
     return null;
   } catch {
     return null;
-  }
-}
-
-/** 加载项目的叙事事实层上下文（故事事实 + 角色知识）——无 as-of 时的兜底 */
-async function loadFactsContext(projectId: string): Promise<{ factsStr: string | null; knowledgeStr: string | null }> {
-  try {
-    const [factsRes, knowledgeRes] = await Promise.all([
-      (window as any).electronAPI.invoke('db:storyFacts:findRecentActive', projectId, 80),
-      (window as any).electronAPI.invoke('db:storyFacts:findAllKnowledgeByProject', projectId),
-    ]);
-    const factsStr = factsRes?.success ? formatFactsContext(factsRes.data) : null;
-    const knowledgeStr = knowledgeRes?.success ? formatKnowledgeContext(knowledgeRes.data) : null;
-    return { factsStr, knowledgeStr };
-  } catch {
-    return { factsStr: null, knowledgeStr: null };
   }
 }
 
@@ -570,16 +474,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const compassCtx = ContextBuilder.getCompassContext(projectId);
     const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
     let asOfText: string | null = null;
-    let factsStr: string | null = null;
-    let knowledgeStr: string | null = null;
     try {
       asOfText = await loadNarrativeAsOfForWrite(projectId, chapters);
-      if (!asOfText) {
-        const factsCtx = await loadFactsContext(projectId);
-        factsStr = factsCtx.factsStr;
-        knowledgeStr = factsCtx.knowledgeStr;
-      }
-    } catch { /* ignore */ }
+    } catch { /* 忽略 */ }
+    // fail-closed：as-of 失败即阻断批量，不回退到「当前活跃事实」（那会读进目标章之后的事实）
+    if (!asOfText) {
+      setError('叙事时间截面加载失败，已停止批量生成（避免误读目标章之后的事实）');
+      return;
+    }
 
     for (let i = startIndex; i < nodes.length; i++) {
       setBatchProgress(p => ({ ...p, completed: i, current: nodes[i].title }));
@@ -607,8 +509,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           })) : [],
           recentChapters: includeContext ? recentChapters : [],
           outlineNodes: outlineNodes.map(n => ({ title: n.title, summary: n.summary || '' })),
-          storyFactsSummary: asOfText ?? factsStr ?? undefined,
-          knowledgeSummary: asOfText ? undefined : (knowledgeStr ?? undefined),
+          storyFactsSummary: asOfText,
+          knowledgeSummary: undefined,
         };
 
         const extraBlocks: string[] = [];
@@ -696,19 +598,17 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       const compassCtx = ContextBuilder.getCompassContext(projectId);
       const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
 
-      // 加载叙事 as-of（新章用末章 through_target）；失败再回退旧事实加载
+      // 加载叙事 as-of（新章用末章 through_target）；失败即阻断，不回退旧事实
       let asOfText: string | null = null;
-      let factsStr: string | null = null;
-      let knowledgeStr: string | null = null;
       if (projectId) {
         try {
           asOfText = await loadNarrativeAsOfForWrite(projectId, chapters);
-          if (!asOfText) {
-            const factsCtx = await loadFactsContext(projectId);
-            factsStr = factsCtx.factsStr;
-            knowledgeStr = factsCtx.knowledgeStr;
-          }
         } catch { /* 忽略加载失败 */ }
+      }
+      if (!asOfText) {
+        setError('叙事时间截面加载失败，已停止生成（避免误读目标章之后的事实）');
+        setGenerating(false);
+        return;
       }
 
       const extraBlocks: string[] = [];
@@ -723,13 +623,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
 
       // 注入叙事时间截面到 user prompt
-      const contextWithFacts = asOfText || factsStr || knowledgeStr
-        ? {
-          ...context,
-          storyFactsSummary: asOfText ?? factsStr ?? undefined,
-          knowledgeSummary: asOfText ? undefined : (knowledgeStr ?? undefined),
-        }
-        : context;
+      const contextWithFacts = {
+        ...context,
+        storyFactsSummary: asOfText ?? undefined,
+        knowledgeSummary: undefined,
+      };
 
       const userPrompt = buildWriteUserPrompt(
         { targetWords, extraRequirement },
