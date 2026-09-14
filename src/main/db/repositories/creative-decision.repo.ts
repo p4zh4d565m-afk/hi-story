@@ -1,5 +1,6 @@
 import Database from 'better-sqlite3';
 import { findDecisionRelatedItems } from './decision-related-items';
+import { NarrativeTransitionRepo, makeSnapshot, type TransitionKind } from './narrative-transition.repo';
 import type {
   ConfirmCreativeDecisionsInput,
   CreateCreativeDecisionProposalsInput,
@@ -198,6 +199,7 @@ export class CreativeDecisionRepo {
             ? this.applyRevision(decision)
             : this.applyNewDecision(decision);
           effects.push(...applied);
+          this.appendTransitionsForEffects(decision, applied);
           const now = new Date().toISOString();
           this.db.prepare(`
             UPDATE creative_decisions
@@ -397,6 +399,47 @@ export class CreativeDecisionRepo {
     const active = table === 'narrative_hooks' ? ['open', 'partially_resolved']
       : table === 'narrative_debts' ? ['unpaid', 'overdue'] : ['active'];
     if (!active.includes(row.status)) throw new Error('只能修订活跃目标');
+  }
+
+  private appendTransitionsForEffects(
+    decision: CreativeDecision,
+    effects: CreativeDecisionEffect[],
+  ): void {
+    const transitions = new NarrativeTransitionRepo(this.db);
+    const pending: import('../../ai/narrative-state-reducer').Transition[] = [];
+    for (const effect of effects) {
+      const payload = decision.payload as {
+        chapterId?: string | null;
+        learnedAtChapterId?: string | null;
+      };
+      const atChapterId = payload.chapterId ?? payload.learnedAtChapterId ?? null;
+      if (!atChapterId) continue;
+      let kind: TransitionKind = 'created';
+      if (effect.operation === 'supersede') kind = 'superseded';
+      else if (effect.operation === 'insert') kind = 'created';
+      else if (effect.operation === 'update') {
+        const after = effect.after as { status?: string } | null;
+        if (after?.status === 'resolved') kind = 'resolved';
+        else if (after?.status === 'paid') kind = 'paid';
+        else if (after?.status === 'partially_resolved') kind = 'partially_resolved';
+        else if (after?.status === 'abandoned') kind = 'abandoned';
+        else if (after?.status === 'waived') kind = 'waived';
+        else kind = 'created'; // 字段修订仍记一条完整快照
+      }
+      const afterRow = effect.after ?? this.requireTargetRow(effect.targetTable, decision.projectId, effect.targetId);
+      const appended = transitions.append({
+        projectId: decision.projectId,
+        targetTable: effect.targetTable as 'story_facts' | 'character_knowledge' | 'narrative_hooks' | 'narrative_debts',
+        targetId: effect.targetId,
+        kind,
+        atChapterId,
+        afterSnapshot: makeSnapshot(afterRow),
+        decisionId: decision.id,
+        pendingInTx: pending,
+      });
+      if (!appended.success || !appended.data) throw new Error(appended.error || '转换写入失败');
+      pending.push(appended.data);
+    }
   }
 
   private applyNewDecision(decision: CreativeDecision): CreativeDecisionEffect[] {

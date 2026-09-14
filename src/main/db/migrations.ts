@@ -1,6 +1,14 @@
 import Database from 'better-sqlite3';
+import { randomUUID } from 'node:crypto';
 
-const MIGRATIONS = [
+type Migration = {
+  version: number;
+  sql: string;
+  /** 同事务内 DDL 之后执行（如 JSON 补 id） */
+  after?: (db: Database.Database) => void;
+};
+
+const MIGRATIONS: Migration[] = [
   // 001: 核心表
   {
     version: 1,
@@ -542,7 +550,148 @@ const MIGRATIONS = [
         ON planning_ideas(project_id);
     `,
   },
+
+  // 021: 叙事时间接入 — 转换日志、别名表（空）、章节墓碑、状态键、章纲稳定 id
+  {
+    version: 21,
+    sql: `
+      CREATE TABLE IF NOT EXISTS narrative_transitions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        target_table TEXT NOT NULL CHECK(target_table IN (
+          'story_facts','character_knowledge','narrative_hooks','narrative_debts'
+        )),
+        target_id TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN (
+          'created','superseded','resolved','paid','abandoned','waived','partially_resolved'
+        )),
+        at_chapter_id TEXT NOT NULL,
+        at_chapter_ordinal INTEGER NOT NULL DEFAULT 0,
+        transition_seq INTEGER NOT NULL DEFAULT 0,
+        after_snapshot TEXT NOT NULL,
+        decision_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
+      CREATE INDEX IF NOT EXISTS idx_narrative_transitions_target
+        ON narrative_transitions(project_id, target_table, target_id);
+      CREATE INDEX IF NOT EXISTS idx_narrative_transitions_chapter
+        ON narrative_transitions(project_id, at_chapter_id);
+    `,
+    after(db) {
+      const hasTable = (name: string) => Boolean(
+        db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`).get(name),
+      );
+      const columnNames = (table: string) => new Set(
+        (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>).map((c) => c.name),
+      );
+      const addColumnIfMissing = (table: string, column: string, ddl: string) => {
+        if (!hasTable(table)) return;
+        if (columnNames(table).has(column)) return;
+        db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+      };
+
+      if (hasTable('story_facts')) {
+        addColumnIfMissing('story_facts', 'state_key', 'state_key TEXT');
+        addColumnIfMissing('story_facts', 'state_key_version', 'state_key_version INTEGER NOT NULL DEFAULT 1');
+        addColumnIfMissing('story_facts', 'archived', 'archived INTEGER NOT NULL DEFAULT 0');
+        db.exec(`
+          CREATE INDEX IF NOT EXISTS idx_story_facts_state_key
+            ON story_facts(project_id, state_key) WHERE archived = 0;
+          UPDATE story_facts SET archived = 1 WHERE fact_type = 'hook';
+        `);
+      }
+
+      if (hasTable('chapters')) {
+        addColumnIfMissing('chapters', 'deleted_at', 'deleted_at TEXT');
+        addColumnIfMissing('chapters', 'deleted_sort_order', 'deleted_sort_order INTEGER');
+        addColumnIfMissing('chapters', 'planning_outline_id', 'planning_outline_id TEXT');
+
+        db.exec(`
+          CREATE TABLE IF NOT EXISTS chapter_alias (
+            from_chapter_id TEXT PRIMARY KEY,
+            to_chapter_id TEXT NOT NULL,
+            ordinal_offset INTEGER NOT NULL CHECK(ordinal_offset >= 0),
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (from_chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
+            FOREIGN KEY (to_chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+          );
+        `);
+
+        // 完整章表才重建（使 sort_order 可空）；迁移桩仅有 id/project_id 时跳过
+        const cols = columnNames('chapters');
+        const canRebuild = ['title', 'content', 'status', 'word_count', 'sort_order', 'summary', 'planning_outline', 'created_at', 'updated_at']
+          .every((c) => cols.has(c));
+        if (canRebuild) {
+          db.pragma('foreign_keys = OFF');
+          db.exec(`
+            CREATE TABLE chapters_v21 (
+              id TEXT PRIMARY KEY,
+              project_id TEXT NOT NULL,
+              title TEXT NOT NULL DEFAULT '未命名章节',
+              content TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','final')),
+              word_count INTEGER NOT NULL DEFAULT 0,
+              sort_order INTEGER,
+              summary TEXT NOT NULL DEFAULT '',
+              planning_outline TEXT NOT NULL DEFAULT '',
+              planning_outline_id TEXT,
+              deleted_at TEXT,
+              deleted_sort_order INTEGER,
+              created_at TEXT NOT NULL DEFAULT (datetime('now')),
+              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+              FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            );
+            INSERT INTO chapters_v21 (
+              id, project_id, title, content, status, word_count, sort_order, summary,
+              planning_outline, planning_outline_id, deleted_at, deleted_sort_order, created_at, updated_at
+            )
+            SELECT id, project_id, title, content, status, word_count, sort_order,
+                   COALESCE(summary, ''), COALESCE(planning_outline, ''), planning_outline_id,
+                   deleted_at, deleted_sort_order, created_at, updated_at
+            FROM chapters;
+            DROP TABLE chapters;
+            ALTER TABLE chapters_v21 RENAME TO chapters;
+            CREATE INDEX IF NOT EXISTS idx_chapters_project_active
+              ON chapters(project_id, sort_order) WHERE deleted_at IS NULL;
+          `);
+          db.pragma('foreign_keys = ON');
+        }
+      }
+
+      if (hasTable('planning_ideas') && columnNames('planning_ideas').has('chapter_outlines')) {
+        backfillChapterOutlineIds(db);
+      }
+    },
+  },
 ];
+
+/** 为 planning_ideas.chapter_outlines JSON 中缺 id 的项补 UUID（同事务调用） */
+export function backfillChapterOutlineIds(db: Database.Database): void {
+  const rows = db.prepare(
+    `SELECT id, chapter_outlines FROM planning_ideas WHERE chapter_outlines IS NOT NULL AND chapter_outlines != ''`,
+  ).all() as Array<{ id: string; chapter_outlines: string }>;
+
+  const update = db.prepare(`UPDATE planning_ideas SET chapter_outlines = ? WHERE id = ?`);
+  for (const row of rows) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.chapter_outlines);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    let changed = false;
+    const next = parsed.map((item) => {
+      if (!item || typeof item !== 'object') return item;
+      const outline = item as Record<string, unknown>;
+      if (typeof outline.id === 'string' && outline.id.length > 0) return outline;
+      changed = true;
+      return { ...outline, id: randomUUID() };
+    });
+    if (changed) update.run(JSON.stringify(next), row.id);
+  }
+}
 
 export function runMigrations(db: Database.Database): void {
   // 确保迁移表存在
@@ -562,9 +711,14 @@ export function runMigrations(db: Database.Database): void {
     if (!applied.has(migration.version)) {
       db.transaction(() => {
         db.exec(migration.sql);
+        migration.after?.(db);
         db.prepare('INSERT INTO _migrations (version) VALUES (?)').run(migration.version);
       })();
       console.log(`Migration v${migration.version} applied.`);
     }
   }
+}
+
+export function getLatestMigrationVersion(): number {
+  return MIGRATIONS.reduce((max, m) => Math.max(max, m.version), 0);
 }

@@ -109,7 +109,28 @@ function formatKnowledgeContext(knowledge: CharacterKnowledge[]): string | null 
   return lines.join('\n');
 }
 
-/** 加载项目的叙事事实层上下文（故事事实 + 角色知识） */
+/** 加载叙事时间截面（写章：末章 through_target 等价 before 下一新章） */
+async function loadNarrativeAsOfForWrite(
+  projectId: string,
+  chapters: Chapter[],
+): Promise<string | null> {
+  try {
+    const last = chapters.length > 0 ? chapters[chapters.length - 1] : null;
+    // 新章尚无 id：用 chat+through_target(末章) 等价写章 before 下一章
+    const res = await (window as any).electronAPI.invoke('db:narrative:buildAsOfContext', {
+      projectId,
+      taskType: last ? 'chat' : 'planning',
+      targetChapterId: last?.id ?? null,
+      hasActiveChapter: !!last,
+    });
+    if (res?.success && res.data?.textBlock) return res.data.textBlock as string;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** 加载项目的叙事事实层上下文（故事事实 + 角色知识）——无 as-of 时的兜底 */
 async function loadFactsContext(projectId: string): Promise<{ factsStr: string | null; knowledgeStr: string | null }> {
   try {
     const [factsRes, knowledgeRes] = await Promise.all([
@@ -545,21 +566,19 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
   const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number) => {
     if (!requestBase) return;
-    // 批量模式：一次性加载创作罗盘/风格指纹/钩子/叙事事实层（这些在整个批量中不变）
+    // 批量模式：一次性加载创作罗盘/风格指纹/叙事 as-of（整批共用末章截面）
     const compassCtx = ContextBuilder.getCompassContext(projectId);
     const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
-    let hooksContext: string | null = null;
+    let asOfText: string | null = null;
     let factsStr: string | null = null;
     let knowledgeStr: string | null = null;
     try {
-      const [hooksRes, factsCtx] = await Promise.all([
-        (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
-        loadFactsContext(projectId),
-      ]);
-      if (hooksRes?.success && hooksRes.data) hooksContext = hooksRes.data as string;
-      else if (hooksRes && !hooksRes.success) hooksContext = null;
-      factsStr = factsCtx.factsStr;
-      knowledgeStr = factsCtx.knowledgeStr;
+      asOfText = await loadNarrativeAsOfForWrite(projectId, chapters);
+      if (!asOfText) {
+        const factsCtx = await loadFactsContext(projectId);
+        factsStr = factsCtx.factsStr;
+        knowledgeStr = factsCtx.knowledgeStr;
+      }
     } catch { /* ignore */ }
 
     for (let i = startIndex; i < nodes.length; i++) {
@@ -588,15 +607,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           })) : [],
           recentChapters: includeContext ? recentChapters : [],
           outlineNodes: outlineNodes.map(n => ({ title: n.title, summary: n.summary || '' })),
-          storyFactsSummary: factsStr ?? undefined,
-          knowledgeSummary: knowledgeStr ?? undefined,
+          storyFactsSummary: asOfText ?? factsStr ?? undefined,
+          knowledgeSummary: asOfText ? undefined : (knowledgeStr ?? undefined),
         };
 
         const extraBlocks: string[] = [];
         if (styleGuide && styleGuide !== '保持与项目风格一致') extraBlocks.push(`## 用户指定的写作风格\n${styleGuide}`);
         if (compassCtx) extraBlocks.push(compassCtx);
         if (styleFpCtx) extraBlocks.push(styleFpCtx);
-        if (hooksContext) extraBlocks.push(hooksContext);
         if (obsidianContext) extraBlocks.push(obsidianContext);
 
         const systemPrompt = WRITE_SYSTEM_PROMPT
@@ -678,23 +696,18 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       const compassCtx = ContextBuilder.getCompassContext(projectId);
       const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
 
-      // 并行加载钩子 + 叙事事实层（P0 修复：写章必须包含此前建立的事实，防止 AI 乱编）
-      let hooksContext: string | null = null;
+      // 加载叙事 as-of（新章用末章 through_target）；失败再回退旧事实加载
+      let asOfText: string | null = null;
       let factsStr: string | null = null;
       let knowledgeStr: string | null = null;
       if (projectId) {
         try {
-          const [hooksRes, factsCtx] = await Promise.all([
-            (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
-            loadFactsContext(projectId),
-          ]);
-          if (hooksRes?.success && hooksRes.data) {
-            hooksContext = hooksRes.data as string;
-          } else if (hooksRes && !hooksRes.success) {
-            hooksContext = null;
+          asOfText = await loadNarrativeAsOfForWrite(projectId, chapters);
+          if (!asOfText) {
+            const factsCtx = await loadFactsContext(projectId);
+            factsStr = factsCtx.factsStr;
+            knowledgeStr = factsCtx.knowledgeStr;
           }
-          factsStr = factsCtx.factsStr;
-          knowledgeStr = factsCtx.knowledgeStr;
         } catch { /* 忽略加载失败 */ }
       }
 
@@ -704,15 +717,18 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       }
       if (compassCtx) extraBlocks.push(compassCtx);
       if (styleFpCtx) extraBlocks.push(styleFpCtx);
-      if (hooksContext) extraBlocks.push(hooksContext);
       if (obsidianContext) extraBlocks.push(obsidianContext);
 
       const systemPrompt = WRITE_SYSTEM_PROMPT
         + (extraBlocks.length > 0 ? '\n\n' + extraBlocks.join('\n\n---\n\n') : '');
 
-      // 注入叙事事实层到 user prompt
-      const contextWithFacts = factsStr || knowledgeStr
-        ? { ...context, storyFactsSummary: factsStr ?? undefined, knowledgeSummary: knowledgeStr ?? undefined }
+      // 注入叙事时间截面到 user prompt
+      const contextWithFacts = asOfText || factsStr || knowledgeStr
+        ? {
+          ...context,
+          storyFactsSummary: asOfText ?? factsStr ?? undefined,
+          knowledgeSummary: asOfText ? undefined : (knowledgeStr ?? undefined),
+        }
         : context;
 
       const userPrompt = buildWriteUserPrompt(

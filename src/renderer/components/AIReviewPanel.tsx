@@ -289,63 +289,73 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         return;
       }
 
-      // 加载叙事事实层数据（P0 闭环）
+      // 加载叙事时间截面（审稿：before_target）
       let storyFactsSummary = '';
       let knowledgeSummary = '';
       let hooksSummary = '';
       if (projectId) {
         try {
-          // 并行加载事实、知识边界、钩子
-          const [factsRes, knowledgeRes, hooksRes] = await Promise.all([
-            (window as any).electronAPI.invoke('db:storyFacts:getGroupedFacts', projectId),
-            (window as any).electronAPI.invoke('db:storyFacts:findAllKnowledgeByProject', projectId),
-            (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
-          ]);
+          const asOfRes = await (window as any).electronAPI.invoke('db:narrative:buildAsOfContext', {
+            projectId,
+            taskType: 'review',
+            targetChapterId: chapter.id,
+            hasActiveChapter: true,
+          });
+          if (asOfRes?.success && asOfRes.data?.textBlock) {
+            storyFactsSummary = asOfRes.data.textBlock as string;
+          } else {
+            // 回退：并行加载事实、知识边界、钩子
+            const [factsRes, knowledgeRes, hooksRes] = await Promise.all([
+              (window as any).electronAPI.invoke('db:storyFacts:getGroupedFacts', projectId),
+              (window as any).electronAPI.invoke('db:storyFacts:findAllKnowledgeByProject', projectId),
+              (window as any).electronAPI.invoke('db:narrativeHooks:getContext', projectId),
+            ]);
 
-          if (factsRes?.success && factsRes.data) {
-            const grouped = factsRes.data;
-            const factLines: string[] = [];
-            for (const [type, label] of [
-              ['locations', '📍 角色位置'],
-              ['possessions', '🎒 物品持有'],
-              ['relationships', '🤝 角色关系'],
-              ['events', '⚡ 重要事件'],
-              ['emotionalStates', '💭 情感状态'],
-              ['hooks', '🪝 伏笔钩子'],
-            ] as const) {
-              const items = grouped[type as keyof typeof grouped];
-              if (items && items.length > 0) {
-                factLines.push(`### ${label}`);
-                items.slice(0, 6).forEach((f: any) => factLines.push(`- ${f.description}`));
-                if (items.length > 6) factLines.push(`  *(还有 ${items.length - 6} 条，已省略)*`);
-                factLines.push('');
+            if (factsRes?.success && factsRes.data) {
+              const grouped = factsRes.data;
+              const factLines: string[] = [];
+              for (const [type, label] of [
+                ['locations', '📍 角色位置'],
+                ['possessions', '🎒 物品持有'],
+                ['relationships', '🤝 角色关系'],
+                ['events', '⚡ 重要事件'],
+                ['emotionalStates', '💭 情感状态'],
+                ['hooks', '🪝 伏笔钩子'],
+              ] as const) {
+                const items = grouped[type as keyof typeof grouped];
+                if (items && items.length > 0) {
+                  factLines.push(`### ${label}`);
+                  items.slice(0, 6).forEach((f: any) => factLines.push(`- ${f.description}`));
+                  if (items.length > 6) factLines.push(`  *(还有 ${items.length - 6} 条，已省略)*`);
+                  factLines.push('');
+                }
+              }
+              if (factLines.length > 0) {
+                storyFactsSummary = factLines.join('\n');
               }
             }
-            if (factLines.length > 0) {
-              storyFactsSummary = factLines.join('\n');
-            }
-          }
 
-          if (knowledgeRes?.success && knowledgeRes.data?.length > 0) {
-            const byChar: Record<string, string[]> = {};
-            for (const k of knowledgeRes.data) {
-              const name = k.characterName || '未知';
-              if (!byChar[name]) byChar[name] = [];
-              byChar[name].push(`- 知道「${k.factDescription}」（来源：${k.source}）`);
+            if (knowledgeRes?.success && knowledgeRes.data?.length > 0) {
+              const byChar: Record<string, string[]> = {};
+              for (const k of knowledgeRes.data) {
+                const name = k.characterName || '未知';
+                if (!byChar[name]) byChar[name] = [];
+                byChar[name].push(`- 知道「${k.factDescription}」（来源：${k.source}）`);
+              }
+              const lines: string[] = [];
+              for (const [name, items] of Object.entries(byChar)) {
+                lines.push(`### ${name}`);
+                lines.push(...items.slice(0, 4));
+                lines.push('');
+              }
+              if (lines.length > 0) knowledgeSummary = lines.join('\n');
             }
-            const lines: string[] = [];
-            for (const [name, items] of Object.entries(byChar)) {
-              lines.push(`### ${name}`);
-              lines.push(...items.slice(0, 4));
-              lines.push('');
-            }
-            if (lines.length > 0) knowledgeSummary = lines.join('\n');
-          }
 
-          if (hooksRes?.success && hooksRes.data) {
-            hooksSummary = hooksRes.data as string;
-          } else if (hooksRes && !hooksRes.success) {
-            hooksSummary = '';
+            if (hooksRes?.success && hooksRes.data) {
+              hooksSummary = hooksRes.data as string;
+            } else if (hooksRes && !hooksRes.success) {
+              hooksSummary = '';
+            }
           }
         } catch { /* 忽略加载失败 */ }
       }

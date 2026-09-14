@@ -1,5 +1,7 @@
 import Database from 'better-sqlite3';
 import type { IpcResult, StoryFact, CharacterKnowledge } from '../../../renderer/types';
+import { deriveStateKey, type Transition } from '../../ai/narrative-state-reducer';
+import { NarrativeTransitionRepo, makeSnapshot } from './narrative-transition.repo';
 
 // ============================================================
 // 叙事事实层 — 数据访问层
@@ -71,34 +73,97 @@ export class StoryFactsRepo {
     return this.findById(id);
   }
 
-  /** 批量覆盖某章的事实（先删旧，再插新 — 事实是每章重新提取的） */
+  /** 批量覆盖某章的事实：退休旧自动投影 + 转换行 + 插入新投影（同事务） */
   batchUpsert(input: BatchUpsertFactsInput): IpcResult<{ inserted: number }> {
-    const tx = this.db.transaction(() => {
-      // 删除该章节已有的 active 事实
-      this.db.prepare(`
-        DELETE FROM story_facts
-        WHERE chapter_id = ? AND source_decision_id IS NULL
-      `).run(input.chapterId);
+    try {
+      const tx = this.db.transaction(() => {
+        const transitions = new NarrativeTransitionRepo(this.db);
+        const now = new Date().toISOString();
+        const pending: Transition[] = [];
 
-      if (input.facts.length === 0) return { inserted: 0 };
+        const oldRows = this.db.prepare(`
+          SELECT * FROM story_facts
+          WHERE chapter_id = ? AND source_decision_id IS NULL AND status = 'active' AND archived = 0
+        `).all(input.chapterId) as Record<string, unknown>[];
 
-      const now = new Date().toISOString();
-      const stmt = this.db.prepare(`
-        INSERT INTO story_facts (
-          id, project_id, chapter_id, fact_type, subject, predicate, object,
-          description, status, source_kind, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'chapter_extraction', ?)
-      `);
+        for (const old of oldRows) {
+          const oldId = old.id as string;
+          this.db.prepare(
+            `UPDATE story_facts SET status = 'superseded' WHERE id = ?`,
+          ).run(oldId);
+          const snap = makeSnapshot(this.rowToFact({ ...old, status: 'superseded' }));
+          const appended = transitions.append({
+            projectId: input.projectId,
+            targetTable: 'story_facts',
+            targetId: oldId,
+            kind: 'superseded',
+            atChapterId: input.chapterId,
+            afterSnapshot: snap,
+            pendingInTx: pending,
+          });
+          if (!appended.success || !appended.data) throw new Error(appended.error || '转换写入失败');
+          pending.push(appended.data);
+        }
 
-      for (const f of input.facts) {
-        const id = crypto.randomUUID();
-        stmt.run(id, input.projectId, input.chapterId, f.factType, f.subject, f.predicate, f.object, f.description, now);
-      }
-      return { inserted: input.facts.length };
-    });
+        if (input.facts.length === 0) return { inserted: 0 };
 
-    const result = tx();
-    return { success: true, data: result };
+        const stmt = this.db.prepare(`
+          INSERT INTO story_facts (
+            id, project_id, chapter_id, fact_type, subject, predicate, object,
+            description, status, source_kind, state_key, state_key_version, archived, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', 'chapter_extraction', ?, 1, 0, ?)
+        `);
+
+        for (const f of input.facts) {
+          if (f.factType === 'hook') continue; // 停止新写 hook 事实
+          const id = crypto.randomUUID();
+          let stateKey: string | null = null;
+          if (
+            f.factType === 'location' ||
+            f.factType === 'possession' ||
+            f.factType === 'emotional_state' ||
+            f.factType === 'relationship'
+          ) {
+            stateKey = deriveStateKey({
+              factType: f.factType as 'location' | 'possession' | 'emotional_state' | 'relationship',
+              subject: f.subject,
+              predicate: f.predicate,
+              object: f.object,
+              ...(f.factType === 'relationship' ? { directed: true } : {}),
+            } as Parameters<typeof deriveStateKey>[0]).key;
+          }
+          stmt.run(
+            id,
+            input.projectId,
+            input.chapterId,
+            f.factType,
+            f.subject,
+            f.predicate,
+            f.object,
+            f.description,
+            stateKey,
+            now,
+          );
+          const fact = this.findById(id).data!;
+          const appended = transitions.append({
+            projectId: input.projectId,
+            targetTable: 'story_facts',
+            targetId: id,
+            kind: 'created',
+            atChapterId: input.chapterId,
+            afterSnapshot: makeSnapshot(fact),
+            pendingInTx: pending,
+          });
+          if (!appended.success || !appended.data) throw new Error(appended.error || '转换写入失败');
+          pending.push(appended.data);
+        }
+        return { inserted: input.facts.filter((f) => f.factType !== 'hook').length };
+      });
+
+      return { success: true, data: tx() };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
   }
 
   /** 根据 ID 查找 */
@@ -111,7 +176,7 @@ export class StoryFactsRepo {
   /** 获取项目所有活跃事实 */
   findActiveByProject(projectId: string): IpcResult<StoryFact[]> {
     const rows = this.db.prepare(`
-      SELECT * FROM story_facts WHERE project_id = ? AND status = 'active' ORDER BY created_at DESC
+      SELECT * FROM story_facts WHERE project_id = ? AND status = 'active' AND archived = 0 ORDER BY created_at DESC
     `).all(projectId) as Record<string, unknown>[];
     return { success: true, data: rows.map(r => this.rowToFact(r)) };
   }
@@ -119,7 +184,7 @@ export class StoryFactsRepo {
   /** 获取项目最近 N 条活跃事实（用于注入上下文） */
   findRecentActive(projectId: string, limit: number = 30): IpcResult<StoryFact[]> {
     const rows = this.db.prepare(`
-      SELECT * FROM story_facts WHERE project_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT ?
+      SELECT * FROM story_facts WHERE project_id = ? AND status = 'active' AND archived = 0 ORDER BY created_at DESC LIMIT ?
     `).all(projectId, limit) as Record<string, unknown>[];
     return { success: true, data: rows.map(r => this.rowToFact(r)) };
   }
@@ -127,7 +192,7 @@ export class StoryFactsRepo {
   /** 按类型获取活跃事实 */
   findByType(projectId: string, factType: string): IpcResult<StoryFact[]> {
     const rows = this.db.prepare(`
-      SELECT * FROM story_facts WHERE project_id = ? AND fact_type = ? AND status = 'active' ORDER BY created_at DESC
+      SELECT * FROM story_facts WHERE project_id = ? AND fact_type = ? AND status = 'active' AND archived = 0 ORDER BY created_at DESC
     `).all(projectId, factType) as Record<string, unknown>[];
     return { success: true, data: rows.map(r => this.rowToFact(r)) };
   }
@@ -164,7 +229,7 @@ export class StoryFactsRepo {
     hooks: StoryFact[];
   }> {
     const all = this.db.prepare(`
-      SELECT * FROM story_facts WHERE project_id = ? AND status = 'active' ORDER BY created_at DESC
+      SELECT * FROM story_facts WHERE project_id = ? AND status = 'active' AND archived = 0 ORDER BY created_at DESC
     `).all(projectId) as Record<string, unknown>[];
 
     const facts = all.map(r => this.rowToFact(r));
@@ -197,33 +262,79 @@ export class StoryFactsRepo {
     return this.findKnowledgeById(id);
   }
 
-  /** 批量覆盖某章的角色知识 */
+  /** 批量覆盖某章的角色知识：退休旧自动投影 + 转换行 + 插入新投影（同事务） */
   batchUpsertKnowledge(input: BatchUpsertKnowledgeInput): IpcResult<{ inserted: number }> {
-    const tx = this.db.transaction(() => {
-      this.db.prepare(`
-        DELETE FROM character_knowledge
-        WHERE learned_at_chapter_id = ? AND source_decision_id IS NULL
-      `).run(input.chapterId);
+    try {
+      const tx = this.db.transaction(() => {
+        const transitions = new NarrativeTransitionRepo(this.db);
+        const pending: Transition[] = [];
+        const now = new Date().toISOString();
 
-      if (input.knowledge.length === 0) return { inserted: 0 };
+        const oldRows = this.db.prepare(`
+          SELECT * FROM character_knowledge
+          WHERE learned_at_chapter_id = ? AND source_decision_id IS NULL AND status = 'active'
+        `).all(input.chapterId) as Record<string, unknown>[];
 
-      const now = new Date().toISOString();
-      const stmt = this.db.prepare(`
-        INSERT INTO character_knowledge (
-          id, project_id, character_id, character_name, fact_description,
-          source, learned_at_chapter_id, source_kind, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'chapter_extraction', ?)
-      `);
+        for (const old of oldRows) {
+          const oldId = old.id as string;
+          this.db.prepare(
+            `UPDATE character_knowledge SET status = 'superseded' WHERE id = ?`,
+          ).run(oldId);
+          const snap = makeSnapshot(this.rowToKnowledge({ ...old, status: 'superseded' }));
+          const appended = transitions.append({
+            projectId: input.projectId,
+            targetTable: 'character_knowledge',
+            targetId: oldId,
+            kind: 'superseded',
+            atChapterId: input.chapterId,
+            afterSnapshot: snap,
+            pendingInTx: pending,
+          });
+          if (!appended.success || !appended.data) throw new Error(appended.error || '转换写入失败');
+          pending.push(appended.data);
+        }
 
-      for (const k of input.knowledge) {
-        const id = crypto.randomUUID();
-        stmt.run(id, input.projectId, k.characterId || null, k.characterName, k.factDescription, k.source, k.learnedAtChapterId || null, now);
-      }
-      return { inserted: input.knowledge.length };
-    });
+        if (input.knowledge.length === 0) return { inserted: 0 };
 
-    const result = tx();
-    return { success: true, data: result };
+        const stmt = this.db.prepare(`
+          INSERT INTO character_knowledge (
+            id, project_id, character_id, character_name, fact_description,
+            source, learned_at_chapter_id, source_kind, status, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, 'chapter_extraction', 'active', ?)
+        `);
+
+        for (const k of input.knowledge) {
+          const id = crypto.randomUUID();
+          stmt.run(
+            id,
+            input.projectId,
+            k.characterId || null,
+            k.characterName,
+            k.factDescription,
+            k.source,
+            k.learnedAtChapterId || null,
+            now,
+          );
+          const knowledge = this.findKnowledgeById(id).data!;
+          const appended = transitions.append({
+            projectId: input.projectId,
+            targetTable: 'character_knowledge',
+            targetId: id,
+            kind: 'created',
+            atChapterId: input.chapterId,
+            afterSnapshot: makeSnapshot(knowledge),
+            pendingInTx: pending,
+          });
+          if (!appended.success || !appended.data) throw new Error(appended.error || '转换写入失败');
+          pending.push(appended.data);
+        }
+        return { inserted: input.knowledge.length };
+      });
+
+      return { success: true, data: tx() };
+    } catch (err) {
+      return { success: false, error: (err as Error).message };
+    }
   }
 
   findKnowledgeById(id: string): IpcResult<CharacterKnowledge> {

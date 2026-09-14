@@ -409,15 +409,26 @@ const App: React.FC = () => {
   useEffect(() => {
     const projectId = activeProject?.id;
     setAiRuntimeContext(null);
-    if (projectId) void aiRuntimeContextLoader.load(projectId);
-    else aiRuntimeContextLoader.invalidate();
-  }, [activeProject?.id, aiRuntimeContextLoader]);
+    if (projectId) {
+      void aiRuntimeContextLoader.load(projectId, {
+        taskType: 'chat',
+        targetChapterId: activeChapter?.id ?? null,
+        hasActiveChapter: !!activeChapter,
+      });
+    } else {
+      aiRuntimeContextLoader.invalidate();
+    }
+  }, [activeProject?.id, activeChapter?.id, aiRuntimeContextLoader]);
 
   const refreshAiRuntimeContext = useCallback(async () => {
     if (!activeProject) return;
-    const status = await aiRuntimeContextLoader.load(activeProject.id);
+    const status = await aiRuntimeContextLoader.load(activeProject.id, {
+      taskType: 'chat',
+      targetChapterId: activeChapter?.id ?? null,
+      hasActiveChapter: !!activeChapter,
+    });
     if (status === 'failed') throw new Error('AI 运行时上下文刷新失败');
-  }, [activeProject, aiRuntimeContextLoader]);
+  }, [activeProject, activeChapter?.id, aiRuntimeContextLoader]);
 
   const refreshObsidian = useCallback(() => {
     if (activeProject) void obsidianLoader.load(activeProject.id);
@@ -1125,6 +1136,9 @@ const App: React.FC = () => {
       ? planningSnapshot.planning
       : null;
     const planningContext = formatPlanningAuthorityContext(planning, activeChapter);
+    const asOfText = aiRuntimeContext?.projectId === activeProject.id
+      ? aiRuntimeContext.narrativeAsOfText
+      : undefined;
     const messages = ContextBuilder.build({
       project: activeProject,
       currentChapter: activeChapter ?? undefined,
@@ -1132,15 +1146,22 @@ const App: React.FC = () => {
       worldEntries: worldEntries.length > 0 ? worldEntries : undefined,
       outlineNodes: outlineNodes.length > 0 ? outlineNodes : undefined,
       obsidianDocuments: obsidianDocuments.length > 0 ? obsidianDocuments : undefined,
-      storyFacts: aiRuntimeContext?.projectId === activeProject.id
-        ? aiRuntimeContext.storyFacts : undefined,
-      characterKnowledge: aiRuntimeContext?.projectId === activeProject.id
-        ? aiRuntimeContext.characterKnowledge : undefined,
+      // 有 as-of 文本时不再双注入原始事实/知识
+      storyFacts: asOfText
+        ? undefined
+        : (aiRuntimeContext?.projectId === activeProject.id ? aiRuntimeContext.storyFacts : undefined),
+      characterKnowledge: asOfText
+        ? undefined
+        : (aiRuntimeContext?.projectId === activeProject.id
+          ? aiRuntimeContext.characterKnowledge
+          : undefined),
+      narrativeAsOfText: asOfText,
       planningContext,
     });
-    const narrativeContext = aiRuntimeContext?.projectId === activeProject.id
-      ? aiRuntimeContext.narrativeContext
-      : '';
+    // as-of 已进 ContextBuilder；旧 hooks 字符串通道仅作无 as-of 时的兜底
+    const narrativeContext = asOfText
+      ? ''
+      : (aiRuntimeContext?.projectId === activeProject.id ? aiRuntimeContext.narrativeContext : '');
     return narrativeContext
       ? [...messages, { role: 'system' as const, content: narrativeContext }]
       : messages;

@@ -15,6 +15,8 @@ export interface ContextSources {
   obsidianDocuments?: ObsidianDocument[];
   /** A4a：策划结构上下文（已由渲染端 formatPlanningAuthorityContext 格式化的有界文本） */
   planningContext?: string | null;
+  /** 叙事时间 as-of 截面（Main 已按 taskType 折叠） */
+  narrativeAsOfText?: string | null;
 }
 
 // ============================================================
@@ -224,7 +226,9 @@ export class ContextBuilder {
     }
 
     // 9. 叙事事实层（角色当前状态、已知信息）[priority=8]
-    if (sources.storyFacts && sources.storyFacts.length > 0) {
+    if (sources.narrativeAsOfText) {
+      blocks.push({ text: sources.narrativeAsOfText, priority: 8 });
+    } else if (sources.storyFacts && sources.storyFacts.length > 0) {
       const text = getStoryFactsContext(sources.storyFacts);
       if (text) blocks.push({ text, priority: 8 });
     }
