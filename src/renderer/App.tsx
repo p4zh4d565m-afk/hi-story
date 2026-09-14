@@ -35,6 +35,7 @@ import type { ImportToRefResult } from './components/ImportDialog';
 import type { CharacterRelation } from './components/MindMap';
 import type { SimilarityResult, SearchAllResult } from '../main/ai/similarity';
 import { createProjectDataLoader } from './services/project-data-loader';
+import { createChapterDeletion, fixActiveChapterId } from './services/chapter-deletion';
 import { createImportedEntitiesRefresher } from './services/imported-entities-refresher';
 import { createObsidianLoader } from './services/obsidian-loader';
 import { createAiRuntimeContextLoader, type AiRuntimeContextSnapshot } from './services/ai-runtime-context-loader';
@@ -500,45 +501,38 @@ const App: React.FC = () => {
     });
   }, [chapters, pushUndo]);
 
+  // 应用完整章节列表：同步修正活动章（当前活动章被删时落到第一章或 null）。
+  // 所有「覆盖 chapters」的入口（删除/撤销/重做）都走这里，避免留下悬空 activeChapterId。
+  const applyChapterList = useCallback((list: Chapter[]) => {
+    setChapters(list);
+    setActiveChapterId(prev => fixActiveChapterId(prev, list));
+  }, []);
+
+  // 章节删除/撤销/重做编排：双层守卫（项目选择 ticket + 同项目操作序号）。
+  const chapterDeletion = useMemo(() => createChapterDeletion({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    snapshotSelection,
+    isSelectionCurrent,
+    applyChapters: applyChapterList,
+    alert,
+  }), [snapshotSelection, isSelectionCurrent, applyChapterList]);
+
   const handleDeleteChapter = useCallback(async (id: string) => {
     const ch = chapters.find(c => c.id === id);
     if (!ch) return;
 
-    // 执行删除：IPC 返回事务完成后的完整活跃章节列表（原子，无二次查询窗口）
-    const ticket = snapshotProjectSelection();
-    const res = await window.electronAPI.invoke('db:chapter:remove', id) as any;
-    if (!res?.success || !Array.isArray(res.data)) {
-      alert('删除失败：' + (res?.error || '未知错误'));
-      return;
-    }
+    // 删除编排在 chapterDeletion 服务里（双层守卫 + 活动章修正），
+    // 这里只负责：DB 删除成功后才入撤销栈（失败已 alert 并 return）。
+    const ok = await chapterDeletion.deleteChapter(ch);
+    if (!ok) return;
 
-    // 数据库已删除成功：先入撤销栈，撤销记录不受 UI 回执 stale 影响
     pushUndo({
       id: 'undo_' + Date.now(),
       label: `删除章节「${ch.title}」`,
-      undo: async () => {
-        const r = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
-        if (!r?.success || !Array.isArray(r.data)) {
-          throw new Error(r?.error || '恢复失败');
-        }
-        // 仅当项目选择仍是最新时更新 UI；否则只保留数据库结果
-        if (isProjectSelectionCurrent(ticket)) setChapters(r.data);
-      },
-      redo: async () => {
-        const r = await window.electronAPI.invoke('db:chapter:remove', ch.id) as any;
-        if (!r?.success || !Array.isArray(r.data)) {
-          throw new Error(r?.error || '重做失败');
-        }
-        if (isProjectSelectionCurrent(ticket)) setChapters(r.data);
-      },
+      undo: chapterDeletion.buildUndo(ch),
+      redo: chapterDeletion.buildRedo(ch),
     });
-
-    // UI 更新受项目选择 ticket 守卫：回执时项目已切换（含 A→B→A）则丢弃，不污染当前项目
-    if (isProjectSelectionCurrent(ticket)) {
-      setChapters(res.data);
-      if (activeChapterId === id) setActiveChapterId(res.data[0]?.id ?? null);
-    }
-  }, [chapters, pushUndo, activeChapterId, snapshotProjectSelection, isProjectSelectionCurrent]);
+  }, [chapters, pushUndo, chapterDeletion]);
 
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);
