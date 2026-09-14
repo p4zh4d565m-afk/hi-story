@@ -4,7 +4,7 @@
 >
 > 基线提交：`e9b3710`
 >
-> 本文档是本轮修订与验收的唯一依据。实施时不得只依据 `development-report.md`；报告必须如实区分“实现完成”“自动测试通过”和“真实烟测通过”。
+> 本文档是本轮修订与验收的唯一依据。实施时不得只依据 `docs/reports/obsidian-import-development-report.md`；报告必须如实区分“实现完成”“自动测试通过”和“真实烟测通过”。
 
 ## 一句话目标
 
@@ -122,7 +122,7 @@ reparse 后保留 override 当前使用原始 `sourceName === sourceName`。应�
 - 刷新失败只重试刷新。
 - 对应仓储、Guard、组件和真实 Electron DOM 回归。
 - 在全部自动检查通过后执行真实 Obsidian 目录副本烟测。
-- 完成后精简更新 `AGENTS.md` 和 `development-report.md`。
+- 完成后精简更新 `AGENTS.md` 和 `docs/reports/obsidian-import-development-report.md`。
 
 本轮不包含：
 
@@ -352,7 +352,7 @@ commit 成功即视为数据库写入完成。此后：
 8. 重写 8.3 真实 DOM 回归并断言三层 JSON 内容。
 9. 运行全量单元测试、主进程构建、Vite 构建和三套真实 UI 回归。
 10. 获得授权后执行 8.4 真实目录副本烟测。
-11. 精简更新 `AGENTS.md` 与 `development-report.md`，报告不得隐藏未执行项。
+11. 精简更新 `AGENTS.md` 与 `docs/reports/obsidian-import-development-report.md`，报告不得隐藏未执行项。
 
 每个步骤独立提交，禁止把用户当前未提交的 `src/renderer/App.tsx` 或 `.codex/` 文件混入。
 
