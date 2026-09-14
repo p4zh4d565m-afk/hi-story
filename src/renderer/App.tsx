@@ -77,7 +77,8 @@ class ErrorBoundary extends React.Component<{ children: React.ReactNode }, { err
 
 const App: React.FC = () => {
   const { projects, activeProject, loading: projectsLoading, creating: creatingProject,
-    setActiveProjectId, isActiveProject, createProject, updateProject, deleteProject } = useProject();
+    setActiveProjectId, isActiveProject, snapshotProjectSelection, isProjectSelectionCurrent,
+    createProject, updateProject, deleteProject } = useProject();
 
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showImportDialog, setShowImportDialog] = useState(false);
@@ -299,8 +300,6 @@ const App: React.FC = () => {
 
   // ===== 项目数据加载 =====
   const loadedProjectIdRef = useRef<string | null>(null);
-  // 章节结构操作（删/恢复/重做）代次：防止迟到的 findByProject 回执覆盖较新的操作结果
-  const chapterOpsSeqRef = useRef(0);
   const resetProjectData = useCallback(() => {
     setChapters([]); setActiveChapterId(null);
     setOutlineNodes([]); setActiveOutlineNodeId(null);
@@ -353,8 +352,6 @@ const App: React.FC = () => {
   useEffect(() => {
     if (prevProjectIdRef.current && prevProjectIdRef.current !== activeProject?.id) {
       aiService.ignoreProjectStreams(prevProjectIdRef.current);
-      // 项目切换作废在途章节操作代次，防止 A→B→A 后旧回执覆盖新状态
-      chapterOpsSeqRef.current += 1;
     }
     prevProjectIdRef.current = activeProject?.id ?? null;
   }, [activeProject?.id]);
@@ -508,46 +505,40 @@ const App: React.FC = () => {
     if (!ch) return;
 
     // 执行删除：IPC 返回事务完成后的完整活跃章节列表（原子，无二次查询窗口）
-    const activeProjectId = activeProject?.id;
-    const opSeq = ++chapterOpsSeqRef.current;
+    const ticket = snapshotProjectSelection();
     const res = await window.electronAPI.invoke('db:chapter:remove', id) as any;
     if (!res?.success || !Array.isArray(res.data)) {
       alert('删除失败：' + (res?.error || '未知错误'));
       return;
     }
-    if (chapterOpsSeqRef.current !== opSeq) return; // 期间已有更新操作，丢弃本次回执
-    if (!isActiveProject(activeProjectId)) return;   // 项目已切换
-    setChapters(res.data);
-    if (activeChapterId === id) setActiveChapterId(res.data[0]?.id ?? null);
 
-    // 推入撤销栈（命令模式）
+    // 数据库已删除成功：先入撤销栈，撤销记录不受 UI 回执 stale 影响
     pushUndo({
       id: 'undo_' + Date.now(),
       label: `删除章节「${ch.title}」`,
       undo: async () => {
-        const undoSeq = ++chapterOpsSeqRef.current;
         const r = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
         if (!r?.success || !Array.isArray(r.data)) {
-          alert('恢复失败：' + (r?.error || '未知错误'));
-          return;
+          throw new Error(r?.error || '恢复失败');
         }
-        if (chapterOpsSeqRef.current !== undoSeq) return;
-        if (!isActiveProject(activeProjectId)) return;
-        setChapters(r.data);
+        // 仅当项目选择仍是最新时更新 UI；否则只保留数据库结果
+        if (isProjectSelectionCurrent(ticket)) setChapters(r.data);
       },
       redo: async () => {
-        const redoSeq = ++chapterOpsSeqRef.current;
         const r = await window.electronAPI.invoke('db:chapter:remove', ch.id) as any;
         if (!r?.success || !Array.isArray(r.data)) {
-          alert('重做失败：' + (r?.error || '未知错误'));
-          return;
+          throw new Error(r?.error || '重做失败');
         }
-        if (chapterOpsSeqRef.current !== redoSeq) return;
-        if (!isActiveProject(activeProjectId)) return;
-        setChapters(r.data);
+        if (isProjectSelectionCurrent(ticket)) setChapters(r.data);
       },
     });
-  }, [activeChapterId, chapters, pushUndo, activeProject?.id, isActiveProject]);
+
+    // UI 更新受项目选择 ticket 守卫：回执时项目已切换（含 A→B→A）则丢弃，不污染当前项目
+    if (isProjectSelectionCurrent(ticket)) {
+      setChapters(res.data);
+      if (activeChapterId === id) setActiveChapterId(res.data[0]?.id ?? null);
+    }
+  }, [chapters, pushUndo, activeChapterId, snapshotProjectSelection, isProjectSelectionCurrent]);
 
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);

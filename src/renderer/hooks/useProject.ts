@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { Project, CreateProjectInput, UpdateProjectInput } from '../types';
-import { createProjectSelectionGuard } from '../services/project-data-loader';
+import { createProjectSelectionGuard, type ProjectSelectionTicket } from '../services/project-data-loader';
 
 interface UseProjectReturn {
   projects: Project[];
@@ -9,6 +9,10 @@ interface UseProjectReturn {
   creating: boolean;
   setActiveProjectId: (id: string | null) => void;
   isActiveProject: (id: string) => boolean;
+  /** 捕获当前项目选择 ticket（含 generation），供异步回执做真选择守卫 */
+  snapshotProjectSelection: () => ProjectSelectionTicket;
+  /** 校验 ticket 是否仍是最新选择（项目 id + generation 都匹配） */
+  isProjectSelectionCurrent: (ticket: ProjectSelectionTicket) => boolean;
   createProject: (input: CreateProjectInput) => Promise<Project | null>;
   updateProject: (input: UpdateProjectInput) => Promise<Project | null>;
   deleteProject: (id: string) => Promise<void>;
@@ -31,6 +35,14 @@ export function useProject(): UseProjectReturn {
 
   const isActiveProject = useCallback((id: string) => (
     selectionGuardRef.current.currentProjectId() === id
+  ), []);
+
+  const snapshotProjectSelection = useCallback((): ProjectSelectionTicket => (
+    selectionGuardRef.current.snapshot()
+  ), []);
+
+  const isProjectSelectionCurrent = useCallback((ticket: ProjectSelectionTicket) => (
+    selectionGuardRef.current.isCurrent(ticket)
   ), []);
 
   const refreshProjects = useCallback(async () => {
@@ -135,6 +147,8 @@ export function useProject(): UseProjectReturn {
     creating,
     setActiveProjectId: selectProject,
     isActiveProject,
+    snapshotProjectSelection,
+    isProjectSelectionCurrent,
     createProject,
     updateProject,
     deleteProject,
