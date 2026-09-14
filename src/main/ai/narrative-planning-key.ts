@@ -20,6 +20,9 @@ export function splitOutlineIdentity(
   original: OutlineIdentity,
   newChapterId: string,
 ): { original: OutlineIdentity; newChapter: OutlineIdentity } {
+  if (newChapterId === original.id) {
+    throw new Error('拆章新章 id 不得与原章相同');
+  }
   return {
     original: { ...original },
     newChapter: {

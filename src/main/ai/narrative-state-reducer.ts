@@ -249,7 +249,6 @@ function foldEntityFromTransitions<T extends { id: string }>(
   aliases: ChapterAlias[],
   target: ChapterPosition | null,
   mode: TimeMode,
-  mergeSnapshot: (base: T, data: unknown) => T,
 ): ReductionResult<T> {
   assertTargetCompatible(chapters, target);
   if (mode === 'planning_only') {
@@ -263,19 +262,21 @@ function foldEntityFromTransitions<T extends { id: string }>(
     .sort((a, b) => compareTransition(a, b, chapters, aliases));
 
   if (included.length === 0) {
+    // Spec 4.3：project_latest 可继续显示当前投影；历史截面不得注入
     if (mode === 'project_latest') {
-      // 无转换时 latest 可回退当前投影（本 P1 测试未强制）；历史截面必须拒绝
-      return { data: null, historyWarnings: [historyIncomplete(entity.id)] };
+      return { data: { ...entity }, historyWarnings: emptyWarnings() };
     }
     return { data: null, historyWarnings: [historyIncomplete(entity.id)] };
   }
 
-  let current: T = { ...entity };
-  for (const t of included) {
-    assertKnownSnapshot(t.afterSnapshot);
-    current = mergeSnapshot(current, t.afterSnapshot.data);
-  }
-  return { data: current, historyWarnings: emptyWarnings() };
+  // 结果只能来自完整快照，不得以当前投影为底再覆盖（防字段穿越）
+  const last = included[included.length - 1]!;
+  assertKnownSnapshot(last.afterSnapshot);
+  const snapshotData = (last.afterSnapshot.data ?? {}) as Record<string, unknown>;
+  return {
+    data: { ...snapshotData, id: entity.id } as T,
+    historyWarnings: emptyWarnings(),
+  };
 }
 
 function recordInScope(
@@ -387,19 +388,17 @@ export function accumulateEventsAsOf(
   return { data: events, historyWarnings: emptyWarnings() };
 }
 
-function mergeHook(base: HookInput, data: unknown): HookInput {
-  const d = (data ?? {}) as Partial<HookInput>;
-  return { ...base, ...d, id: base.id };
-}
-
-function mergeDebt(base: DebtInput, data: unknown): DebtInput {
-  const d = (data ?? {}) as Partial<DebtInput>;
-  return { ...base, ...d, id: base.id };
-}
-
-function mergeKnowledge(base: KnowledgeInput, data: unknown): KnowledgeInput {
-  const d = (data ?? {}) as Partial<KnowledgeInput>;
-  return { ...base, ...d, id: base.id };
+function assertPrimaryChapterActive(
+  chapterId: string,
+  chapters: ChapterPosition[],
+  aliases: ChapterAlias[],
+  target: ChapterPosition | null,
+  mode: TimeMode,
+): ReductionResult<never> | null {
+  if (mode === 'planning_only') return null;
+  if (isActiveChapterRef(chapterId, chapters, aliases)) return null;
+  assertTargetCompatible(chapters, target);
+  return { data: null, historyWarnings: emptyWarnings() };
 }
 
 export function reduceHookAsOf(
@@ -410,7 +409,9 @@ export function reduceHookAsOf(
   target: ChapterPosition | null,
   mode: TimeMode,
 ): ReductionResult<HookInput> {
-  return foldEntityFromTransitions(hook, transitions, chapters, aliases, target, mode, mergeHook);
+  const excluded = assertPrimaryChapterActive(hook.chapterId, chapters, aliases, target, mode);
+  if (excluded) return excluded as ReductionResult<HookInput>;
+  return foldEntityFromTransitions(hook, transitions, chapters, aliases, target, mode);
 }
 
 export function reduceDebtAsOf(
@@ -421,7 +422,9 @@ export function reduceDebtAsOf(
   target: ChapterPosition | null,
   mode: TimeMode,
 ): ReductionResult<DebtInput> {
-  return foldEntityFromTransitions(debt, transitions, chapters, aliases, target, mode, mergeDebt);
+  const excluded = assertPrimaryChapterActive(debt.chapterId, chapters, aliases, target, mode);
+  if (excluded) return excluded as ReductionResult<DebtInput>;
+  return foldEntityFromTransitions(debt, transitions, chapters, aliases, target, mode);
 }
 
 export function reduceKnowledgeAsOf(
@@ -432,20 +435,15 @@ export function reduceKnowledgeAsOf(
   target: ChapterPosition | null,
   mode: TimeMode,
 ): ReductionResult<KnowledgeInput> {
-  // 主锚在墓碑且无 alias 时，排除
-  if (mode !== 'planning_only' && !isActiveChapterRef(knowledge.learnedAtChapterId, chapters, aliases)) {
-    assertTargetCompatible(chapters, target);
-    return { data: null, historyWarnings: emptyWarnings() };
-  }
-  return foldEntityFromTransitions(
-    knowledge,
-    transitions,
+  const excluded = assertPrimaryChapterActive(
+    knowledge.learnedAtChapterId,
     chapters,
     aliases,
     target,
     mode,
-    mergeKnowledge,
   );
+  if (excluded) return excluded as ReductionResult<KnowledgeInput>;
+  return foldEntityFromTransitions(knowledge, transitions, chapters, aliases, target, mode);
 }
 
 export function deriveDebtOverdue(
@@ -455,6 +453,7 @@ export function deriveDebtOverdue(
   target: ChapterPosition | null,
 ): boolean {
   if (!target) return false;
+  assertTargetCompatible(chapters, target);
   if (debt.status !== 'unpaid') return false;
   if (!debt.dueChapterId) return false;
   if (!isActiveChapterRef(debt.dueChapterId, chapters, aliases)) return false;

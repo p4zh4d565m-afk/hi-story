@@ -278,6 +278,133 @@ describe('narrative-state-reducer', () => {
     expect(r.data).toEqual(expect.objectContaining({ status: 'open', description: 'old-desc' }));
   });
 
+  it('P1-2 快照漏字段时不得泄漏当前投影的未来描述', () => {
+    const hook: HookInput = {
+      id: 'h1',
+      chapterId: 'ch50',
+      status: 'resolved',
+      description: '未来描述',
+    };
+    const transitions: Transition[] = [
+      tr({
+        targetId: 'h1',
+        kind: 'created',
+        atChapterId: 'ch50',
+        // 故意不完整：只有 status，没有 description
+        afterSnapshot: snap({ status: 'open', chapterId: 'ch50' }),
+      }),
+      tr({
+        targetId: 'h1',
+        kind: 'resolved',
+        atChapterId: 'ch80',
+        afterSnapshot: snap({ status: 'resolved', description: '未来描述', chapterId: 'ch50' }),
+      }),
+    ];
+    const r = reduceHookAsOf(hook, transitions, baseChapters, [], ch('ch50', 0), 'through_target');
+    expect(r.data?.status).toBe('open');
+    expect(r.data?.description).toBeUndefined();
+    expect(r.data).not.toEqual(expect.objectContaining({ description: '未来描述' }));
+  });
+
+  it('P1-1 墓碑来源章的 hook/debt 即使后续有 resolved 转换也排除', () => {
+    const chapters = [ch('alive', 0), ch('tomb', null, { deletedSortOrder: 1 }), ch('ch80', 1)];
+    const hook: HookInput = {
+      id: 'h-tomb',
+      chapterId: 'tomb',
+      status: 'resolved',
+      description: '应被排除',
+      resolvedInChapterId: 'ch80',
+    };
+    const hookTransitions: Transition[] = [
+      tr({
+        targetId: 'h-tomb',
+        kind: 'created',
+        atChapterId: 'tomb',
+        afterSnapshot: snap({ status: 'open', chapterId: 'tomb' }),
+      }),
+      tr({
+        targetId: 'h-tomb',
+        kind: 'resolved',
+        atChapterId: 'ch80',
+        afterSnapshot: snap({ status: 'resolved', chapterId: 'tomb', resolvedInChapterId: 'ch80' }),
+      }),
+    ];
+    const hookResult = reduceHookAsOf(
+      hook,
+      hookTransitions,
+      chapters,
+      [],
+      ch('ch80', 1),
+      'through_target',
+    );
+    expect(hookResult.data).toBeNull();
+
+    const debt: DebtInput = {
+      id: 'd-tomb',
+      chapterId: 'tomb',
+      status: 'paid',
+      paidInChapterId: 'ch80',
+    };
+    const debtTransitions: Transition[] = [
+      tr({
+        targetId: 'd-tomb',
+        kind: 'created',
+        atChapterId: 'tomb',
+        afterSnapshot: snap({ status: 'unpaid', chapterId: 'tomb' }),
+      }),
+      tr({
+        targetId: 'd-tomb',
+        kind: 'paid',
+        atChapterId: 'ch80',
+        afterSnapshot: snap({ status: 'paid', chapterId: 'tomb', paidInChapterId: 'ch80' }),
+      }),
+    ];
+    const debtResult = reduceDebtAsOf(
+      debt,
+      debtTransitions,
+      chapters,
+      [],
+      ch('ch80', 1),
+      'through_target',
+    );
+    expect(debtResult.data).toBeNull();
+  });
+
+  it('P1-3 project_latest 无转换时回退当前投影', () => {
+    const hook: HookInput = {
+      id: 'h-legacy',
+      chapterId: 'ch50',
+      status: 'open',
+      description: '旧投影',
+    };
+    const r = reduceHookAsOf(hook, [], baseChapters, [], null, 'project_latest');
+    expect(r.data).toEqual(hook);
+    expect(r.historyWarnings).toEqual([]);
+
+    const debt: DebtInput = {
+      id: 'd-legacy',
+      chapterId: 'ch50',
+      status: 'unpaid',
+    };
+    const dr = reduceDebtAsOf(debt, [], baseChapters, [], null, 'project_latest');
+    expect(dr.data).toEqual(debt);
+  });
+
+  it('P1-4 deriveDebtOverdue 对不存在/已删目标章显式抛错', () => {
+    const debt: DebtInput = {
+      id: 'd1',
+      chapterId: 'ch50',
+      status: 'unpaid',
+      dueChapterId: 'ch50',
+    };
+    expect(() =>
+      deriveDebtOverdue(debt, baseChapters, [], ch('missing', 0)),
+    ).toThrow();
+    expect(() =>
+      deriveDebtOverdue(debt, [ch('tomb', null, { deletedSortOrder: 0 })], [], ch('tomb', null, { deletedSortOrder: 0 })),
+    ).toThrow();
+  });
+
   // —— T18 ——
   it('T18 同章多转换按 ordinal/seq 折叠，defaultOrdinalForAppend 可复现', () => {
     const chapters = [ch('c1', 0)];
@@ -493,8 +620,16 @@ describe('narrative-state-reducer', () => {
       ];
       const after80 = reduceHookAsOf(hook, transitions, chapters, aliases, ch('ch80', 3), 'through_target');
       expect(after80.data?.status).toBe('resolved');
+      expect(after80.data?.dueChapterId).toBe('merged');
+      expect(after80.data?.resolvedInChapterId).toBe('ch80');
+      // 副锚 due=merged 经 alias 解析到活跃幸存章，可参与故事位置
+      expect(storyPositionOf(after80.data!.dueChapterId!, chapters, aliases).id).toBe('surv');
+
       const at60 = reduceHookAsOf(hook, transitions, chapters, aliases, ch('ch60', 2), 'through_target');
       expect(at60.data?.status).toBe('open');
+      expect(at60.data?.dueChapterId).toBe('merged');
+      expect(at60.data?.resolvedInChapterId).toBeUndefined();
+      expect(storyPositionOf(at60.data!.dueChapterId!, chapters, aliases).id).toBe('surv');
     });
 
     it('debt 主锚+副锚：paid 不压扁', () => {
@@ -512,12 +647,16 @@ describe('narrative-state-reducer', () => {
           afterSnapshot: snap({ status: 'paid', chapterId: 'merged', paidInChapterId: 'ch90' }),
         }),
       ];
-      expect(
-        reduceDebtAsOf(debt, transitions, chapters, aliases, ch('ch90', 4), 'through_target').data?.status,
-      ).toBe('paid');
-      expect(
-        reduceDebtAsOf(debt, transitions, chapters, aliases, ch('ch60', 2), 'through_target').data?.status,
-      ).toBe('unpaid');
+      const paid = reduceDebtAsOf(debt, transitions, chapters, aliases, ch('ch90', 4), 'through_target');
+      expect(paid.data?.status).toBe('paid');
+      expect(paid.data?.paidInChapterId).toBe('ch90');
+      expect(paid.data?.chapterId).toBe('merged');
+      expect(storyPositionOf(paid.data!.chapterId, chapters, aliases).id).toBe('surv');
+
+      const unpaid = reduceDebtAsOf(debt, transitions, chapters, aliases, ch('ch60', 2), 'through_target');
+      expect(unpaid.data?.status).toBe('unpaid');
+      expect(unpaid.data?.paidInChapterId).toBeUndefined();
+      expect(unpaid.data?.chapterId).toBe('merged');
     });
 
     it('不撞车：compareTransition 恒非 0，乱序归约稳定', () => {

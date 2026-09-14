@@ -34,6 +34,7 @@ describe('narrative-planning-key', () => {
       }),
     ).toBe(true);
     expect(sameOutlineIdentity(original, { ...original, id: 'other' })).toBe(false);
+    expect(() => splitOutlineIdentity(original, 'out-1')).toThrow();
   });
 
   // T16
