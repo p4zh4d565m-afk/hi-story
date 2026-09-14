@@ -55,6 +55,7 @@ let control: {
   redo: () => Promise<void>;
   selectChapter: (id: string) => void;
   switchProject: (id: string) => void;
+  switchProjectStale: (id: string) => void;
 };
 
 function Fixture() {
@@ -96,12 +97,18 @@ function Fixture() {
     setActiveId(list[0]?.id ?? null);
   };
 
+  // 只切守卫、不清空 chapters —— 模拟切项目瞬间旧章节 UI 尚未清空（stale 窗口）。
+  const switchProjectStale = (id: string) => {
+    guard.select(id);
+  };
+
   control = {
     deleteChapter,
     undo: async () => { await undo(); },
     redo: async () => { await redo(); },
     selectChapter: setActiveId,
     switchProject,
+    switchProjectStale,
   };
 
   return (
@@ -181,6 +188,19 @@ const cases: Array<[string, () => Promise<void>]> = [
     await control.redo();
     await until(() => chapterIds().join(',') === 'c1');
     assert(activeId() === 'c1', '重做删除活动章 c2 后活动章不能悬空为 c2');
+  }],
+  ['跨项目旧章节删除被拒绝：不误删他项目章节', async () => {
+    control.switchProject('A');
+    flushSync();
+    // 切到 B 但旧章节 UI 尚未清空（stale 窗口）
+    control.switchProjectStale('B');
+    flushSync();
+
+    await control.deleteChapter('c2'); // c2 属于 A，当前选择已是 B
+    await tick();
+
+    assert(chapterIds().join(',') === 'c1,c2', '跨项目旧章节不应被删除');
+    assert(!!findInStore('c2'), 'A 的 c2 应仍在 DB 中');
   }],
 ];
 

@@ -511,11 +511,11 @@ const App: React.FC = () => {
   // 章节删除/撤销/重做编排：双层守卫（项目选择 ticket + 同项目操作序号）。
   const chapterDeletion = useMemo(() => createChapterDeletion({
     invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
-    snapshotSelection,
-    isSelectionCurrent,
+    snapshotSelection: snapshotProjectSelection,
+    isSelectionCurrent: isProjectSelectionCurrent,
     applyChapters: applyChapterList,
     alert,
-  }), [snapshotSelection, isSelectionCurrent, applyChapterList]);
+  }), [snapshotProjectSelection, isProjectSelectionCurrent, applyChapterList]);
 
   const handleDeleteChapter = useCallback(async (id: string) => {
     const ch = chapters.find(c => c.id === id);

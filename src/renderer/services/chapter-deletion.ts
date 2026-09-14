@@ -52,31 +52,48 @@ export interface ChapterDeletion {
 }
 
 export function createChapterDeletion(deps: ChapterDeletionDeps): ChapterDeletion {
-  // 同项目操作序号：阻止同一项目内并发删除/撤销/重做的旧回执覆盖新列表。
+  // 同项目操作序号：标识同一项目内章节结构操作（删/撤/重做）的先后。
   // 项目选择 ticket 只防「跨项目」乱序（A→B→A），防不了「同项目」乱序。
   const opSeq: Record<string, number> = {};
+  // 最近一次「已成功应用」的序号。失败的操作不推进它，因此「后发操作失败、
+  // 先发成功晚回」时，先发的成功回执不会被失败操作淘汰、仍会生效。
+  const appliedSeq: Record<string, number> = {};
 
   const nextOpSeq = (projectId: string): number => {
     const next = (opSeq[projectId] ?? 0) + 1;
     opSeq[projectId] = next;
     return next;
   };
-  const isOpCurrent = (projectId: string, seq: number): boolean => opSeq[projectId] === seq;
+
+  // 仅当（1）项目选择 ticket 仍是最新，且（2）本序号比最近已应用序号更新时，才应用返回列表，
+  // 并记录已应用序号。旧回执不覆盖新列表；失败回执不推进 appliedSeq，不淘汰后续成功回执。
+  const applyIfCurrent = (
+    ticket: ProjectSelectionTicket,
+    projectId: string,
+    seq: number,
+    list: Chapter[],
+  ): void => {
+    if (deps.isSelectionCurrent(ticket) && seq > (appliedSeq[projectId] ?? 0)) {
+      deps.applyChapters(list);
+      appliedSeq[projectId] = seq;
+    }
+  };
 
   const deleteChapter = async (chapter: Chapter): Promise<boolean> => {
     const ticket = deps.snapshotSelection();
-    if (!ticket.projectId) return false;
-    const seq = nextOpSeq(ticket.projectId);
+    const projectId = ticket.projectId;
+    // 项目归属校验：章节必须属于当前选中项目，否则拒绝删除。
+    // 防切项目瞬间旧章节 UI 尚未清空时，误删他项目章节并把返回列表应用到当前界面。
+    if (!projectId || projectId !== chapter.projectId) return false;
+    const seq = nextOpSeq(projectId);
     const res = await deps.invoke('db:chapter:remove', chapter.id) as IpcArrayResult;
     if (!res?.success || !isChapterArray(res.data)) {
       deps.alert('删除失败：' + (res?.error || '未知错误'));
       return false;
     }
     // DB 已删除成功：无论 UI 回执是否 stale，都返回 true，让调用方无条件 pushUndo。
-    // UI 应用受「项目选择 ticket + 同项目序号」双层守卫，避免旧回执污染。
-    if (deps.isSelectionCurrent(ticket) && isOpCurrent(ticket.projectId, seq)) {
-      deps.applyChapters(res.data);
-    }
+    // UI 应用受「项目选择 ticket + 最新成功序号」双层守卫，避免旧回执污染。
+    applyIfCurrent(ticket, projectId, seq, res.data);
     return true;
   };
 
@@ -91,8 +108,8 @@ export function createChapterDeletion(deps: ChapterDeletionDeps): ChapterDeletio
       throw new Error(r?.error || '恢复失败');
     }
     // 当前项目不匹配时只恢复 DB、不碰当前 UI（UI 属于别的项目）。
-    if (matches && projectId && deps.isSelectionCurrent(ticket) && isOpCurrent(projectId, seq)) {
-      deps.applyChapters(r.data);
+    if (matches && projectId) {
+      applyIfCurrent(ticket, projectId, seq, r.data);
     }
   };
 
@@ -105,8 +122,8 @@ export function createChapterDeletion(deps: ChapterDeletionDeps): ChapterDeletio
     if (!r?.success || !isChapterArray(r.data)) {
       throw new Error(r?.error || '重做失败');
     }
-    if (matches && projectId && deps.isSelectionCurrent(ticket) && isOpCurrent(projectId, seq)) {
-      deps.applyChapters(r.data);
+    if (matches && projectId) {
+      applyIfCurrent(ticket, projectId, seq, r.data);
     }
   };
 

@@ -149,6 +149,44 @@ describe('章节删除 / 撤销 / 重做（双层守卫）', () => {
     expect(h.state().ids).toEqual(['c1', 'c2']); // 未被旧回执 [c1,c3] 覆盖
   });
 
+  it('后发操作失败、先发成功晚回：先发成功回执仍生效（不被失败序号淘汰）', async () => {
+    const c1 = makeChapter('c1', 'A', 0);
+    const c2 = makeChapter('c2', 'A', 1);
+    const c3 = makeChapter('c3', 'A', 2);
+    const h = createHarness([c1, c2, c3]);
+
+    // 并发两次删除：c2→seq1，c3→seq2
+    const p2 = h.svc.deleteChapter(c2);
+    const p3 = h.svc.deleteChapter(c3);
+    expect(h.calls.length).toBe(2);
+
+    // 后发起的删除（c3，seq2）先返回但失败——不应推进「已应用序号」
+    h.calls[1].resolve({ success: false, error: '删除失败' });
+    const ok3 = await p3;
+    expect(ok3).toBe(false);
+
+    // 先发起的删除（c2，seq1）晚回但成功——不能被失败的 seq2 淘汰
+    h.calls[0].resolve({ success: true, data: [c1, c3] });
+    const ok2 = await p2;
+    expect(ok2).toBe(true);
+    expect(h.state().ids).toEqual(['c1', 'c3']); // c2 已删，UI 同步
+  });
+
+  it('删除时章节不属于当前项目：拒绝删除，不 invoke 不应用', async () => {
+    const c1 = makeChapter('c1', 'A', 0);
+    const c2 = makeChapter('c2', 'A', 1);
+    const h = createHarness([c1, c2]);
+
+    // 切到别的项目，但章节仍属于 A（旧章节 UI 尚未清空的窗口）
+    h.guard.select('B');
+
+    const ok = await h.svc.deleteChapter(c2);
+
+    expect(ok).toBe(false);
+    expect(h.calls).toHaveLength(0); // 未发起删除 IPC
+    expect(h.applied).toHaveLength(0); // 未应用列表
+  });
+
   it('撤销时当前项目与章节不同：只恢复 DB，不碰当前 UI', async () => {
     const c1 = makeChapter('c1', 'A', 0);
     const c2 = makeChapter('c2', 'A', 1);
