@@ -509,25 +509,37 @@ const App: React.FC = () => {
       alert('删除失败：' + (res?.error || '未知错误'));
       return;
     }
-    setChapters(prev => prev.filter(ch => ch.id !== id));
-    if (activeChapterId === id) { const r = chapters.filter(ch => ch.id !== id); setActiveChapterId(r[0]?.id ?? null); }
+
+    // 软删会重排其余活跃章的 sort_order，须从 DB 拉完整列表，不能只 filter 本地数组
+    const activeProjectId = activeProject?.id;
+    const allRes = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
+    if (allRes?.success && Array.isArray(allRes.data) && isActiveProject(activeProjectId)) {
+      setChapters(allRes.data);
+      if (activeChapterId === id) setActiveChapterId(allRes.data[0]?.id ?? null);
+    }
 
     // 推入撤销栈（命令模式）
     pushUndo({
       id: 'undo_' + Date.now(),
       label: `删除章节「${ch.title}」`,
       undo: async () => {
-        const res = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
-        if (res.success && res.data) {
-          setChapters(prev => [...prev, res.data].sort((a, b) => a.sortOrder - b.sortOrder));
+        const r = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
+        if (r?.success) {
+          const restored = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
+          if (restored?.success && Array.isArray(restored.data) && isActiveProject(activeProjectId)) {
+            setChapters(restored.data);
+          }
         }
       },
       redo: async () => {
         await window.electronAPI.invoke('db:chapter:remove', ch.id);
-        setChapters(prev => prev.filter(c => c.id !== ch.id));
+        const removed = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
+        if (removed?.success && Array.isArray(removed.data) && isActiveProject(activeProjectId)) {
+          setChapters(removed.data);
+        }
       },
     });
-  }, [activeChapterId, chapters, pushUndo]);
+  }, [activeChapterId, chapters, pushUndo, activeProject?.id, isActiveProject]);
 
   const handleSaveChapter = useCallback(async (id: string, content: string) => {
     setSaving(true);

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3';
 import { findDecisionRelatedItems } from './decision-related-items';
-import { NarrativeTransitionRepo, makeSnapshot, type TransitionKind } from './narrative-transition.repo';
+import { NarrativeTransitionRepo, makeSnapshot, rowToNarrativeInput, type TransitionKind } from './narrative-transition.repo';
 import type {
   ConfirmCreativeDecisionsInput,
   CreateCreativeDecisionProposalsInput,
@@ -433,7 +433,10 @@ export class CreativeDecisionRepo {
         targetId: effect.targetId,
         kind,
         atChapterId,
-        afterSnapshot: makeSnapshot(afterRow),
+        afterSnapshot: makeSnapshot(rowToNarrativeInput(
+          effect.targetTable as 'story_facts' | 'character_knowledge' | 'narrative_hooks' | 'narrative_debts',
+          afterRow,
+        )),
         decisionId: decision.id,
         pendingInTx: pending,
       });

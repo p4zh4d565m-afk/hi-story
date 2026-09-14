@@ -129,4 +129,31 @@ describe('ChapterRepo 软删 / 恢复', () => {
     expect(repo.countByProject('p1')).toBe(countBefore - 1);
     expect(repo.totalWordsByProject('p1')).toBeLessThan(before);
   });
+
+  it('回归 删中间章→新建→恢复→重做，sortOrder 始终连续且不重复', () => {
+    const { a, b, c } = createThree();
+    // 删中间章 b：活跃 [a, c] → sortOrder 0,1
+    expect(repo.remove(b.id).success).toBe(true);
+    let listed = repo.findByProject('p1').data!;
+    expect(listed.map((x) => x.sortOrder)).toEqual([0, 1]);
+
+    // 新建 d：活跃 [a, c, d] → 0,1,2
+    const d = repo.create({ projectId: 'p1', title: 'd', content: '<p>丁</p>' }).data!;
+    listed = repo.findByProject('p1').data!;
+    expect(listed.map((x) => x.sortOrder)).toEqual([0, 1, 2]);
+
+    // 恢复 b：插回 min(deletedSortOrder=1, activeCount=3) → 0,1,2,3 连续
+    const restored = repo.restore(b);
+    expect(restored.success).toBe(true);
+    listed = repo.findByProject('p1').data!;
+    const restoredOrders = listed.map((x) => x.sortOrder);
+    expect(restoredOrders).toEqual([0, 1, 2, 3]);
+    expect(new Set(restoredOrders).size).toBe(restoredOrders.length);
+
+    // 再删 b（重做语义）：活跃 [a, c, d] → 0,1,2
+    expect(repo.remove(b.id).success).toBe(true);
+    listed = repo.findByProject('p1').data!;
+    expect(listed.map((x) => x.sortOrder)).toEqual([0, 1, 2]);
+    expect(new Set(listed.map((x) => x.id))).toEqual(new Set([a.id, c.id, d.id]));
+  });
 });

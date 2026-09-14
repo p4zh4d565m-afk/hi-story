@@ -13,7 +13,13 @@ import type {
   KnowledgeInput,
 } from './narrative-state-reducer';
 import type { ChapterPosition } from './narrative-time-order';
-import { NarrativeTransitionRepo } from '../db/repositories/narrative-transition.repo';
+import {
+  NarrativeTransitionRepo,
+  rowToFactInput,
+  rowToKnowledgeInput,
+  rowToHookInput,
+  rowToDebtInput,
+} from '../db/repositories/narrative-transition.repo';
 
 export type LoadNarrativeAsOfInput = {
   projectId: string;
@@ -56,65 +62,24 @@ export function loadNarrativeAsOfFromDb(
     SELECT * FROM story_facts
     WHERE project_id = ? AND archived = 0
   `).all(input.projectId) as Array<Record<string, unknown>>;
-  const facts: FactInput[] = factRows
-    .filter((r) => r.chapter_id)
-    .map((r) => ({
-      id: r.id as string,
-      factType: r.fact_type as string,
-      chapterId: r.chapter_id as string,
-      stateKey: (r.state_key as string | null) ?? undefined,
-      subject: r.subject as string,
-      predicate: r.predicate as string,
-      object: r.object as string,
-      description: r.description as string,
-      status: r.status as string,
-    }));
+  const facts: FactInput[] = factRows.map((r) => rowToFactInput(r));
 
   const knowledgeRows = db.prepare(`
     SELECT * FROM character_knowledge WHERE project_id = ?
   `).all(input.projectId) as Array<Record<string, unknown>>;
-  const knowledge: KnowledgeInput[] = knowledgeRows
-    .filter((r) => r.learned_at_chapter_id)
-    .map((r) => ({
-      id: r.id as string,
-      learnedAtChapterId: r.learned_at_chapter_id as string,
-      status: r.status as string,
-      characterName: r.character_name as string,
-      factDescription: r.fact_description as string,
-      source: r.source as string,
-    }));
+  const knowledge: KnowledgeInput[] = knowledgeRows.map((r) => rowToKnowledgeInput(r));
 
   const hookRows = db.prepare(`
     SELECT id, chapter_id, status, description, subject, due_chapter_id, resolved_in_chapter_id
     FROM narrative_hooks WHERE project_id = ?
   `).all(input.projectId) as Array<Record<string, unknown>>;
-  const hooks: HookInput[] = hookRows
-    .filter((r) => r.chapter_id)
-    .map((r) => ({
-      id: r.id as string,
-      chapterId: r.chapter_id as string,
-      status: r.status as string,
-      description: r.description as string | undefined,
-      subject: r.subject as string | undefined,
-      dueChapterId: (r.due_chapter_id as string | null) ?? null,
-      resolvedInChapterId: (r.resolved_in_chapter_id as string | null) ?? null,
-    }));
+  const hooks: HookInput[] = hookRows.map((r) => rowToHookInput(r));
 
   const debtRows = db.prepare(`
     SELECT id, chapter_id, status, description, subject, paid_in_chapter_id, promised_by_chapter
     FROM narrative_debts WHERE project_id = ?
   `).all(input.projectId) as Array<Record<string, unknown>>;
-  const debts: DebtInput[] = debtRows
-    .filter((r) => r.chapter_id)
-    .map((r) => ({
-      id: r.id as string,
-      chapterId: r.chapter_id as string,
-      status: r.status as string,
-      description: r.description as string | undefined,
-      subject: r.subject as string | undefined,
-      paidInChapterId: (r.paid_in_chapter_id as string | null) ?? null,
-      promisedByChapter: (r.promised_by_chapter as number | null) ?? undefined,
-    }));
+  const debts: DebtInput[] = debtRows.map((r) => rowToDebtInput(r));
 
   return buildNarrativeAsOfContext({
     taskType: input.taskType,

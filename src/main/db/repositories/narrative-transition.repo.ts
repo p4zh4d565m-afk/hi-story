@@ -7,6 +7,10 @@ import type { IpcResult } from '../../../renderer/types';
 import {
   type Snapshot,
   type Transition,
+  type FactInput,
+  type HookInput,
+  type DebtInput,
+  type KnowledgeInput,
   defaultOrdinalForAppend,
 } from '../../ai/narrative-state-reducer';
 import type { ChapterAlias } from '../../ai/narrative-time-order';
@@ -39,6 +43,71 @@ const TABLES = new Set<TransitionTargetTable>([
 
 export function makeSnapshot(data: unknown, schemaVersion = SNAPSHOT_SCHEMA_VERSION): Snapshot {
   return { schemaVersion, data };
+}
+
+// —— 四类目标的统一 row→Input 转换（snake_case DB 行 → camelCase Input）——
+// as-of 折叠读取 after_snapshot 时按 camelCase Input 字段消费，故快照必须统一转成 Input 形状，
+// 各写路径不得自行拼字段（否则会像 confirmMany 那样把 snake_case 行直接入快照，导致字段丢失只剩 id）。
+
+export function rowToFactInput(row: Record<string, unknown>): FactInput {
+  return {
+    id: row.id as string,
+    factType: row.fact_type as string,
+    chapterId: (row.chapter_id ?? null) as string | null,
+    stateKey: (row.state_key ?? undefined) as string | undefined,
+    subject: row.subject as string | undefined,
+    predicate: row.predicate as string | undefined,
+    object: row.object as string | undefined,
+    description: row.description as string | undefined,
+    status: row.status as string | undefined,
+  };
+}
+
+export function rowToKnowledgeInput(row: Record<string, unknown>): KnowledgeInput {
+  return {
+    id: row.id as string,
+    learnedAtChapterId: (row.learned_at_chapter_id ?? null) as string | null,
+    status: row.status as string,
+    characterName: row.character_name as string | undefined,
+    factDescription: row.fact_description as string | undefined,
+    source: row.source as string | undefined,
+  };
+}
+
+export function rowToHookInput(row: Record<string, unknown>): HookInput {
+  return {
+    id: row.id as string,
+    chapterId: (row.chapter_id ?? null) as string | null,
+    status: row.status as string,
+    description: row.description as string | undefined,
+    subject: row.subject as string | undefined,
+    dueChapterId: (row.due_chapter_id ?? null) as string | null,
+    resolvedInChapterId: (row.resolved_in_chapter_id ?? null) as string | null,
+  };
+}
+
+export function rowToDebtInput(row: Record<string, unknown>): DebtInput {
+  return {
+    id: row.id as string,
+    chapterId: (row.chapter_id ?? null) as string | null,
+    status: row.status as string,
+    description: row.description as string | undefined,
+    subject: row.subject as string | undefined,
+    paidInChapterId: (row.paid_in_chapter_id ?? null) as string | null,
+    promisedByChapter: (row.promised_by_chapter ?? undefined) as number | undefined,
+  };
+}
+
+export function rowToNarrativeInput(
+  targetTable: TransitionTargetTable,
+  row: Record<string, unknown>,
+): FactInput | KnowledgeInput | HookInput | DebtInput {
+  switch (targetTable) {
+    case 'story_facts': return rowToFactInput(row);
+    case 'character_knowledge': return rowToKnowledgeInput(row);
+    case 'narrative_hooks': return rowToHookInput(row);
+    case 'narrative_debts': return rowToDebtInput(row);
+  }
 }
 
 export class NarrativeTransitionRepo {

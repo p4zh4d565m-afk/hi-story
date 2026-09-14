@@ -31,7 +31,7 @@ export type ReductionResult<T> = { data: T | null; historyWarnings: HistoryWarni
 export type FactInput = {
   id: string;
   factType: string;
-  chapterId: string;
+  chapterId: string | null;
   stateKey?: string;
   object?: string;
   subject?: string;
@@ -42,7 +42,7 @@ export type FactInput = {
 
 export type HookInput = {
   id: string;
-  chapterId: string;
+  chapterId: string | null;
   status: string;
   description?: string;
   subject?: string;
@@ -53,7 +53,7 @@ export type HookInput = {
 
 export type DebtInput = {
   id: string;
-  chapterId: string;
+  chapterId: string | null;
   status: string;
   description?: string;
   subject?: string;
@@ -64,7 +64,7 @@ export type DebtInput = {
 
 export type KnowledgeInput = {
   id: string;
-  learnedAtChapterId: string;
+  learnedAtChapterId: string | null;
   status: string;
   characterName?: string;
   factDescription?: string;
@@ -289,12 +289,14 @@ function foldEntityFromTransitions<T extends { id: string }>(
 }
 
 function recordInScope(
-  chapterId: string,
+  chapterId: string | null,
   chapters: ChapterPosition[],
   aliases: ChapterAlias[],
   target: ChapterPosition | null,
   mode: TimeMode,
 ): boolean {
+  // 无章节锚点的旧记录：project_latest 仍保留（当前投影）；历史截面不注入
+  if (chapterId == null) return mode === 'project_latest';
   if (!isActiveChapterRef(chapterId, chapters, aliases)) return false;
   if (mode === 'planning_only') return false;
   if (mode === 'project_latest') return true;
@@ -342,27 +344,50 @@ export function reduceStateFactsAsOf(
     return { data: [], historyWarnings: emptyWarnings() };
   }
 
-  const inScope = facts.filter((f) =>
-    recordInScope(f.chapterId, chapters, aliases, target, mode),
+  // 状态型：同 stateKey 取目标截面内最后一条。event 只走 accumulateEventsAsOf，避免 Context 双栏重复。
+  const stateTypes = new Set(['location', 'possession', 'relationship', 'emotional_state']);
+  const warnings: HistoryWarning[] = [];
+  const byKey = new Map<string, FactInput>();
+
+  const inScope = facts.filter(
+    (f) => stateTypes.has(f.factType) && recordInScope(f.chapterId, chapters, aliases, target, mode),
   );
 
-  // 状态型：同 stateKey 取最后一条。event 只走 accumulateEventsAsOf，避免 Context 双栏重复。
-  const stateTypes = new Set(['location', 'possession', 'relationship', 'emotional_state']);
-  const states = inScope.filter((f) => stateTypes.has(f.factType));
+  // 目标截面内已生效的 superseded 转换（按 targetId）：不能只看 DB 当前 status，
+  // 因为「第 25 章时某事实还没被 supersede」要靠 atChapterId 是否在截面内还原。
+  const supersededInScope = new Set(
+    transitions
+      .filter((t) => t.kind === 'superseded' && transitionIncluded(t, chapters, aliases, target, mode))
+      .map((t) => t.targetId),
+  );
 
-  const byKey = new Map<string, FactInput>();
-  const orderedStates = states.slice().sort((a, b) => {
+  // 按故事位置升序；同 key 后写覆盖前写 = 取目标截面内位置最靠后的一条。
+  // 无锚记录只在 project_latest 出现，且没有故事位置——排在最后，不影响「取最后一条」。
+  const ordered = inScope.slice().sort((a, b) => {
+    if (a.chapterId == null && b.chapterId == null) return 0;
+    if (a.chapterId == null) return 1;
+    if (b.chapterId == null) return -1;
     const pa = storyPositionOf(a.chapterId, chapters, aliases);
     const pb = storyPositionOf(b.chapterId, chapters, aliases);
     return compareStoryPosition(pa, pb);
   });
-  for (const f of orderedStates) {
-    const key = f.stateKey ?? f.id;
-    byKey.set(key, f);
+
+  for (const f of ordered) {
+    // 目标截面内已被 superseded 的状态事实，不注入（新投影已取而代之）
+    if (supersededInScope.has(f.id)) continue;
+
+    if (f.stateKey) {
+      byKey.set(f.stateKey, f);
+    } else if (mode === 'project_latest') {
+      // 无 state_key 的旧事实：project_latest 仍读当前 active 投影（不让旧项目失忆）
+      if ((f.status ?? 'active') === 'active') byKey.set(f.id, f);
+    } else {
+      // 无 state_key 的旧事实：历史截面排除，并给出告警（不猜测合并）
+      warnings.push(historyIncomplete(f.id));
+    }
   }
 
-  void transitions;
-  return { data: [...byKey.values()], historyWarnings: emptyWarnings() };
+  return { data: [...byKey.values()], historyWarnings: warnings };
 }
 
 export function accumulateEventsAsOf(
@@ -394,13 +419,15 @@ export function accumulateEventsAsOf(
 }
 
 function assertPrimaryChapterActive(
-  chapterId: string,
+  chapterId: string | null,
   chapters: ChapterPosition[],
   aliases: ChapterAlias[],
   target: ChapterPosition | null,
   mode: TimeMode,
 ): ReductionResult<never> | null {
   if (mode === 'planning_only') return null;
+  // 无章节锚点的旧记录：project_latest 放行（fold 返回当前投影）；历史截面排除
+  if (chapterId == null) return mode === 'project_latest' ? null : { data: null, historyWarnings: emptyWarnings() };
   if (isActiveChapterRef(chapterId, chapters, aliases)) return null;
   assertTargetCompatible(chapters, target);
   return { data: null, historyWarnings: emptyWarnings() };

@@ -262,4 +262,65 @@ describe('叙事转换写路径', () => {
     `).run(factId.id, ch1.id, now);
     expect(() => repo.listByProject('p1')).toThrow('转换快照不是合法 JSON');
   });
+
+  it('回归 知识确认后 as-of 快照是 camelCase，出现真实知识内容而非 UUID 占位', () => {
+    const ch = chapters.create({ projectId: 'p1', title: '一', content: '<p>x</p>' }).data!;
+    const decisions = new CreativeDecisionRepo(db);
+    const proposed = decisions.createChapterExtractionProposals({
+      projectId: 'p1',
+      drafts: [{
+        type: 'character_knowledge',
+        title: '林岚得知站长身份',
+        rationale: '测试',
+        payload: {
+          characterName: '林岚',
+          factDescription: '站长是失踪多年的父亲',
+          source: '亲眼发现',
+          learnedAtChapterId: ch.id,
+        },
+      }],
+    });
+    expect(proposed.success).toBe(true);
+    const confirmed = decisions.confirmMany({
+      projectId: 'p1',
+      decisionIds: [proposed.data![0].id],
+    });
+    expect(confirmed.success).toBe(true);
+
+    // 读转换快照，断言是 camelCase、含 factDescription（而非 snake_case 的 fact_description / 只剩 UUID）
+    const knowledgeTargetId = confirmed.data!.effects.find((e) => e.targetTable === 'character_knowledge')!.targetId;
+    const transitionRepo = new NarrativeTransitionRepo(db);
+    const knowledgeTransitions = transitionRepo.listByTarget('p1', 'character_knowledge', knowledgeTargetId);
+    expect(knowledgeTransitions.length).toBeGreaterThan(0);
+    const data = knowledgeTransitions[0].afterSnapshot.data as Record<string, unknown>;
+    expect(data.factDescription).toBe('站长是失踪多年的父亲');
+    expect(data.characterName).toBe('林岚');
+    expect(data.learnedAtChapterId).toBe(ch.id);
+    // snake_case 字段不得残留
+    expect(data.fact_description).toBeUndefined();
+
+    // 通过 as-of 折叠确认能读到真实内容
+    const ctx = buildNarrativeAsOfContext({
+      taskType: 'chat',
+      hasActiveChapter: true,
+      targetChapterId: ch.id,
+      chapters: [{ id: ch.id, projectId: 'p1', sortOrder: 0, deletedSortOrder: null }],
+      aliases: [],
+      transitions: transitionRepo.listByProject('p1'),
+      facts: [],
+      hooks: [],
+      debts: [],
+      knowledge: [{
+        id: knowledgeTargetId,
+        learnedAtChapterId: ch.id,
+        status: 'active',
+        characterName: '林岚',
+        factDescription: '站长是失踪多年的父亲',
+        source: '亲眼发现',
+      }],
+    });
+    expect(ctx.knowledge.length).toBeGreaterThan(0);
+    expect(ctx.knowledge[0].factDescription).toBe('站长是失踪多年的父亲');
+    expect(ctx.knowledge[0].characterName).toBe('林岚');
+  });
 });

@@ -730,5 +730,74 @@ describe('narrative-state-reducer', () => {
       expect(occupied.has(next)).toBe(false);
       void chapters;
     });
+
+    // —— 合并阻断项回归 ——
+
+    it('回归1 状态事实：目标截面内 superseded 的不再注入，只保留对应版本', () => {
+      const key = 'loc|林岚|位于';
+      const facts: FactInput[] = [
+        { id: 's-old', factType: 'location', chapterId: 'ch50', stateKey: key, object: '北京' },
+        { id: 's-new', factType: 'location', chapterId: 'ch60', stateKey: key, object: '上海' },
+      ];
+      const transitions: Transition[] = [
+        tr({ targetId: 's-old', kind: 'superseded', atChapterId: 'ch60', afterSnapshot: snap({ status: 'superseded', stateKey: key }) }),
+      ];
+      // 目标截面 ch70（before_target）：ch60 的 superseded 已生效 → 只保留 s-new（上海）
+      const r = reduceStateFactsAsOf(facts, transitions, baseChapters, [], ch('ch70', 2), 'before_target');
+      expect(r.data!.map((f) => f.id)).toEqual(['s-new']);
+      expect(r.data![0].object).toBe('上海');
+      // 目标截面 ch50（through_target，ch60 之前）：superseded 尚未生效 → 保留 s-old（北京）
+      const early = reduceStateFactsAsOf(facts, transitions, baseChapters, [], ch('ch50', 0), 'through_target');
+      expect(early.data!.map((f) => f.id)).toEqual(['s-old']);
+    });
+
+    it('回归2 无 state_key 旧事实：历史截面排除 + 告警，project_latest 保留 active 投影', () => {
+      const facts: FactInput[] = [
+        { id: 'legacy-active', factType: 'location', chapterId: 'ch50', status: 'active', object: '旧设定' },
+        { id: 'legacy-superseded', factType: 'location', chapterId: 'ch50', status: 'superseded', object: '旧设定2' },
+      ];
+      // 历史截面：无 state_key 排除 + historyWarnings
+      const hist = reduceStateFactsAsOf(facts, [], baseChapters, [], ch('ch70', 2), 'before_target');
+      expect(hist.data).toEqual([]);
+      expect(hist.historyWarnings.length).toBeGreaterThan(0);
+      // project_latest：保留 active 投影，superseded 仍排除
+      const latest = reduceStateFactsAsOf(facts, [], baseChapters, [], null, 'project_latest');
+      expect(latest.data!.map((f) => f.id)).toEqual(['legacy-active']);
+    });
+
+    it('回归3 无章节锚点记录：project_latest 出现，历史截面排除', () => {
+      const facts: FactInput[] = [
+        { id: 'no-anchor', factType: 'location', chapterId: null, status: 'active', object: '全局设定' },
+      ];
+      const latest = reduceStateFactsAsOf(facts, [], baseChapters, [], null, 'project_latest');
+      expect(latest.data!.map((f) => f.id)).toEqual(['no-anchor']);
+      const hist = reduceStateFactsAsOf(facts, [], baseChapters, [], ch('ch70', 2), 'before_target');
+      expect(hist.data).toEqual([]);
+      // 钩子同理：无锚 project_latest 放行
+      const hook: HookInput = { id: 'h-no-anchor', chapterId: null, status: 'open' };
+      const hLatest = reduceHookAsOf(hook, [], baseChapters, [], null, 'project_latest');
+      expect(hLatest.data).not.toBeNull();
+      const hHist = reduceHookAsOf(hook, [], baseChapters, [], ch('ch70', 2), 'before_target');
+      expect(hHist.data).toBeNull();
+    });
+
+    it('回归4 同状态跨章多次转换只保留截面对应版本', () => {
+      const key = 'pos|林岚|剑';
+      const facts: FactInput[] = [
+        { id: 'f1', factType: 'possession', chapterId: 'ch50', stateKey: key, object: '木剑' },
+        { id: 'f2', factType: 'possession', chapterId: 'ch60', stateKey: key, object: '铁剑' },
+        { id: 'f3', factType: 'possession', chapterId: 'ch70', stateKey: key, object: '神剑' },
+      ];
+      const transitions: Transition[] = [
+        tr({ targetId: 'f1', kind: 'superseded', atChapterId: 'ch60', afterSnapshot: snap({ status: 'superseded', stateKey: key }) }),
+        tr({ targetId: 'f2', kind: 'superseded', atChapterId: 'ch70', afterSnapshot: snap({ status: 'superseded', stateKey: key }) }),
+      ];
+      // 目标截面 ch75（before）：三条都在，取最靠后的 f3
+      const r = reduceStateFactsAsOf(facts, transitions, baseChapters, [], ch('ch75', 3), 'before_target');
+      expect(r.data!.map((f) => f.id)).toEqual(['f3']);
+      // 目标截面 ch60（through_target）：f1 已被 ch60 supersede；f2 未被 supersede；f3 在 ch70 之后不在范围
+      const mid = reduceStateFactsAsOf(facts, transitions, baseChapters, [], ch('ch60', 1), 'through_target');
+      expect(mid.data!.map((f) => f.id)).toEqual(['f2']);
+    });
   });
 });
