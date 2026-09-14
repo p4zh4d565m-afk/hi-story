@@ -43,7 +43,7 @@ async function run(): Promise<Result[]> {
     document.getElementById('root')!.innerHTML = '';
     root = createRoot(document.getElementById('root')!);
     root.render(React.createElement(ObsidianImportPanel, {
-      project, open: true, onClose: () => {}, onImported,
+      project, open: true, onClose: () => {}, onImported, onPlanningCommitStarted: () => {},
     }));
     await waitFor(() => document.body.textContent?.includes('从 Obsidian 导入策划') === true, 8000);
     // 等待扫描完成（候选列表或错误出现）

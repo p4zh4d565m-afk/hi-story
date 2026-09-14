@@ -21,7 +21,7 @@ interface ObsidianImportPanelProps {
   onClose: () => void;
   onImported: (summary: ObsidianImportSummary) => Promise<void>;
   /** commit IPC 前、触及策划层时同步调用，用于作废旧 AI 写库代数（无 DB revision）。 */
-  onPlanningCommitStarted?: (projectId: string) => void;
+  onPlanningCommitStarted: (projectId: string) => void;
 }
 
 const SLOT_LABELS: Record<ObsidianImportSlot, string> = {
@@ -313,7 +313,7 @@ const ObsidianImportPanel: React.FC<ObsidianImportPanelProps> = ({ project, open
       const touchesPlanning = selections.some(s =>
         s.slots.some(slot => slot === 'master' || slot === 'volume' || slot === 'chapter' || slot === 'stage')
       ) || ['master', 'volumes', 'chapters'].some(l => layerChoices[l as keyof ImportLayerChoices].action !== 'keep');
-      if (touchesPlanning) onPlanningCommitStarted?.(project.id);
+      if (touchesPlanning) onPlanningCommitStarted(project.id);
 
       const summary = await guardRef.current.commit({
         projectId: project.id, operationId: opId, selections, layerChoices, storyOptionDraft: storyOptionDraft ?? undefined,
