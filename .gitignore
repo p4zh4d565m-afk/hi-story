@@ -43,3 +43,6 @@ Openwrite-main.zip
 # 本地 AI 助手配置
 .codex/
 **/.claude/settings.local.json
+
+# Local git worktrees
+.worktrees/
