@@ -156,4 +156,19 @@ describe('ChapterRepo 软删 / 恢复', () => {
     expect(listed.map((x) => x.sortOrder)).toEqual([0, 1, 2]);
     expect(new Set(listed.map((x) => x.id))).toEqual(new Set([a.id, c.id, d.id]));
   });
+
+  it('回归 remove/restore 返回事务完成后的完整活跃列表（renderer 原子刷新依赖）', () => {
+    const { a, b, c } = createThree();
+    // remove 直接返回剩余活跃章
+    const removed = repo.remove(b.id);
+    expect(removed.success).toBe(true);
+    expect(removed.data!.map((x) => x.id)).toEqual([a.id, c.id]);
+    expect(removed.data!.map((x) => x.sortOrder)).toEqual([0, 1]);
+
+    // restore 直接返回完整活跃章（含恢复的 b）
+    const restored = repo.restore(b);
+    expect(restored.success).toBe(true);
+    expect(restored.data!.map((x) => x.id)).toEqual([a.id, b.id, c.id]);
+    expect(restored.data!.map((x) => x.sortOrder)).toEqual([0, 1, 2]);
+  });
 });

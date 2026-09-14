@@ -172,9 +172,9 @@ export class ChapterRepo {
   }
 
   /** 软删为墓碑；保留历史与叙事锚 */
-  remove(id: string): IpcResult<void> {
+  remove(id: string): IpcResult<Chapter[]> {
     try {
-      const tx = this.db.transaction(() => {
+      const result = this.db.transaction(() => {
         const row = this.db.prepare(`SELECT * FROM chapters WHERE id = ?`).get(id) as
           | Record<string, unknown>
           | undefined;
@@ -193,9 +193,10 @@ export class ChapterRepo {
 
         const next = deleteChapterOrder(toPositions(all), id);
         this.persistPositions(projectId, next);
-      });
-      tx();
-      return { success: true };
+        return projectId;
+      })();
+      // 返回事务完成后的完整活跃章节列表（供 renderer 原子刷新，避免二次查询窗口）
+      return this.findByProject(result);
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }
@@ -204,9 +205,9 @@ export class ChapterRepo {
   /**
    * 恢复：优先唤醒原 ID 墓碑；若行不存在则兼容旧 Undo 的 INSERT 路径。
    */
-  restore(chapterData: Chapter): IpcResult<Chapter> {
+  restore(chapterData: Chapter): IpcResult<Chapter[]> {
     try {
-      const tx = this.db.transaction(() => {
+      const projectId = this.db.transaction((): string => {
         const existing = this.db.prepare(`SELECT * FROM chapters WHERE id = ?`).get(chapterData.id) as
           | Record<string, unknown>
           | undefined;
@@ -215,22 +216,22 @@ export class ChapterRepo {
           if (existing.deleted_at == null) {
             throw new Error('章节未删除，无需恢复');
           }
-          const projectId = existing.project_id as string;
+          const pid = existing.project_id as string;
           const all = this.db.prepare(
             `SELECT id, project_id, sort_order, deleted_sort_order FROM chapters WHERE project_id = ?`,
-          ).all(projectId) as Array<{
+          ).all(pid) as Array<{
             id: string;
             project_id: string;
             sort_order: number | null;
             deleted_sort_order: number | null;
           }>;
           const next = restoreChapterOrder(toPositions(all), chapterData.id);
-          this.persistPositions(projectId, next);
+          this.persistPositions(pid, next);
           this.db.prepare(`UPDATE chapters SET deleted_at = NULL, updated_at = ? WHERE id = ?`).run(
             new Date().toISOString(),
             chapterData.id,
           );
-          return;
+          return pid;
         }
 
         // 兼容：旧硬删 Undo 仍可能 INSERT
@@ -264,9 +265,10 @@ export class ChapterRepo {
           chapterData.createdAt,
           now,
         );
-      });
-      tx();
-      return this.findById(chapterData.id);
+        return chapterData.projectId;
+      })();
+      // 返回事务完成后的完整活跃章节列表（供 renderer 原子刷新）
+      return this.findByProject(projectId);
     } catch (err) {
       return { success: false, error: (err as Error).message };
     }

@@ -353,6 +353,8 @@ const App: React.FC = () => {
   useEffect(() => {
     if (prevProjectIdRef.current && prevProjectIdRef.current !== activeProject?.id) {
       aiService.ignoreProjectStreams(prevProjectIdRef.current);
+      // 项目切换作废在途章节操作代次，防止 A→B→A 后旧回执覆盖新状态
+      chapterOpsSeqRef.current += 1;
     }
     prevProjectIdRef.current = activeProject?.id ?? null;
   }, [activeProject?.id]);
@@ -505,42 +507,44 @@ const App: React.FC = () => {
     const ch = chapters.find(c => c.id === id);
     if (!ch) return;
 
-    // 执行删除
+    // 执行删除：IPC 返回事务完成后的完整活跃章节列表（原子，无二次查询窗口）
+    const activeProjectId = activeProject?.id;
+    const opSeq = ++chapterOpsSeqRef.current;
     const res = await window.electronAPI.invoke('db:chapter:remove', id) as any;
-    if (!res || !res.success) {
+    if (!res?.success || !Array.isArray(res.data)) {
       alert('删除失败：' + (res?.error || '未知错误'));
       return;
     }
-
-    // 软删会重排其余活跃章的 sort_order，须从 DB 拉完整列表，不能只 filter 本地数组。
-    // 代次守卫：每次刷新递增代次，仅当回执仍是最新代次且项目未切换时才应用。
-    const activeProjectId = activeProject?.id;
-    const refreshAfterOp = async (): Promise<boolean> => {
-      const opSeq = ++chapterOpsSeqRef.current;
-      const allRes = await window.electronAPI.invoke('db:chapter:findByProject', activeProjectId) as any;
-      if (!allRes?.success || !Array.isArray(allRes.data)) {
-        if (isActiveProject(activeProjectId)) console.error('章节列表刷新失败：', allRes?.error);
-        return false;
-      }
-      if (chapterOpsSeqRef.current !== opSeq) return false; // 已有更新的操作，丢弃本次回执
-      if (!isActiveProject(activeProjectId)) return false;
-      setChapters(allRes.data);
-      if (activeChapterId === id) setActiveChapterId(allRes.data[0]?.id ?? null);
-      return true;
-    };
-    await refreshAfterOp();
+    if (chapterOpsSeqRef.current !== opSeq) return; // 期间已有更新操作，丢弃本次回执
+    if (!isActiveProject(activeProjectId)) return;   // 项目已切换
+    setChapters(res.data);
+    if (activeChapterId === id) setActiveChapterId(res.data[0]?.id ?? null);
 
     // 推入撤销栈（命令模式）
     pushUndo({
       id: 'undo_' + Date.now(),
       label: `删除章节「${ch.title}」`,
       undo: async () => {
+        const undoSeq = ++chapterOpsSeqRef.current;
         const r = await window.electronAPI.invoke('db:chapter:restore', ch) as any;
-        if (r?.success) await refreshAfterOp();
+        if (!r?.success || !Array.isArray(r.data)) {
+          alert('恢复失败：' + (r?.error || '未知错误'));
+          return;
+        }
+        if (chapterOpsSeqRef.current !== undoSeq) return;
+        if (!isActiveProject(activeProjectId)) return;
+        setChapters(r.data);
       },
       redo: async () => {
-        await window.electronAPI.invoke('db:chapter:remove', ch.id);
-        await refreshAfterOp();
+        const redoSeq = ++chapterOpsSeqRef.current;
+        const r = await window.electronAPI.invoke('db:chapter:remove', ch.id) as any;
+        if (!r?.success || !Array.isArray(r.data)) {
+          alert('重做失败：' + (r?.error || '未知错误'));
+          return;
+        }
+        if (chapterOpsSeqRef.current !== redoSeq) return;
+        if (!isActiveProject(activeProjectId)) return;
+        setChapters(r.data);
       },
     });
   }, [activeChapterId, chapters, pushUndo, activeProject?.id, isActiveProject]);
