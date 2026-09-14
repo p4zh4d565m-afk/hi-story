@@ -6,6 +6,11 @@ type Migration = {
   sql: string;
   /** 同事务内 DDL 之后执行（如 JSON 补 id） */
   after?: (db: Database.Database) => void;
+  /**
+   * SQLite 在已开启的事务内无法切换 foreign_keys（静默 no-op）。
+   * 需重建带外键父表时，必须在 BEGIN 之前关闭 FK。
+   */
+  rebuildsWithFkOff?: boolean;
 };
 
 const MIGRATIONS: Migration[] = [
@@ -554,6 +559,7 @@ const MIGRATIONS: Migration[] = [
   // 021: 叙事时间接入 — 转换日志、别名表（空）、章节墓碑、状态键、章纲稳定 id
   {
     version: 21,
+    rebuildsWithFkOff: true,
     sql: `
       CREATE TABLE IF NOT EXISTS narrative_transitions (
         id TEXT PRIMARY KEY,
@@ -623,7 +629,7 @@ const MIGRATIONS: Migration[] = [
         const canRebuild = ['title', 'content', 'status', 'word_count', 'sort_order', 'summary', 'planning_outline', 'created_at', 'updated_at']
           .every((c) => cols.has(c));
         if (canRebuild) {
-          db.pragma('foreign_keys = OFF');
+          // FK 必须在本迁移事务开始前关闭；此处不可再 pragma 切换
           db.exec(`
             CREATE TABLE chapters_v21 (
               id TEXT PRIMARY KEY,
@@ -655,7 +661,6 @@ const MIGRATIONS: Migration[] = [
             CREATE INDEX IF NOT EXISTS idx_chapters_project_active
               ON chapters(project_id, sort_order) WHERE deleted_at IS NULL;
           `);
-          db.pragma('foreign_keys = ON');
         }
       }
 
@@ -693,7 +698,7 @@ export function backfillChapterOutlineIds(db: Database.Database): void {
   }
 }
 
-export function runMigrations(db: Database.Database): void {
+export function runMigrations(db: Database.Database, untilVersion?: number): void {
   // 确保迁移表存在
   db.exec(`
     CREATE TABLE IF NOT EXISTS _migrations (
@@ -707,13 +712,26 @@ export function runMigrations(db: Database.Database): void {
       .map((row: unknown) => (row as { version: number }).version)
   );
 
+  const cap = untilVersion ?? Number.POSITIVE_INFINITY;
   for (const migration of MIGRATIONS) {
+    if (migration.version > cap) continue;
     if (!applied.has(migration.version)) {
-      db.transaction(() => {
-        db.exec(migration.sql);
-        migration.after?.(db);
-        db.prepare('INSERT INTO _migrations (version) VALUES (?)').run(migration.version);
-      })();
+      const needFkOff = !!migration.rebuildsWithFkOff;
+      const fkWasOn = db.pragma('foreign_keys', { simple: true }) === 1;
+      if (needFkOff) db.pragma('foreign_keys = OFF');
+      try {
+        db.transaction(() => {
+          db.exec(migration.sql);
+          migration.after?.(db);
+          const violations = db.pragma('foreign_key_check') as unknown[];
+          if (violations.length > 0) {
+            throw new Error(`迁移 v${migration.version} 外键检查失败: ${JSON.stringify(violations)}`);
+          }
+          db.prepare('INSERT INTO _migrations (version) VALUES (?)').run(migration.version);
+        })();
+      } finally {
+        if (needFkOff && fkWasOn) db.pragma('foreign_keys = ON');
+      }
       console.log(`Migration v${migration.version} applied.`);
     }
   }

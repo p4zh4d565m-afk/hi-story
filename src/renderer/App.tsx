@@ -23,6 +23,7 @@ import CharacterEditDialog from './components/CharacterEditDialog';
 import RelationEditDialog from './components/RelationEditDialog';
 import { useProject } from './hooks/useProject';
 import { ContextBuilder } from '../main/ai/context-builder';
+import { findChapterForOutline } from '../main/ai/narrative-planning-key';
 import { decrypt } from './services/crypto';
 import { aiService } from './services/ai.service';
 import type { ProviderConfig } from '../main/ai/provider';
@@ -568,12 +569,13 @@ const App: React.FC = () => {
     if (!activeProject) return;
     setWorkspaceMode('writing');
     if (mode === 'self') {
-      const existing = chapters.find(chapter => chapter.planningOutline?.volumeIndex === outline.volumeIndex && chapter.planningOutline?.chapterNumber === outline.chapterNumber);
+      const existing = findChapterForOutline(chapters, outline);
       if (existing) { setActiveChapterId(existing.id); return; }
       const res = await window.electronAPI.invoke('db:chapter:create', {
         projectId: activeProject.id,
         title: `第${outline.chapterNumber}章 ${outline.title}`,
         planningOutline: outline,
+        planningOutlineId: outline.id ?? null,
       }) as any;
       if (res?.success && res.data) { setChapters(previous => [...previous, res.data]); setActiveChapterId(res.data.id); }
       return;

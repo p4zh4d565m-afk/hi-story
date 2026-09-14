@@ -74,7 +74,7 @@ export class ChapterRepo {
       wordCount,
       maxSort.max_sort + 1,
       input.planningOutline ? JSON.stringify(input.planningOutline) : '',
-      input.planningOutlineId ?? null,
+      input.planningOutlineId ?? input.planningOutline?.id ?? null,
       now,
       now,
     );
@@ -260,7 +260,7 @@ export class ChapterRepo {
           chapterData.wordCount,
           insertAt,
           chapterData.planningOutline ? JSON.stringify(chapterData.planningOutline) : '',
-          chapterData.planningOutlineId ?? null,
+          chapterData.planningOutlineId ?? chapterData.planningOutline?.id ?? null,
           chapterData.createdAt,
           now,
         );

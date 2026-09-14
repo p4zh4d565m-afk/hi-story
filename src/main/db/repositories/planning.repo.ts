@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type { ChapterOutline, IpcResult, MasterOutline, PlanningIdea, StoryOption, VolumeOutline } from '../../../renderer/types';
+import { assignChapterOutlineIds } from '../../ai/narrative-planning-key';
 
 /**
  * 保存策划输入的字段语义（读-改-写合并，见 save）：
@@ -61,7 +62,10 @@ export class PlanningRepo {
     const outlineStatus = input.outlineStatus ?? ((existing?.outline_status as PlanningIdea['outlineStatus']) ?? 'empty');
     const volumeOutlines = pickJson<VolumeOutline[]>(input.volumeOutlines, existing?.volume_outlines as string | undefined);
     const volumeStatus = input.volumeStatus ?? ((existing?.volume_status as PlanningIdea['volumeStatus']) ?? 'empty');
-    const chapterOutlines = pickJson<ChapterOutline[]>(input.chapterOutlines, existing?.chapter_outlines as string | undefined);
+    const chapterOutlines = assignChapterOutlineIds(
+      pickJson<ChapterOutline[]>(input.chapterOutlines, existing?.chapter_outlines as string | undefined) ?? [],
+      () => uuidv4(),
+    );
     const chapterOutlineStatus = input.chapterOutlineStatus ?? ((existing?.chapter_outline_status as PlanningIdea['chapterOutlineStatus']) ?? 'empty');
 
     if (existing) {
@@ -81,7 +85,7 @@ export class PlanningRepo {
         outlineStatus,
         JSON.stringify(volumeOutlines ?? []),
         volumeStatus,
-        JSON.stringify(chapterOutlines ?? []),
+        JSON.stringify(chapterOutlines),
         chapterOutlineStatus,
         now,
         existing.id,
@@ -106,7 +110,7 @@ export class PlanningRepo {
       outlineStatus,
       JSON.stringify(volumeOutlines ?? []),
       volumeStatus,
-      JSON.stringify(chapterOutlines ?? []),
+        JSON.stringify(chapterOutlines),
       chapterOutlineStatus,
       now,
       now,

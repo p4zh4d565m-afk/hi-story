@@ -80,6 +80,40 @@ describe('buildNarrativeAsOfContext', () => {
     ).toThrow();
   });
 
+  it('textBlock 输出事实/钩子/知识的业务内容而非仅 id', () => {
+    const ctx = buildNarrativeAsOfContext({
+      taskType: 'chat',
+      hasActiveChapter: false,
+      targetChapterId: null,
+      chapters,
+      aliases: [],
+      transitions: [],
+      facts: [{
+        id: 'e1',
+        factType: 'event',
+        chapterId: 'c1',
+        subject: '林岚',
+        predicate: '发现',
+        object: '铜钥',
+        description: '林岚在废站捡到铜钥',
+      }],
+      hooks: [{ id: 'h1', chapterId: 'c1', status: 'open', description: '带血车票从哪来', subject: '车票' }],
+      debts: [{ id: 'd1', chapterId: 'c1', status: 'unpaid', description: '揭晓站长身份' }],
+      knowledge: [{
+        id: 'k1',
+        learnedAtChapterId: 'c1',
+        status: 'active',
+        characterName: '林岚',
+        factDescription: '知道废站有暗门',
+      }],
+    });
+    expect(ctx.textBlock).toContain('林岚在废站捡到铜钥');
+    expect(ctx.textBlock).toContain('带血车票从哪来');
+    expect(ctx.textBlock).toContain('揭晓站长身份');
+    expect(ctx.textBlock).toContain('知道废站有暗门');
+    expect(ctx.textBlock).not.toContain('e1 @c1');
+  });
+
   it('planning_only 零运行时', () => {
     const ctx = buildNarrativeAsOfContext({
       taskType: 'planning',

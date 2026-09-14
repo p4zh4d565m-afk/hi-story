@@ -16,6 +16,37 @@ export function sameOutlineIdentity(a: OutlineIdentity, b: OutlineIdentity): boo
   return a.id === b.id;
 }
 
+export function assignChapterOutlineIds<T extends { id?: string }>(
+  items: T[],
+  allocateId: () => string,
+): Array<T & { id: string }> {
+  const seen = new Set<string>();
+  return items.map((item) => {
+    const existing = typeof item.id === 'string' ? item.id.trim() : '';
+    const id = existing || allocateId();
+    if (seen.has(id)) throw new Error(`章纲 id 重复: ${id}`);
+    seen.add(id);
+    return { ...item, id };
+  });
+}
+
+export function findChapterForOutline<T extends {
+  planningOutlineId?: string | null;
+  planningOutline?: { volumeIndex: number; chapterNumber: number } | null;
+}>(
+  chapters: T[],
+  outline: { id?: string; volumeIndex: number; chapterNumber: number },
+): T | undefined {
+  if (outline.id) {
+    const byId = chapters.find((c) => c.planningOutlineId === outline.id);
+    if (byId) return byId;
+  }
+  return chapters.find((c) =>
+    c.planningOutline?.volumeIndex === outline.volumeIndex
+    && c.planningOutline?.chapterNumber === outline.chapterNumber
+  );
+}
+
 export function splitOutlineIdentity(
   original: OutlineIdentity,
   newChapterId: string,

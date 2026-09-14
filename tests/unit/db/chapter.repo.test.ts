@@ -36,4 +36,17 @@ describe('ChapterRepo.create（A1：同步写入 content 与 word_count）', () 
     expect(res.success).toBe(true);
     expect(res.data?.wordCount).toBe(0);
   });
+
+  it('create 从章纲 id 写入 planningOutlineId', () => {
+    const outline = {
+      id: 'out-1', volumeIndex: 0, chapterNumber: 1, title: '入局', pov: '主角',
+      chapterGoal: 'g', openingSituation: 'o', centralConflict: 'c', keyBeats: ['a', 'b', 'd'],
+      reveal: 'r', characterChange: 'ch', emotionalBeat: 'e', payoff: 'p', endingHook: 'h',
+    };
+    const res = repo.create({ projectId: 'p1', title: '第一章', planningOutline: outline });
+    expect(res.success).toBe(true);
+    expect(res.data?.planningOutlineId).toBe('out-1');
+    const row = db.prepare(`SELECT planning_outline_id as id FROM chapters WHERE id = ?`).get(res.data!.id) as { id: string };
+    expect(row.id).toBe('out-1');
+  });
 });

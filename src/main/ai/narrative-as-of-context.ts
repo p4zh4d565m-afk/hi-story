@@ -141,31 +141,35 @@ function formatAsOfBlock(input: {
   if (input.facts.length) {
     lines.push('状态事实：');
     for (const f of input.facts.slice(0, 40)) {
-      lines.push(`- [${f.factType}] ${f.id} @${f.chapterId}`);
+      lines.push(`- [${f.factType}] ${formatFactLine(f)}`);
     }
   }
   if (input.events.length) {
     lines.push('事件：');
     for (const e of input.events.slice(0, 40)) {
-      lines.push(`- ${e.id} @${e.chapterId}`);
+      lines.push(`- ${formatFactLine(e)}`);
     }
   }
   if (input.hooks.length) {
     lines.push('钩子：');
     for (const h of input.hooks.slice(0, 20)) {
-      lines.push(`- ${h.id} ${h.status}`);
+      const text = h.description || h.subject || h.id;
+      lines.push(`- ${h.status} ${text}`);
     }
   }
   if (input.debts.length) {
     lines.push('债务：');
     for (const d of input.debts.slice(0, 20)) {
-      lines.push(`- ${d.id} ${d.status}`);
+      const text = d.description || d.subject || d.id;
+      lines.push(`- ${d.status} ${text}`);
     }
   }
   if (input.knowledge.length) {
     lines.push('知识：');
     for (const k of input.knowledge.slice(0, 20)) {
-      lines.push(`- ${k.id} ${k.status}`);
+      const who = k.characterName ? `${k.characterName} ` : '';
+      const text = k.factDescription || k.id;
+      lines.push(`- ${who}${text}`);
     }
   }
   if (input.historyWarnings.length) {
@@ -173,4 +177,10 @@ function formatAsOfBlock(input: {
     lines.push(`历史不完整告警 ${input.historyWarnings.length} 条（示例 id: ${ids}）`);
   }
   return lines.join('\n');
+}
+
+function formatFactLine(f: FactInput): string {
+  if (f.description) return f.description;
+  const triple = [f.subject, f.predicate, f.object].filter(Boolean).join(' ');
+  return triple || f.id;
 }

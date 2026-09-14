@@ -34,6 +34,9 @@ export type FactInput = {
   chapterId: string;
   stateKey?: string;
   object?: string;
+  subject?: string;
+  predicate?: string;
+  description?: string;
   status?: string;
 };
 
@@ -42,6 +45,7 @@ export type HookInput = {
   chapterId: string;
   status: string;
   description?: string;
+  subject?: string;
   dueChapterId?: string | null;
   resolvedInChapterId?: string | null;
   promisedByChapter?: number;
@@ -51,6 +55,8 @@ export type DebtInput = {
   id: string;
   chapterId: string;
   status: string;
+  description?: string;
+  subject?: string;
   paidInChapterId?: string | null;
   dueChapterId?: string | null;
   promisedByChapter?: number;
@@ -60,6 +66,9 @@ export type KnowledgeInput = {
   id: string;
   learnedAtChapterId: string;
   status: string;
+  characterName?: string;
+  factDescription?: string;
+  source?: string;
 };
 
 export type StateKeyInput =

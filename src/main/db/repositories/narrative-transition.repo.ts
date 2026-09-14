@@ -33,6 +33,9 @@ export interface AppendTransitionInput {
 }
 
 const SNAPSHOT_SCHEMA_VERSION = 1;
+const TABLES = new Set<TransitionTargetTable>([
+  'story_facts', 'character_knowledge', 'narrative_hooks', 'narrative_debts',
+]);
 
 export function makeSnapshot(data: unknown, schemaVersion = SNAPSHOT_SCHEMA_VERSION): Snapshot {
   return { schemaVersion, data };
@@ -82,6 +85,9 @@ export class NarrativeTransitionRepo {
    */
   append(input: AppendTransitionInput): IpcResult<Transition> {
     try {
+      this.assertProjectOwnership(input);
+      this.assertSnapshot(input.afterSnapshot);
+
       const aliases = this.listAliases(input.projectId);
       const existing = [
         ...this.listByTarget(input.projectId, input.targetTable, input.targetId),
@@ -153,13 +159,55 @@ export class NarrativeTransitionRepo {
     }
   }
 
-  private rowToTransition(row: Record<string, unknown>): Transition {
-    let afterSnapshot: Snapshot;
-    try {
-      afterSnapshot = JSON.parse(String(row.after_snapshot)) as Snapshot;
-    } catch {
-      afterSnapshot = { schemaVersion: SNAPSHOT_SCHEMA_VERSION, data: null };
+  private assertProjectOwnership(input: AppendTransitionInput): void {
+    const project = this.db.prepare(`SELECT id FROM projects WHERE id = ?`).get(input.projectId);
+    if (!project) throw new Error('项目不存在');
+
+    const chapter = this.db.prepare(
+      `SELECT project_id FROM chapters WHERE id = ?`,
+    ).get(input.atChapterId) as { project_id: string } | undefined;
+    if (!chapter) throw new Error('锚点章节不存在');
+    if (chapter.project_id !== input.projectId) throw new Error('转换锚点跨项目');
+
+    if (!TABLES.has(input.targetTable)) throw new Error('未知目标表');
+    const target = this.db.prepare(
+      `SELECT project_id FROM ${input.targetTable} WHERE id = ?`,
+    ).get(input.targetId) as { project_id: string } | undefined;
+    if (!target) throw new Error('目标记录不存在');
+    if (target.project_id !== input.projectId) throw new Error('转换目标跨项目');
+
+    if (input.decisionId) {
+      const decision = this.db.prepare(
+        `SELECT project_id FROM creative_decisions WHERE id = ?`,
+      ).get(input.decisionId) as { project_id: string } | undefined;
+      if (!decision) throw new Error('决策不存在');
+      if (decision.project_id !== input.projectId) throw new Error('决策跨项目');
     }
+  }
+
+  private assertSnapshot(snapshot: Snapshot): void {
+    if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+      throw new Error('转换快照格式无效');
+    }
+    if (snapshot.schemaVersion !== SNAPSHOT_SCHEMA_VERSION) {
+      throw new Error(`未知快照版本: ${snapshot.schemaVersion}`);
+    }
+    if (!('data' in snapshot)) throw new Error('转换快照缺少 data');
+  }
+
+  private parseSnapshot(raw: unknown): Snapshot {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(String(raw));
+    } catch {
+      throw new Error('转换快照不是合法 JSON');
+    }
+    this.assertSnapshot(parsed as Snapshot);
+    return parsed as Snapshot;
+  }
+
+  private rowToTransition(row: Record<string, unknown>): Transition {
+    const afterSnapshot = this.parseSnapshot(row.after_snapshot);
     return {
       targetId: row.target_id as string,
       kind: row.kind as TransitionKind,

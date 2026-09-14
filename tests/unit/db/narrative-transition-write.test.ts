@@ -225,4 +225,41 @@ describe('叙事转换写路径', () => {
     expect(ctx.events.every((e) => e.chapterId !== c1.id)).toBe(true);
     expect(ctx.textBlock).toContain('before_target');
   });
+
+  it('拒绝跨项目锚点，损坏快照读取显式失败', () => {
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO projects (id, name, type_tags, style, summary, created_at, updated_at) VALUES ('p2','x','[]','','',?,?)`,
+    ).run(now, now);
+    const ch1 = chapters.create({ projectId: 'p1', title: '一', content: '<p>x</p>' }).data!;
+    const ch2 = chapters.create({ projectId: 'p2', title: '二', content: '<p>x</p>' }).data!;
+    facts.batchUpsert({
+      projectId: 'p1',
+      chapterId: ch1.id,
+      facts: [{
+        projectId: 'p1', chapterId: ch1.id, factType: 'event',
+        subject: 'a', predicate: 'p', object: 'o', description: 'e1',
+      }],
+    });
+    const factId = db.prepare(`SELECT id FROM story_facts WHERE project_id = 'p1'`).get() as { id: string };
+    const repo = new NarrativeTransitionRepo(db);
+    const cross = repo.append({
+      projectId: 'p1',
+      targetTable: 'story_facts',
+      targetId: factId.id,
+      kind: 'created',
+      atChapterId: ch2.id,
+      afterSnapshot: { schemaVersion: 1, data: { id: factId.id } },
+    });
+    expect(cross.success).toBe(false);
+    expect(cross.error).toContain('跨项目');
+
+    db.prepare(`
+      INSERT INTO narrative_transitions (
+        id, project_id, target_table, target_id, kind,
+        at_chapter_id, at_chapter_ordinal, transition_seq, after_snapshot, created_at
+      ) VALUES ('bad','p1','story_facts',?,'created',?,0,0,'not-json',?)
+    `).run(factId.id, ch1.id, now);
+    expect(() => repo.listByProject('p1')).toThrow('转换快照不是合法 JSON');
+  });
 });

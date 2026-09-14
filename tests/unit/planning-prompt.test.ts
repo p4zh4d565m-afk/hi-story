@@ -74,7 +74,20 @@ describe('parseChapterOutlines', () => {
 
   it('接受卷序一致、章节递增的完整章纲', () => {
     const chapters = [chapter, { ...chapter, chapterNumber: 2, title: '追踪' }];
-    expect(parseChapterOutlines(JSON.stringify({ chapters }), 0)).toHaveLength(2);
+    const parsed = parseChapterOutlines(JSON.stringify({ chapters }), 0);
+    expect(parsed).toHaveLength(2);
+    expect(parsed[0]!.id).toBeTruthy();
+    expect(parsed[1]!.id).toBeTruthy();
+    expect(parsed[0]!.id).not.toBe(parsed[1]!.id);
+  });
+
+  it('保留来源已有的章纲 id', () => {
+    const chapters = [
+      { ...chapter, id: 'keep-a' },
+      { ...chapter, chapterNumber: 2, title: '追踪', id: 'keep-b' },
+    ];
+    const parsed = parseChapterOutlines(JSON.stringify({ chapters }), 0);
+    expect(parsed.map((c) => c.id)).toEqual(['keep-a', 'keep-b']);
   });
 
   it('拒绝卷序错误、章节倒序或关键节拍不足', () => {

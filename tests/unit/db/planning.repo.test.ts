@@ -104,4 +104,25 @@ describe('PlanningRepo（v20 唯一约束 + 坏 JSON 可见 + save 合并）', (
     expect(rows[0].idea).toBe('新');
     db2.close();
   });
+
+  it('save 为缺 id 的章纲补稳定身份并保留已有 id', () => {
+    const chapter = {
+      volumeIndex: 0, chapterNumber: 1, title: '入局', pov: '主角', chapterGoal: 'g',
+      openingSituation: 'o', centralConflict: 'c', keyBeats: ['a', 'b', 'd'],
+      reveal: 'r', characterChange: 'ch', emotionalBeat: 'e', payoff: 'p', endingHook: 'h',
+    };
+    const saved = repo.save({
+      projectId: 'p1',
+      idea: '创意',
+      chapterOutlines: [
+        chapter,
+        { ...chapter, chapterNumber: 2, id: 'keep-me' },
+      ],
+    });
+    expect(saved.success).toBe(true);
+    const outlines = saved.data!.chapterOutlines;
+    expect(outlines[0]!.id).toBeTruthy();
+    expect(outlines[0]!.id).not.toBe('keep-me');
+    expect(outlines[1]!.id).toBe('keep-me');
+  });
 });

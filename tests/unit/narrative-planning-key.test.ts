@@ -7,6 +7,8 @@ import {
   sameOutlineIdentity,
   splitOutlineIdentity,
   mapRegeneratedOutlineIds,
+  assignChapterOutlineIds,
+  findChapterForOutline,
   canRebindPlanningKey,
   replacePlanningBinding,
   resolveObsidianOutlineIdentity,
@@ -173,5 +175,31 @@ describe('narrative-planning-key', () => {
       chapterNumber: 3,
       title: 'C2',
     });
+  });
+
+  it('assignChapterOutlineIds 保留已有 id、为缺 id 项分配，并拒绝重复', () => {
+    const allocated: string[] = [];
+    const result = assignChapterOutlineIds(
+      [{ id: 'keep', volumeIndex: 0 }, { volumeIndex: 0 }],
+      () => {
+        allocated.push('fresh');
+        return 'fresh';
+      },
+    );
+    expect(result.map((x) => x.id)).toEqual(['keep', 'fresh']);
+    expect(allocated).toEqual(['fresh']);
+    expect(() => assignChapterOutlineIds(
+      [{ id: 'dup' }, { id: 'dup' }],
+      () => 'x',
+    )).toThrow('章纲 id 重复');
+  });
+
+  it('findChapterForOutline 优先 planningOutlineId，否则回退卷号+章节号', () => {
+    const chapters = [
+      { id: 'ch-old', planningOutlineId: null, planningOutline: { volumeIndex: 0, chapterNumber: 1 } },
+      { id: 'ch-new', planningOutlineId: 'out-9', planningOutline: { volumeIndex: 0, chapterNumber: 2 } },
+    ];
+    expect(findChapterForOutline(chapters, { id: 'out-9', volumeIndex: 0, chapterNumber: 99 })?.id).toBe('ch-new');
+    expect(findChapterForOutline(chapters, { volumeIndex: 0, chapterNumber: 1 })?.id).toBe('ch-old');
   });
 });
