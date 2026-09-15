@@ -168,6 +168,7 @@ resources/
 - **叙事时间接入（2026-09-14，选项 B）** — 迁移 v21：`narrative_transitions` + 空 `chapter_alias` + 章节软删墓碑 + 事实 `state_key`/`archived`；重抽取/confirm/resolve/payDebt 同事务双写投影与转换；AI 对话/写章/审稿经 `db:narrative:buildAsOfContext` 固定截面（`reduce*AsOf`）。v21 重建章表在事务外关 FK，升级后 `foreign_key_check` 且历史/锚点数量不变；as-of 读 superseded 历史并输出业务内容；章纲稳定 ID 在生成/导入/保存时分配，建章写 `planningOutlineId`。不永久删除、不并章、不新增墓碑 UI。合同 `docs/superpowers/specs/2026-09-14-narrative-time-integration-design.md`。
 - **叙事时间 fail-closed 手测收口（2026-09-15）** — 写章/审稿 as-of 失败阻断；对话失败不注入叙事。指南 `docs/guides/2026-09-14-narrative-time-failclosed-guide.md`，报告 `docs/reports/2026-09-15-narrative-time-failclosed-manual-test.md`。
 - **Renderer 全量类型检查门槛（#145，2026-09-15）** — 新增 `tsconfig.renderer.json`（`jsx: react-jsx` + DOM）与 `npm run typecheck:renderer`；`build:renderer` 先 typecheck 再 vite。修掉 `onToggleContext` 残留、DockLayout `PanelState` 缺字段、起名词库联合类型收窄等既有类型错误。
+- **AI 对话清理** — 迁移 v22 消息软删 + batch 撤销；聊天面板按轮删/清空当前会话，约 10 秒内可恢复；清理粒度为项目内 thread，不绑定章节。
 
 ## Git 远程仓库
 

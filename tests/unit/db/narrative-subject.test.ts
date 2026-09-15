@@ -21,7 +21,7 @@ function v18(db: Database.Database) {
 }
 describe('v19 主体兼容', () => {
   it('旧行升级为空主体且新列非 NULL 并有空默认值', () => {
-    const db = database(); v18(db); runMigrations(db);
+    const db = database(); v18(db); runMigrations(db, 19);
     for (const table of ['narrative_hooks', 'narrative_debts']) {
       expect(db.prepare(`PRAGMA table_info(${table})`).all()).toContainEqual(
         expect.objectContaining({ name: 'subject', notnull: 1, dflt_value: "''" }),

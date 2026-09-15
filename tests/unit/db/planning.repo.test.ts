@@ -96,7 +96,7 @@ describe('PlanningRepo（v20 唯一约束 + 坏 JSON 可见 + save 合并）', (
     db2.prepare("INSERT INTO planning_ideas (id, project_id, idea, updated_at) VALUES ('old','p1','旧','2026-01-01T00:00:00Z')").run();
     db2.prepare("INSERT INTO planning_ideas (id, project_id, idea, updated_at) VALUES ('new','p1','新','2026-09-01T00:00:00Z')").run();
 
-    runMigrations(db2);
+    runMigrations(db2, 20);
 
     const rows = db2.prepare('SELECT id, idea FROM planning_ideas WHERE project_id = ?').all('p1') as { id: string; idea: string }[];
     expect(rows).toHaveLength(1);

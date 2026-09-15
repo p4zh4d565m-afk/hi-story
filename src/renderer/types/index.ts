@@ -185,6 +185,39 @@ export interface AppendConversationMessageInput {
   createdAt?: string;
 }
 
+/** 按轮删除 / 清空会话的软删批次结果（公开消息类型不含软删列） */
+export type ConversationCleanupResult = {
+  batchId: string | null;
+  threadId: string;
+  deletedMessageIds: string[];
+  deletedAt: string | null;
+  noop: boolean;
+};
+
+/** 按批次恢复软删消息的结果 */
+export type ConversationRestoreResult = {
+  batchId: string;
+  threadId: string;
+  restoredMessageIds: string[];
+};
+
+export interface DeleteConversationTurnInput {
+  projectId: string;
+  threadId: string;
+  userMessageId: string;
+}
+
+export interface ClearConversationThreadInput {
+  projectId: string;
+  threadId: string;
+}
+
+export interface RestoreConversationBatchInput {
+  projectId: string;
+  threadId: string;
+  batchId: string;
+}
+
 export interface LegacyConversationEntry {
   id: string;
   role: 'user' | 'assistant';
