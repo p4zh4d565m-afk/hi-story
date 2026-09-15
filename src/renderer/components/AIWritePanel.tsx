@@ -28,20 +28,26 @@ function formatChapterOutlineSummary(outline: ChapterOutline): string {
   return lines.join('\n');
 }
 
-/** 加载叙事时间截面（写章：末章 through_target 等价 before 下一新章） */
+/** 加载叙事时间截面（写「下一新章」：write + after_chapter 正式 before_target） */
 async function loadNarrativeAsOfForWrite(
   projectId: string,
   chapters: Chapter[],
 ): Promise<string | null> {
   try {
     const last = chapters.length > 0 ? chapters[chapters.length - 1] : null;
-    // 新章尚无 id：用 chat+through_target(末章) 等价写章 before 下一章
-    const res = await (window as any).electronAPI.invoke('db:narrative:buildAsOfContext', {
-      projectId,
-      taskType: last ? 'chat' : 'planning',
-      targetChapterId: last?.id ?? null,
-      hasActiveChapter: !!last,
-    });
+    // 有活跃章：锚点末章之后的虚拟新章；无章：write 空运行时（不挂 chat/planning）
+    const payload = last
+      ? {
+          projectId,
+          taskType: 'write' as const,
+          placement: 'after_chapter' as const,
+          anchorChapterId: last.id,
+        }
+      : {
+          projectId,
+          taskType: 'write' as const,
+        };
+    const res = await (window as any).electronAPI.invoke('db:narrative:buildAsOfContext', payload);
     if (res?.success && res.data?.textBlock) return res.data.textBlock as string;
     return null;
   } catch {

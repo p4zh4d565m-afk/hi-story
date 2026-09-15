@@ -365,4 +365,168 @@ describe('loadNarrativeAsOfFromDb', () => {
     expect(chatCtx.textBlock).not.toContain('废站');
     expect(chatCtx.facts.filter((f) => f.factType === 'location')).toHaveLength(1);
   });
+
+  describe('#146 write after_chapter', () => {
+    /** 同项目种子：两章 + 末章事实 + 期限=末章的未偿债务，供新旧方案对比 */
+    function seedWriteAfterCompare(db: Database.Database) {
+      const chapters = new ChapterRepo(db);
+      const c1 = chapters.create({ projectId: 'p1', title: '一', content: '<p>1</p>' }).data!;
+      const c2 = chapters.create({ projectId: 'p1', title: '二', content: '<p>2</p>' }).data!;
+      const now = new Date().toISOString();
+      db.prepare(`
+        INSERT INTO story_facts (
+          id, project_id, chapter_id, fact_type, subject, predicate, object, description,
+          status, source_kind, state_key, state_key_version, archived, created_at
+        ) VALUES
+          ('f-c1','p1',?,'event','林岚','发现','铜钥','林岚在废站捡到铜钥','active','chapter_extraction',NULL,1,0,?),
+          ('f-c2','p1',?,'location','林岚','位于','客栈','林岚在客栈','active','chapter_extraction','location|林岚|位于',1,0,?)
+      `).run(c1.id, now, c2.id, now);
+      db.prepare(`
+        INSERT INTO narrative_debts (
+          id, project_id, chapter_id, description, debt_type, status,
+          created_at, updated_at, subject
+        ) VALUES ('d-last','p1',?,'揭晓站长身份','reveal','unpaid',?,?,'站长')
+      `).run(c1.id, now, now);
+      const transitions = new NarrativeTransitionRepo(db);
+      db.transaction(() => {
+        const created = transitions.append({
+          projectId: 'p1',
+          targetTable: 'narrative_debts',
+          targetId: 'd-last',
+          kind: 'created',
+          atChapterId: c1.id,
+          afterSnapshot: makeSnapshot({
+            status: 'unpaid',
+            chapterId: c1.id,
+            description: '揭晓站长身份',
+            dueChapterId: c2.id,
+          }),
+        });
+        if (!created.success) throw new Error(created.error);
+      })();
+      return { c1, c2 };
+    }
+
+    it('A1/A3: after_chapter 用 write 且 mode=before_target，不再挂 chat', () => {
+      const { c2 } = seedWriteAfterCompare(db);
+      const ctx = loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c2.id,
+      });
+      expect(ctx.mode).toBe('before_target');
+      expect(ctx.textBlock).toContain('before_target');
+      expect(ctx.textBlock).toContain('placement=after_chapter');
+      expect(ctx.textBlock).not.toContain('through_target');
+      // 虚拟目标 id 进截面，taskType 路径是 write（非 chat）
+      expect(ctx.target?.id).toBe(`__write_after__:${c2.id}`);
+    });
+
+    it('A2: 事实包含范围 ≡ chat through_target(末章)；due=末章在 after_chapter 为 overdue、旧 chat 仍 unpaid', () => {
+      const { c2 } = seedWriteAfterCompare(db);
+
+      const after = loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c2.id,
+      });
+      const oldChat = loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'chat',
+        targetChapterId: c2.id,
+        hasActiveChapter: true,
+      });
+
+      // 基础折叠包含范围：事实 id 集合等价
+      expect(after.facts.map((f) => f.id).sort()).toEqual(oldChat.facts.map((f) => f.id).sort());
+      expect(after.events.map((e) => e.id).sort()).toEqual(oldChat.events.map((e) => e.id).sort());
+      expect(after.textBlock).toContain('林岚在废站捡到铜钥');
+      expect(after.textBlock).toContain('林岚在客栈');
+
+      // 债务：包含集相同，逾期派生不同
+      expect(after.debts.map((d) => d.id)).toEqual(oldChat.debts.map((d) => d.id));
+      expect(oldChat.debts[0]!.status).toBe('unpaid');
+      expect(after.debts[0]!.status).toBe('overdue');
+    });
+
+    it('A4: 非末章锚点 / 已删 / 跨项目失败', () => {
+      const chapters = new ChapterRepo(db);
+      const c1 = chapters.create({ projectId: 'p1', title: '一', content: '<p>1</p>' }).data!;
+      const c2 = chapters.create({ projectId: 'p1', title: '二', content: '<p>2</p>' }).data!;
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO projects (id, name, type_tags, style, summary, created_at, updated_at) VALUES ('p2','t2','[]','','',?,?)`,
+      ).run(now, now);
+      const other = chapters.create({ projectId: 'p2', title: '他书', content: '<p>x</p>' }).data!;
+
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c1.id,
+      })).toThrow(/活跃末章/);
+
+      expect(chapters.remove(c2.id).success).toBe(true);
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c2.id,
+      })).toThrow(/已删除|活跃末章/);
+
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: other.id,
+      })).toThrow();
+    });
+
+    it('A5: after_chapter 带 targetChapterId 或 hasActiveChapter:false 失败；非 write 拒绝 placement', () => {
+      const chapters = new ChapterRepo(db);
+      const c1 = chapters.create({ projectId: 'p1', title: '一', content: '<p>1</p>' }).data!;
+
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c1.id,
+        targetChapterId: c1.id,
+      })).toThrow(/targetChapterId/);
+
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c1.id,
+        hasActiveChapter: false,
+      })).toThrow(/hasActiveChapter/);
+
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'chat',
+        placement: 'after_chapter',
+        anchorChapterId: c1.id,
+      })).toThrow(/after_chapter/);
+    });
+
+    it('A6: 无章节 write → 空运行时 before_target，不伪装 planning', () => {
+      const ctx = loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+      });
+      expect(ctx.mode).toBe('before_target');
+      expect(ctx.mode).not.toBe('planning_only');
+      expect(ctx.facts).toEqual([]);
+      expect(ctx.events).toEqual([]);
+      expect(ctx.hooks).toEqual([]);
+      expect(ctx.debts).toEqual([]);
+      expect(ctx.knowledge).toEqual([]);
+      expect(ctx.textBlock).toContain('before_target');
+      expect(ctx.textBlock).toMatch(/空|无活跃/);
+      expect(ctx.textBlock).not.toContain('planning_only');
+    });
+  });
 });
