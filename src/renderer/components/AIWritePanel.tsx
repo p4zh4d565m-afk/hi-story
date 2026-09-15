@@ -191,6 +191,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const batchRunningRef = useRef(false);
   // 停止标志：批量循环每章间隙（无活跃流）也要能停下，靠它让循环 break
   const stopRequestedRef = useRef(false);
+  // 任务代次：每次启动/停止都递增。旧任务的 finally 只有在「代次仍是自己」时才释放锁，
+  // 避免「旧任务被停止后、新任务刚启动」时，旧任务迟到的 finally 把新任务的锁释放掉。
+  const batchRunIdRef = useRef(0);
 
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 680, height: 500 });
@@ -439,6 +442,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (selectedOutlineIds.size === 0) return;
     if (batchRunningRef.current) return; // 防重复启动
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
+    const runId = ++batchRunIdRef.current; // 认领新代次，旧任务 finally 不再有资格释放
     setBatchProgress({ total: ordered.length, completed: 0, current: ordered[0]?.title, results: [] });
     setBatchPaused(false);
     stopRequestedRef.current = false;
@@ -447,21 +451,28 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     try {
       await runBatchRef.current(ordered, 0);
     } finally {
-      batchRunningRef.current = false;
-      setBatchRunning(false);
+      // 仅当仍是本代次才释放锁，防止旧任务 finally 释放新任务锁
+      if (batchRunIdRef.current === runId) {
+        batchRunningRef.current = false;
+        setBatchRunning(false);
+      }
     }
   }, [selectedOutlineIds, outlineNodes]);
 
   const handleBatchResume = useCallback(() => {
     if (batchRunningRef.current) return; // 防重复启动
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
+    const runId = ++batchRunIdRef.current; // 认领新代次
     setBatchPaused(false);
     stopRequestedRef.current = false;
     batchRunningRef.current = true;
     setBatchRunning(true);
     runBatchRef.current(ordered, batchProgress.completed).finally(() => {
-      batchRunningRef.current = false;
-      setBatchRunning(false);
+      // 仅当仍是本代次才释放锁
+      if (batchRunIdRef.current === runId) {
+        batchRunningRef.current = false;
+        setBatchRunning(false);
+      }
     });
   }, [selectedOutlineIds, outlineNodes, batchProgress.completed]);
 
@@ -472,6 +483,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
   // 停止批量：置停止标志让循环在下一章前 break，并 abort 当前活跃流立即打断正在生成的一章
   const handleBatchStop = useCallback(async () => {
+    batchRunIdRef.current++; // 作废当前代次，其 finally 不再有资格释放锁
     stopRequestedRef.current = true;
     if (projectId) await aiService.cancelActiveStreams(projectId);
     batchRunningRef.current = false;
