@@ -479,13 +479,17 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }, [projectId]);
 
   // 停止批量：递增代次作废当前任务（循环主体每章开头检测到代次变了就 break），
-  // 并 abort 当前活跃流立即打断正在生成的一章。停止提示由这里主动发出。
+  // 并 abort 当前活跃流立即打断正在生成的一章。
   const handleBatchStop = useCallback(async () => {
-    batchRunIdRef.current++; // 作废当前代次：既让循环 break，也让其 finally 无资格释放锁
+    const stopId = ++batchRunIdRef.current; // 作废当前代次，并记下本次递增后的值
     if (projectId) await aiService.cancelActiveStreams(projectId);
-    batchRunningRef.current = false;
-    setBatchRunning(false);
-    setError('已停止批量生成');
+    // 异步回执后校验代次：若停止后又启动了新批次（代次再次递增），则本回执不得释放新任务锁、
+    // 也不得回写「已停止」提示（新批次正在跑）
+    if (batchRunIdRef.current === stopId) {
+      batchRunningRef.current = false;
+      setBatchRunning(false);
+      setError('已停止批量生成');
+    }
   }, [projectId]);
 
   const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number, runId: number) => {
