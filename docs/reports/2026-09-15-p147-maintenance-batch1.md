@@ -5,7 +5,7 @@
 
 ## 完成内容
 
-1. **启动自动备份真实小说库** — 主进程新增 `src/main/db/backup.ts`，在**迁移后**异步调用 `db.backup()` 做在线一致性备份到 `userData/backups/`，只保留最近 5 份（文件名带毫秒防同秒撞车），旧的自动删。备份失败只记日志、不阻断启动。**首次启动跳过**由 index.ts 在 `getDb()` 之前用 `getDbPath()` 判断（避免 `getDb()` 已建库导致 existsSync 恒真、留空库备份）。
+1. **启动自动备份真实小说库** — 主进程新增 `src/main/db/backup.ts`，在**迁移前**用 `db.backup()` 做在线一致性备份到 `userData/backups/`（迁移是最大的数据丢失风险点，迁移前备份才能完整恢复），只保留最近 5 份（文件名带毫秒防同秒撞车），旧的自动删。备份失败只记日志、不阻断启动。**首次启动跳过**由 index.ts 在 `getDb()` 之前用 `isFirstRun` 判断（避免 `getDb()` 已建库导致 existsSync 恒真、留空库备份）。
 2. **抽 MaterialRepo 清理 IPC 旧 SQL** — `entities.ipc.ts` 里 `db:material:*` 五个 handler 的裸 `db.prepare`（共 8 次）抽到新 `src/main/db/repositories/material.repo.ts`，IPC 只转调 Repo；补齐 `source_layer` 非法值回退 `user` 的校验（原实现会触发 CHECK 约束报错）。**说明：只收了 entities.ipc 的用户素材 CRUD**；`database.ipc.ts`/`reference.ipc.ts`/`search-engine.ts` 里还有 `materials` 查询，但那些走的是只读文学知识库 literary.db（`litDb`），与用户素材主库是两码事，不属于「材料库 CRUD」，未纳入本批。
 3. **改善 AI 取消/错误提示** — `ai.service.ts` 新增 `humanizeAiError`（英文底层串翻译成友好中文、已是中文的错误透传）与 `streamEndDisplay`（切项目静默、主动停止提示「已停止生成」、真实失败给友好中文）；**四个入口**（对话 AIChatPanel、写章、审稿、润色）的 catch 统一走这两个函数。
 4. **修浮窗主题按钮** — 写章/审稿/润色三个浮窗里 `hover:text-white`（Tailwind 默认纯白）在浅色主题下 hover 时白字看不清，统一改为主题化的 `hover:text-gray-100`。灰底 `gray-*` 已由 tailwind 全局映射到 `--ui-gray-*`，本就跟随主题。
@@ -32,6 +32,7 @@
 - **误用系统 Node 跑 vitest**：`npx vitest` 走了系统 Node（ABI 137），better-sqlite3 是 Electron ABI 130，直接 `ERR_DLOPEN_FAILED`。按 CLAUDE.md 改走 Electron-as-Node 后正常。
 - **审查指出的问题已闭环**：backup 注释「迁移前」已改「迁移后」；「首启无库跳过」改为 getDb() 前判断（原实现因 getDb 已建库而失效）；文件名加毫秒防同秒撞车；`Failed to fetch` 已补匹配；对话 AIChatPanel 主路径 catch 已接 streamEndDisplay。
 - **第二轮审查（边角）已闭环**：报告「六段 SQL」改为「五个 handler / 8 次 prepare」；首启判断抽成 `backup.ts` 的 `isFirstRun` 纯函数并补独立单测；startup.test.ts 的 `getDbPath` 从 `':memory:'` 改为真实存在的临时文件，锁住「非首启会调 backup」。
+- **第三轮审查（PR 评审，P1+P2）已闭环**：P1 备份从迁移后改到**迁移前并同步 await**（迁移是最大数据丢失风险点，迁移前备份才能完整恢复）；P2 批量写章 catch 接入停止提示（切项目静默、停止提示后 break）。startup.test.ts 因 whenReady 回调改 async 相应改为 await。
 - **全量测试注水**：原 `npm run test` 扫到 `.worktrees/` 5 份副本 → 371/2727。`vitest.config.ts` 排除 worktree 后，主树真实规模为 **78 文件 / 577 测试**。
 
 ## 下一步建议
@@ -43,8 +44,8 @@
 
 ## 自检结论
 
-1. 满足需求 ✅（4 项落地，2 项按作者决定跳过；两轮审查意见全部闭环）
+1. 满足需求 ✅（4 项落地，2 项按作者决定跳过；三轮审查意见全部闭环）
 2. 不影响已有功能 ✅（577 测试全过、renderer typecheck 过、build:main 过）
-3. 边界情况 ✅（首启无库在 getDb 前跳过、备份失败不阻断、同秒撞车防、material 非法 source_layer 回退、中文错误透传、Failed to fetch 命中）
+3. 边界情况 ✅（首启无库在 getDb 前跳过、备份失败不阻断、同秒撞车防、material 非法 source_layer 回退、中文错误透传、Failed to fetch 命中、批量停止提示）
 4. 测试已同步 ✅（新增 backup + humanize 单测；startup 补 mock；vitest 排除 worktree）
 5. 技术债已记录 ✅（见「下一步建议」）
