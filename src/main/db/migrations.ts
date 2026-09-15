@@ -669,6 +669,16 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  // 022: AI 对话消息软删除列（应用层保证 deleted_at / deletion_batch_id 成对）
+  {
+    version: 22,
+    sql: `
+      ALTER TABLE conversation_messages ADD COLUMN deleted_at TEXT;
+      ALTER TABLE conversation_messages ADD COLUMN deletion_batch_id TEXT;
+      CREATE INDEX IF NOT EXISTS idx_conversation_messages_deletion_batch
+        ON conversation_messages(deletion_batch_id);
+    `,
+  },
 ];
 
 /** 为 planning_ideas.chapter_outlines JSON 中缺 id 的项补 UUID（同事务调用） */

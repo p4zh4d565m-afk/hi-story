@@ -29,7 +29,7 @@ export class ConversationRepo {
       const messages: Record<string, ConversationMessage[]> = {};
       const messageStatement = this.db.prepare(`
         SELECT * FROM conversation_messages
-        WHERE thread_id = ?
+        WHERE thread_id = ? AND deleted_at IS NULL
         ORDER BY sort_order ASC, timestamp ASC, id ASC
       `);
       for (const thread of threads) {
@@ -161,6 +161,7 @@ export class ConversationRepo {
       SELECT message.* FROM conversation_messages message
       JOIN conversation_threads thread ON thread.id = message.thread_id
       WHERE message.id = ? AND message.thread_id = ? AND thread.project_id = ?
+        AND message.deleted_at IS NULL
     `).get(messageId, threadId, projectId) as Record<string, unknown> | undefined;
     return row ? { success: true, data: rowToMessage(row) } : { success: false, error: '消息不存在' };
   }

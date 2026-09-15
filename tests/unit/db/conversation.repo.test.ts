@@ -34,6 +34,8 @@ describe('ConversationRepo', () => {
         updated_at TEXT NOT NULL,
         sort_order INTEGER NOT NULL DEFAULT 0,
         context_type TEXT NOT NULL DEFAULT 'chat',
+        deleted_at TEXT,
+        deletion_batch_id TEXT,
         FOREIGN KEY (thread_id) REFERENCES conversation_threads(id) ON DELETE CASCADE
       );
       CREATE TABLE data_migration_state (
@@ -110,6 +112,21 @@ describe('ConversationRepo', () => {
     const snapshot = repo.findByProject('project-a').data!;
     expect(snapshot.threads).toHaveLength(1);
     expect(snapshot.messages['legacy-thread']).toHaveLength(2);
+  });
+
+  it('findByProject 不返回已软删消息', () => {
+    const thread = repo.createThread({ projectId: 'project-a', title: 't', category: 'general' }).data!;
+    const user = repo.appendMessage({
+      projectId: 'project-a', threadId: thread.id, role: 'user', content: '可见前', contextType: 'chat',
+    }).data!;
+    db.prepare(`
+      UPDATE conversation_messages SET deleted_at = ?, deletion_batch_id = ? WHERE id = ?
+    `).run('2026-09-15T00:00:00.000Z', 'batch-1', user.id);
+
+    const msgs = repo.findByProject('project-a').data!.messages[thread.id] ?? [];
+    expect(msgs.map(m => m.id)).not.toContain(user.id);
+    const raw = db.prepare('SELECT COUNT(*) AS c FROM conversation_messages WHERE id = ?').get(user.id) as { c: number };
+    expect(raw.c).toBe(1);
   });
 
   it('旧数据导入失败时事务回滚且不记录完成状态', () => {
