@@ -479,12 +479,13 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }, [projectId]);
 
   // 停止批量：递增代次作废当前任务（循环主体每章开头检测到代次变了就 break），
-  // 并 abort 当前活跃流立即打断正在生成的一章。
+  // 并 abort 当前活跃流立即打断正在生成的一章。停止提示由这里主动发出。
   const handleBatchStop = useCallback(async () => {
     batchRunIdRef.current++; // 作废当前代次：既让循环 break，也让其 finally 无资格释放锁
     if (projectId) await aiService.cancelActiveStreams(projectId);
     batchRunningRef.current = false;
     setBatchRunning(false);
+    setError('已停止批量生成');
   }, [projectId]);
 
   const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number, runId: number) => {
@@ -500,6 +501,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         chapters,
       );
     } catch { /* 忽略 */ }
+    // 异步边界后校验代次：加载期间被停止或新批次已启动，则静默退出，不写旧批次的错误提示
+    if (batchRunIdRef.current !== runId) return;
     // fail-closed：as-of 失败即阻断批量，不回退到「当前活跃事实」（那会读进目标章之后的事实）
     if (!asOfText) {
       setError('叙事时间截面加载失败，已停止批量生成（避免误读目标章之后的事实）');
@@ -588,13 +591,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         await new Promise(r => setTimeout(r, 500));
       } catch (e) {
         const msg = (e as Error).message;
-        // 切项目静默 break；主动停止给明确提示后 break；真实失败记录并继续
-        if (msg === AI_IGNORED_MESSAGE) break;
-        const display = streamEndDisplay(msg, '批量生成：');
-        if (msg === AI_STOPPED_MESSAGE) {
-          if (display) setError(display);
-          break;
-        }
+        // 切项目静默 break；主动停止静默 break（停止提示由 handleBatchStop 主动发出）；
+        // 真实失败记录并继续（写进度前校验代次）
+        if (msg === AI_IGNORED_MESSAGE || msg === AI_STOPPED_MESSAGE) break;
         console.error(`批量生成失败 [${nodes[i].title}]:`, e);
         // 失败也校验代次：停止/新批次已启动则不再写旧进度
         if (batchRunIdRef.current !== runId) break;
