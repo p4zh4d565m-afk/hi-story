@@ -5,33 +5,22 @@ import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { encrypt, decrypt } from '../services/crypto';
 import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
 import { createCleanupLock } from '../services/conversation-cleanup-lock';
+import {
+  createConversationCleanupActions,
+  type PendingUndo,
+} from '../services/conversation-cleanup-actions';
 import { createCreativeDecisionLoader } from '../services/creative-decision-loader';
 import { buildDecisionExtractionMessages, parseDecisionDrafts } from '../services/creative-decision-extraction';
 import CreativeDecisionPanel from './CreativeDecisionPanel';
 import type {
-  ClearConversationThreadInput,
-  ConversationCleanupResult,
   ConversationMessage,
-  ConversationRestoreResult,
   ConversationSnapshot,
   ConversationThread,
   CreateCreativeDecisionProposalsInput,
   CreativeDecision,
   CreativeDecisionEffect,
-  DeleteConversationTurnInput,
   IpcResult,
-  RestoreConversationBatchInput,
 } from '../types';
-
-/** 约 10 秒短时撤销（仅内存，关应用/切项目后消失） */
-const CLEANUP_UNDO_MS = 10_000;
-
-type PendingUndo = {
-  batchId: string;
-  threadId: string;
-  projectId: string;
-  expiresAt: number;
-} | null;
 
 // Provider preset definitions (mirrors main process but available in renderer)
 interface ProviderPreset {
@@ -329,8 +318,17 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const decisionOperationGenerationRef = useRef(0);
   const contextRefreshGenerationRef = useRef(0);
   const cleanupLockRef = useRef(createCleanupLock());
+  const isStreamingRef = useRef(isStreaming);
   projectIdRef.current = projectId;
   activeThreadIdRef.current = activeThreadId;
+  isStreamingRef.current = isStreaming;
+
+  const cleanupActions = useMemo(() => createConversationCleanupActions({
+    invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
+    lock: cleanupLockRef.current,
+    getCurrentProjectId: () => projectIdRef.current ?? null,
+    isStreaming: () => isStreamingRef.current,
+  }), []);
 
   const cleanupLocked = isStreaming || cleanupInFlight;
 
@@ -503,16 +501,6 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setError(null);
   };
 
-  const showCleanupUndo = (result: ConversationCleanupResult, requestProjectId: string) => {
-    if (!result.batchId || result.noop) return;
-    setPendingUndo({
-      batchId: result.batchId,
-      threadId: result.threadId,
-      projectId: requestProjectId,
-      expiresAt: Date.now() + CLEANUP_UNDO_MS,
-    });
-  };
-
   const removeMessagesLocally = (threadId: string, deletedMessageIds: string[]) => {
     const removed = new Set(deletedMessageIds);
     setThreadData(current => ({
@@ -525,117 +513,75 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   };
 
   const handleDeleteTurn = async (userMessageId: string) => {
-    const requestProjectId = projectId;
-    const requestThreadId = activeThreadId;
-    if (!requestProjectId || !requestThreadId || loadedProjectId !== requestProjectId) return;
-    if (isStreaming) return;
-    const token = cleanupLockRef.current.tryAcquire();
-    if (!token) return;
-    setCleanupInFlight(true);
     setCleanupTip(null);
+    setCleanupInFlight(true);
     try {
-      const input: DeleteConversationTurnInput = {
-        projectId: requestProjectId,
-        threadId: requestThreadId,
+      const result = await cleanupActions.deleteTurn({
+        projectId: projectId ?? null,
+        threadId: activeThreadId,
+        loadedProjectId,
         userMessageId,
-      };
-      const response = await window.electronAPI.invoke(
-        'db:conversation:deleteTurn', input,
-      ) as IpcResult<ConversationCleanupResult>;
-      if (projectIdRef.current !== requestProjectId) return;
-      if (!response.success || !response.data) {
-        setError(response.error || '删除本轮失败');
-        return;
+      });
+      if (result.status === 'ok') {
+        removeMessagesLocally(result.threadId, result.deletedMessageIds);
+        setPendingUndo(result.pendingUndo);
+        setError(null);
+      } else if (result.status === 'error') {
+        setError(result.error);
       }
-      if (response.data.noop) return;
-      removeMessagesLocally(requestThreadId, response.data.deletedMessageIds);
-      showCleanupUndo(response.data, requestProjectId);
-      setError(null);
+      // streaming/busy/guard/stale/noop：不改 messages / pendingUndo
     } finally {
-      cleanupLockRef.current.release(token);
       setCleanupInFlight(cleanupLockRef.current.isHeld());
     }
   };
 
   const handleClearThread = async () => {
-    const requestProjectId = projectId;
-    const requestThreadId = activeThreadId;
-    if (!requestProjectId || !requestThreadId || loadedProjectId !== requestProjectId) return;
-    if (isStreaming) return;
-    const token = cleanupLockRef.current.tryAcquire();
-    if (!token) return;
-    setCleanupInFlight(true);
     setCleanupTip(null);
+    setCleanupInFlight(true);
     try {
-      const input: ClearConversationThreadInput = {
-        projectId: requestProjectId,
-        threadId: requestThreadId,
-      };
-      const response = await window.electronAPI.invoke(
-        'db:conversation:clearThread', input,
-      ) as IpcResult<ConversationCleanupResult>;
-      if (projectIdRef.current !== requestProjectId) return;
-      if (!response.success || !response.data) {
-        setError(response.error || '清空消息失败');
-        return;
+      const result = await cleanupActions.clearThread({
+        projectId: projectId ?? null,
+        threadId: activeThreadId,
+        loadedProjectId,
+      });
+      if (result.status === 'ok') {
+        setThreadData(current => ({
+          ...current,
+          messages: { ...current.messages, [result.threadId]: [] },
+        }));
+        setPendingUndo(result.pendingUndo);
+        setError(null);
+      } else if (result.status === 'noop') {
+        // noop 不得清掉已有撤销条
+        setCleanupTip(result.tip);
+      } else if (result.status === 'error') {
+        setError(result.error);
       }
-      if (response.data.noop) {
-        // noop 不得清掉已有撤销条（例如按轮删后本地已空再点清空）
-        setCleanupTip('已无消息');
-        return;
-      }
-      setThreadData(current => ({
-        ...current,
-        messages: { ...current.messages, [requestThreadId]: [] },
-      }));
-      showCleanupUndo(response.data, requestProjectId);
-      setError(null);
     } finally {
-      cleanupLockRef.current.release(token);
       setCleanupInFlight(cleanupLockRef.current.isHeld());
     }
   };
 
   const handleUndoCleanup = async () => {
-    const undo = pendingUndo;
-    if (!undo) return;
-    if (isStreaming) return;
-    const requestProjectId = undo.projectId;
-    const token = cleanupLockRef.current.tryAcquire();
-    if (!token) return;
+    if (!pendingUndo) return;
     setCleanupInFlight(true);
     try {
-      const input: RestoreConversationBatchInput = {
-        projectId: requestProjectId,
-        threadId: undo.threadId,
-        batchId: undo.batchId,
-      };
-      const response = await window.electronAPI.invoke(
-        'db:conversation:restoreBatch', input,
-      ) as IpcResult<ConversationRestoreResult>;
-      if (projectIdRef.current !== requestProjectId) return;
-      if (!response.success || !response.data) {
-        setError(response.error || '撤销失败');
-        return;
+      const result = await cleanupActions.restoreBatch({ undo: pendingUndo });
+      if (result.status === 'ok') {
+        setThreadData(current => ({
+          ...current,
+          messages: {
+            ...current.messages,
+            [result.threadId]: result.messages.map(toChatEntry),
+          },
+        }));
+        setPendingUndo(null);
+        setCleanupTip(null);
+        setError(null);
+      } else if (result.status === 'error') {
+        setError(result.error);
       }
-      const snapshot = await window.electronAPI.invoke(
-        'db:conversation:findByProject', requestProjectId,
-      ) as IpcResult<ConversationSnapshot>;
-      if (projectIdRef.current !== requestProjectId) return;
-      if (!snapshot.success || !snapshot.data) {
-        setError(snapshot.error || '撤销后刷新消息失败');
-        return;
-      }
-      const nextMessages = (snapshot.data.messages[undo.threadId] || []).map(toChatEntry);
-      setThreadData(current => ({
-        ...current,
-        messages: { ...current.messages, [undo.threadId]: nextMessages },
-      }));
-      setPendingUndo(null);
-      setCleanupTip(null);
-      setError(null);
     } finally {
-      cleanupLockRef.current.release(token);
       setCleanupInFlight(cleanupLockRef.current.isHeld());
     }
   };
