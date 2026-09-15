@@ -1,9 +1,10 @@
 # AI 对话清理设计（方案 4 · 软删除 + 短时撤销，2026-09-15）
 
 > **效力：** 本文是「AI 对话隔离与清理」产品拍板后的**施工 Spec**。  
-> **前置：** #145 renderer 全量类型检查门槛已合入分支 `codex/renderer-typecheck`（`25d96ce`）；叙事时间 fail-closed 已在 master。  
+> **前置：** #145 renderer 全量类型检查门槛已提交于分支 `codex/renderer-typecheck`（`25d96ce`）；叙事时间 fail-closed 已在 master。  
 > **本轮授权范围：** 项目级会话（**不绑章**）+ 消息软删除 + 约 10 秒撤销 + 清空/按轮删/删整会话。  
-> **本轮不做：** 按章强制隔离、完整回收站 UI、关应用后恢复、消息硬删除、编辑消息、会话重命名大改。
+> **本轮不做：** 按章强制隔离、完整回收站 UI、关应用后恢复、消息硬删除、编辑消息、会话重命名大改。  
+> **分支纪律：** Spec 可暂存在 `#145` 分支上便于审查；**批准编码后**须等 `#145` 合入最新 `master`，再从该 tip **新开**会话清理分支施工——禁止在 `codex/renderer-typecheck` 上直接叠编码提交。
 
 ---
 
@@ -24,9 +25,11 @@
 4. **软删除 + 短时撤销（方案 4）**：消息行保留；`deleted_at` 非空即隐藏；约 **10 秒** UI 撤销；**关闭应用后不再提供撤销**（无回收站、无恢复列表）。
 5. **撤销合同**：UI 只暴露**最近一次**删除批次的撤销；`restoreBatch` 必须校验 **projectId + threadId + batchId** 归属。墙钟「约 10 秒」**只由渲染端**控制（过期收起按钮、不持久化 pending）；服务端**不**校验过期——若客户端仍调用且批次仍在，允许恢复（便于测试；产品路径关应用后无入口）。
 6. **统一过滤合同**：凡会话加载、UI 列表、消息计数、拼进模型的历史，一律 `deleted_at IS NULL`。禁止某条路径漏过滤导致「幽灵上下文」。
-7. **流式互斥合同**：正在流式生成时，**禁止**按轮删、清空、切换会话；须先取消生成，再允许操作。
+7. **流式互斥合同**：正在流式生成时，**禁止**按轮删、清空、切换会话；须先取消生成，再允许操作。**门闩仅渲染端**（§3.1 / §5.4）；Main 不做流式前置。
 8. **创作决策来源**：软删保留 `conversation_messages` 行，使 `creative_decisions.source_message_id` 外键**不断裂**。软删**不**自动撤回已确认决策投影（另立账本路径）。
 9. **删整会话例外**：`removeThread` 继续物理删除线程（CASCADE 消息）；`source_message_id` 现有 `ON DELETE SET NULL` 行为不变。本轮不改成会话级软删。
+10. **渲染端守卫**：清理写路径必须遵守 §5.0 项目 ID + 操作代次；空清空不得伪造可撤销批次（§3.2）。
+11. **清空确认**：清空消息**不**弹确认；仅删整会话二次确认。
 
 ---
 
@@ -67,7 +70,7 @@
 
 - 线程属于 `projectId`。
 - 目标消息存在、`role = 'user'`、`deleted_at IS NULL`、属于该 `threadId`。
-- 当前无进行中的该会话流式生成（渲染端强制；主进程可再拒一次）。
+- **流式互斥仅由渲染端强制**（见 §5.4）。主进程 `ConversationRepo` / conversation IPC **不**查询 `stream-registry`、**不**以「是否正在生成」为前置条件——主进程只校验项目/会话/消息归属与活跃态。
 
 行为（**单事务**）：
 
@@ -84,14 +87,22 @@
 
 ### 3.2 `clearThread(projectId, threadId)`
 
-前置同归属校验 + 无流式。
+前置：线程属于 `projectId`（流式互斥同 §3.1，仅渲染端）。
 
 行为（**单事务**）：
 
-1. 将该线程所有 `deleted_at IS NULL` 的消息标上同一新 `deletion_batch_id` 与 `deleted_at`。
-2. **不**删除 `conversation_threads` 行。
-3. 若无可删活跃消息：仍 `success: true`，返回新 `batchId` 与空 `deletedMessageIds`（便于 UI 统一处理；撤销对空批为 no-op 成功或「批次不存在」——实施时固定为 **restore 空批 → success + empty restored ids**）。
-4. 返回形态同 `deleteTurn`。
+1. 统计该线程 `deleted_at IS NULL` 的消息。
+2. **若活跃消息数为 0（空清空）：**
+   - **不**分配 `deletion_batch_id`，**不**改写任何行（含 **不** touch `updated_at`）。
+   - 返回：`{ batchId: null, threadId, deletedMessageIds: [], deletedAt: null, noop: true }`。
+   - 渲染端：**不**展示撤销条（无批次可恢复）。
+3. **若存在活跃消息：**
+   - 全部标上同一新 `deletion_batch_id` 与同一 `deleted_at`。
+   - **不**删除 `conversation_threads` 行。
+   - 更新线程 `updated_at`。
+   - 返回：`{ batchId, threadId, deletedMessageIds, deletedAt, noop: false }`（`batchId` 为非空 string）。
+
+**禁止：** 为空清空伪造「从未写入库的 `batchId`」。否则 `restoreBatch` 因找不到行而失败，UI 却以为可撤销——这是合同级错误。
 
 ### 3.3 `restoreBatch(projectId, threadId, batchId)`
 
@@ -108,8 +119,9 @@
 
 拒绝：
 
-- 批次不存在 / 不属于该线程 / 项目不匹配。
+- 批次不存在 / 不属于该线程 / 项目不匹配 / `batchId` 为空。
 - **不**要求服务端感知「10 秒」——时效由渲染端 UI 控制；过期后 UI 不再调用。关应用后本地不持久化 pending undo，故自然无法撤销。
+- 对 `clearThread` 的 `noop: true` 响应，客户端**不得**调用 `restoreBatch`。
 
 ### 3.4 `removeThread`（现有）
 
@@ -136,30 +148,41 @@
 
 ## 5. 渲染端 UX 合同
 
+### 5.0 项目与操作代次守卫（必做）
+
+与策划加载、会话加载同一纪律：清理类写操作必须带 **项目 ID + 请求代次** 双重校验，防止切项目 / 快速连点后的迟到回执污染 UI。
+
+1. **项目守卫：** invoke 前记下 `requestProjectId`；回执落地前若 `activeProjectId !== requestProjectId`，**忽略**（不改 `messages`、不弹撤销条、不切 `activeThreadId`）。
+2. **操作代次：** 按线程（或面板级）维护单调 `cleanupEpoch`（或等价 Map）；每次 `deleteTurn` / `clearThread` / `restoreBatch` / `removeThread` 在 invoke **前同步递增**；仅当回执携带的 epoch 仍为当前值时才 `onApply`。失败回执同样受 epoch 约束，不得用旧错误覆盖新状态。
+3. **撤销条与代次绑定：** pending undo 记录 `{ batchId, threadId, projectId, epoch }`；展示撤销前校验三者仍匹配；切项目、删会话、新的删除批次覆盖时清除旧条。
+4. **切项目：** 先清空本地消息/撤销条并 bump epoch（或 `invalidate`），再加载新项目快照——与 `conversation-persistence` 现有 loader 一致，不得用空快照覆盖失败路径下的旧成功态（加载失败保留策略沿用现合同）。
+
 ### 5.1 按轮删除
 
 - 以「一轮」为操作单元：UI 挂在该轮 user 气泡或轮次容器上（文案：「删除本轮」）。
-- 成功后立即从本地 state 移除对应消息；弹出约 **10s**「已删除 · 撤销」。
-- 撤销调用 `restoreBatch`；成功则插回原相对顺序（按 `sort_order` 重载该线程消息最稳）。
+- 成功（`noop: false` 且 `batchId` 非空）后：立即从本地 state 移除对应消息；弹出约 **10s**「已删除 · 撤销」（受 §5.0 守卫）。
+- 撤销调用 `restoreBatch`；成功则按 `sort_order` 重载该线程活跃消息。
 
 ### 5.2 清空当前会话
 
 - 独立入口（如会话菜单「清空消息」），与「删除会话」分开。
-- 建议轻确认（避免误触）；成功后同样 10s 批次撤销。
+- **立即执行，不弹确认**（已有约 10 秒撤销）；仅当返回 `noop: true` 时静默或轻提示「已无消息」，不显示撤销条。
 - 清空后会话壳与标题保留；列表仍显示该线程。
+- **只有**「删除整个会话」保留二次确认（硬删不可短时撤销）。
 
 ### 5.3 删除整个会话
 
 - 沿用现有 `×` + confirm + `removeThread`（及现有 localStorage 回收站逻辑若仍在，本轮不强制改）。
 - **无** 10s 消息级撤销（整会话硬删）。
 
-### 5.4 流式互斥
+### 5.4 流式互斥（仅渲染端）
 
-当 `generating / streaming === true`（该面板当前流）：
+当该面板 `generating / streaming === true`：
 
-- 禁用：按轮删、清空、切换 `activeThreadId`、新建会话切换焦点（至少禁止切走当前线程）。
+- 禁用：按轮删、清空、切换 `activeThreadId`、会切走当前线程的新建聚焦。
 - 允许：停止生成（现有 cancel）。
 - 停止并确认流结束后，才解锁删除类操作。
+- **Main 不实现流式前置**：不查 `stream-registry`、不以生成中拒写。正确性靠本条 UI 门闩 + handler 早退（无 IPC）+ §5.0 代次；回归必须锁「生成中不可点 / 不 invoke」。
 
 ### 5.5 关应用
 
@@ -176,9 +199,9 @@
 
 | Channel | 入参 | 成功 data |
 |---|---|---|
-| `db:conversation:deleteTurn` | `{ projectId, threadId, userMessageId }` | `{ batchId, threadId, deletedMessageIds, deletedAt }` |
-| `db:conversation:clearThread` | `{ projectId, threadId }` | 同上（ids 可为该批全部） |
-| `db:conversation:restoreBatch` | `{ projectId, threadId, batchId }` | `{ batchId, threadId, restoredMessageIds }` |
+| `db:conversation:deleteTurn` | `{ projectId, threadId, userMessageId }` | `{ batchId: string, threadId, deletedMessageIds, deletedAt, noop: false }` |
+| `db:conversation:clearThread` | `{ projectId, threadId }` | 有删：`{ batchId: string, ..., noop: false }`；空清空：`{ batchId: null, deletedMessageIds: [], deletedAt: null, noop: true }` |
+| `db:conversation:restoreBatch` | `{ projectId, threadId, batchId: string }` | `{ batchId, threadId, restoredMessageIds }`；`batchId` 空或命中 0 行 → `success: false` |
 | 现有 `removeThread` / `createThread` / `findByProject` / `appendMessage` | 不变；`findByProject` 过滤软删 |
 
 全部返回 `IpcResult<T>`；失败不部分提交。
@@ -187,12 +210,9 @@
 
 ## 7. 类型合同
 
-`ConversationMessage` 增加可选或必填：
-
-- `deletedAt: string | null`（对外快照可省略该字段——因为默认不返回软删行；内部 row 映射需要）
-- `deletionBatchId: string | null`
-
-对外 `ConversationSnapshot` **仍可不暴露**已删消息；测试可用内部/测试专用查询断言软删行仍在。
+- **公开** `ConversationMessage` / `ConversationSnapshot`：**不**增加 `deletedAt` / `deletionBatchId`。对外快照与 IPC 成功路径只返回活跃消息，调用方无需看见软删字段。
+- **仓储内部**行映射（如 `ConversationMessageRow`）可含 `deleted_at` / `deletion_batch_id`，仅供 repo / 测试断言「行仍在、决策 FK 可 join」。
+- `clearThread` / `deleteTurn` 成功 data 须含 `noop: boolean` 与 `batchId: string | null`（`deleteTurn` 成功时恒为非空 string + `noop: false`）。
 
 ---
 
@@ -209,13 +229,15 @@
 
 ### 8.3 清空
 
-- 清空后线程仍在、消息列表空；撤销同 batch 全部恢复。
+- 有消息：清空后线程仍在、列表空；撤销同 batch 全部恢复。
+- 空清空：`batchId === null`，库不变，UI 无撤销条；不得调用 `restoreBatch`。
 - 已软删行不被第二次 clear 再改 batch（只处理活跃行）。
 
 ### 8.4 撤销
 
-- 10s 内撤销成功；伪造 batch / 跨项目 / 跨线程失败。
-- 新一次删除后，旧 batch 仍可被 API 恢复，但 UI 只挂最近一次——**产品**：UI 只保留一个 pending undo；新删覆盖提示条（旧 batch 不提供按钮，行保持软删）。
+- 10s 内撤销成功；伪造 batch / 跨项目 / 跨线程 / `batchId` 命中 0 行 → `success: false`。
+- 新一次删除后，UI 只挂最近一次 pending undo；旧 batch 无按钮（行可保持软删）。
+- 切项目 / 切走会话后的迟到回执不更新当前 UI（§5.0）。
 
 ### 8.5 过滤
 
@@ -224,8 +246,9 @@
 
 ### 8.6 流式互斥
 
-- 生成中点击删/清空/切会话：无写库、有提示或按钮 disabled。
+- 生成中：删/清空/切会话按钮 disabled 或 handler 早退，**无 IPC 写库**。
 - cancel 后再操作成功。
+- 不要求、也不测试「Main 因流式而拒绝」。
 
 ### 8.7 删整会话
 
@@ -253,10 +276,11 @@
 
 ## 10. 实施顺序（供后续 plan，本轮不编码）
 
+0. **#145 合入 master 后**，从最新 master 开新分支（勿在 `codex/renderer-typecheck` 上继续编码）。
 1. 迁移 v22 + repo 过滤改造（先让所有读路径 fail-closed 过滤）。
-2. `deleteTurn` / `clearThread` / `restoreBatch` + 单测。
-3. IPC 注册 + 类型。
-4. `AIChatPanel`：按轮删、清空、10s 撤销条、流式禁用。
+2. `deleteTurn` / `clearThread`（含空清空 `batchId: null`）/ `restoreBatch` + 单测。
+3. IPC 注册 + 共享结果类型（`batchId: string | null`）。
+4. `AIChatPanel`：按轮删、清空（无确认）、10s 撤销条、流式禁用、项目/会话/代次守卫。
 5. 回归：现有会话加载 / 决策账本来源；`typecheck:renderer` + 全量测试。
 
 ---
@@ -270,4 +294,7 @@
 | 硬删还是软删？ | **软删 + 10s 撤销** |
 | 关应用后能否撤销？ | **否** |
 | 清空是否保留壳？ | **是** |
-| 流式中能否删？ | **否，先取消** |
+| 清空要不要确认？ | **不要**；仅删整会话二次确认 |
+| 流式中能否删？ | **否，先取消**；门闩仅渲染端 |
+| 空清空如何撤销？ | **不产生 batch**；`batchId: null`，无撤销条 |
+| 公开类型是否暴露软删字段？ | **否**；仅仓储内部行类型 |
