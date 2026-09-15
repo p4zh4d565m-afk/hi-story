@@ -580,8 +580,8 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         return;
       }
       if (response.data.noop) {
+        // noop 不得清掉已有撤销条（例如按轮删后本地已空再点清空）
         setCleanupTip('已无消息');
-        setPendingUndo(null);
         return;
       }
       setThreadData(current => ({
