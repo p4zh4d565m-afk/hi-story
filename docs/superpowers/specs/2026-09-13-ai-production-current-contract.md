@@ -2,9 +2,9 @@
 
 > **效力：** 本文取代讨论稿第 1～11 节作为施工合同。讨论过程见已冻结的 `docs/superpowers/plans/2026-09-13-ai-long-novel-production-architecture-plan.md`。
 >
-> **状态：** P0 短计划已按 `docs/superpowers/plans/2026-09-13-p0-provider-planning-preview-review.md` 第七节修订，**按三片顺序施工**。P1 及以后未批准，禁止写迁移、禁止按讨论稿修改 5～10 编码、禁止创建叙事时间 Spec。
+> **状态：** P0 短计划已按 `docs/superpowers/plans/2026-09-13-p0-provider-planning-preview-review.md` 第七节修订，**按三片顺序施工**。叙事时间（P1）已按 `docs/superpowers/specs/2026-09-14-narrative-time-model-design.md`（设计）→ `docs/superpowers/plans/2026-09-14-p1-narrative-time-reducer.md`（纯函数 + 单测）→ `docs/superpowers/specs/2026-09-14-narrative-time-integration-design.md`（接入 Spec）→ `docs/superpowers/plans/2026-09-14-narrative-time-integration.md`（实施计划）施工并合入 `master`。
 >
-> **施工进度（2026-09-14）：** P0 三片 + Obsidian 导入分隔已快进合入 `feature/skill-engine`（`81856da..6ff75e1`，文档 `8a622f5`），现已在 `origin/feature/skill-engine`。进度说明见 `docs/superpowers/plans/2026-09-13-p0-status.md`。P1 仍未批准。
+> **施工进度（2026-09-14）：** P0 三片 + Obsidian 导入分隔已快进合入 `feature/skill-engine`（`81856da..6ff75e1`，文档 `8a622f5`），现已在 `origin/feature/skill-engine`。进度说明见 `docs/superpowers/plans/2026-09-13-p0-status.md`。叙事时间（P1）已合入 `master`（PR #2，合并提交 `e15fbde`，含 v21 迁移 + 投影/转换双写 + 章节软删/恢复 + as-of 固定截面 + 章节删除/撤销双层守卫）。
 
 ## 已批准：P0（无数据库迁移）
 
@@ -47,7 +47,7 @@
 
 | 项 | 前置 |
 |---|---|
-| 叙事时间 as-of、事实时间字段、规划章稳定 key | 独立《叙事时间模型设计》，至少回答讨论稿 17.2～17.5 与 18.3 Q1/Q2/Q5 |
+| ~~叙事时间 as-of、事实时间字段、规划章稳定 key~~ | **已完成**：Spec `docs/superpowers/specs/2026-09-14-narrative-time-model-design.md`，施工合入 `master`（PR #2，`e15fbde`） |
 | `chapter_analysis_jobs`、写章抽债务 | 独立《章节分析任务设计》（17.6～17.7） |
 | 完整 chapter-run 二期/三期（审稿账本、写章运行单） | 已批准 Spec 单独授权，不插入 P0→P1 |
 | ContextAssembler、滚动摘要、entity_revisions、自动备份 | 各自独立计划 |
