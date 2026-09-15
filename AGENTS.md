@@ -170,6 +170,8 @@ resources/
 - **写章 after_chapter as-of（#146，2026-09-15）** — 新章无 id 时 `write` + `placement:'after_chapter'` + 库内活跃末章锚点，虚拟下一章跑正式 `before_target`（含债务逾期）；禁再挂 `chat`/`planning`；无章返回空运行时 `before_target`。合同 `docs/superpowers/specs/2026-09-15-write-after-chapter-as-of-design.md`。
 - **Renderer 全量类型检查门槛（#145，2026-09-15）** — 新增 `tsconfig.renderer.json`（`jsx: react-jsx` + DOM）与 `npm run typecheck:renderer`；`build:renderer` 先 typecheck 再 vite。修掉 `onToggleContext` 残留、DockLayout `PanelState` 缺字段、起名词库联合类型收窄等既有类型错误。
 - **AI 对话清理** — 迁移 v22 消息软删 + batch 撤销；聊天面板按轮删/清空当前会话，约 10 秒内可恢复；清理粒度为项目内 thread，不绑定章节。
+- **第一版稳定写作基线（2026-09-15）** — 标签 `writing-baseline-v1`，对应 `08c6765` 起的准入收口（含启动 bat、可见 UI 验收脚本与两份验收报告）。IPC 成功链路见 `docs/reports/2026-09-15-writing-admission-joint-report.md`；可见窗口点击验收见 `docs/reports/2026-09-15-visible-ui-admission-report.md`（有条件通过，Critical 0）。日常启动用 `Launch hi story.bat`（直启 Electron，避开 D 盘 Node 24）；可见 UI 回归：`node tests/ui/run-visible-ui-admission.cjs`（隔离 userData，禁止 `invoke` 代点）。
+- **边写边维护（#147 / 其余 P2）** — 基线已立，不再阻塞写作。#147 与其余 P2 转入边写边维护：先拆清单，优先数据安全、上下文正确性、后续开发阻断项；不单开准入门槛。已知不挡写作的限制含：面板归属不持久化、对话删/清约 10 秒可撤销、写章/审稿/润色部分旧灰底白字、材料库少量旧 SQL 在 IPC、可见 UI 续跑截图偶发空文件。
 
 ## Git 远程仓库
 

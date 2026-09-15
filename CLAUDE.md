@@ -138,6 +138,8 @@ resources/
 - **写章 after_chapter as-of（#146，2026-09-15）** — 新章无 id 时 `write` + `placement:'after_chapter'` + 库内活跃末章锚点，虚拟下一章跑正式 `before_target`（含债务逾期）；禁再挂 `chat`/`planning`；无章返回空运行时 `before_target`。合同 `docs/superpowers/specs/2026-09-15-write-after-chapter-as-of-design.md`。
 - **Renderer 全量类型检查门槛（#145，2026-09-15）** — `tsconfig.renderer.json` + `npm run typecheck:renderer`；`build:renderer` 先 typecheck 再 vite。
 - **AI 对话清理** — 迁移 v22 消息软删 + batch 撤销；聊天面板按轮删/清空当前会话，约 10 秒内可恢复；清理粒度为项目内 thread，不绑定章节。
+- **第一版稳定写作基线（2026-09-15）** — 标签 `writing-baseline-v1`；IPC 成功链路与可见 UI 验收报告见 `docs/reports/2026-09-15-writing-admission-joint-report.md`、`docs/reports/2026-09-15-visible-ui-admission-report.md`。日常启动 `Launch hi story.bat`；可见 UI 回归 `node tests/ui/run-visible-ui-admission.cjs`。
+- **边写边维护（#147 / 其余 P2）** — 不再阻塞写作；先拆清单，优先数据安全、上下文正确性、后续开发阻断项。
 
 ## Git 远程仓库
 
