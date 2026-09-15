@@ -4,18 +4,34 @@ import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { encrypt, decrypt } from '../services/crypto';
 import { createConversationLoader, runPersistedConversationTurn } from '../services/conversation-persistence';
+import { createCleanupLock } from '../services/conversation-cleanup-lock';
 import { createCreativeDecisionLoader } from '../services/creative-decision-loader';
 import { buildDecisionExtractionMessages, parseDecisionDrafts } from '../services/creative-decision-extraction';
 import CreativeDecisionPanel from './CreativeDecisionPanel';
 import type {
+  ClearConversationThreadInput,
+  ConversationCleanupResult,
   ConversationMessage,
+  ConversationRestoreResult,
   ConversationSnapshot,
   ConversationThread,
   CreateCreativeDecisionProposalsInput,
   CreativeDecision,
   CreativeDecisionEffect,
+  DeleteConversationTurnInput,
   IpcResult,
+  RestoreConversationBatchInput,
 } from '../types';
+
+/** 约 10 秒短时撤销（仅内存，关应用/切项目后消失） */
+const CLEANUP_UNDO_MS = 10_000;
+
+type PendingUndo = {
+  batchId: string;
+  threadId: string;
+  projectId: string;
+  expiresAt: number;
+} | null;
 
 // Provider preset definitions (mirrors main process but available in renderer)
 interface ProviderPreset {
@@ -300,6 +316,9 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const [decisionContextRefreshing, setDecisionContextRefreshing] = useState(false);
   const [streamingText, setStreamingText] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [cleanupTip, setCleanupTip] = useState<string | null>(null);
+  const [pendingUndo, setPendingUndo] = useState<PendingUndo>(null);
+  const [cleanupInFlight, setCleanupInFlight] = useState(false);
   const [creativeDecisions, setCreativeDecisions] = useState<CreativeDecision[]>([]);
   const [showDecisionPanel, setShowDecisionPanel] = useState(false);
   const [extractingMessageId, setExtractingMessageId] = useState<string | null>(null);
@@ -309,8 +328,11 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const activeThreadIdRef = useRef(activeThreadId);
   const decisionOperationGenerationRef = useRef(0);
   const contextRefreshGenerationRef = useRef(0);
+  const cleanupLockRef = useRef(createCleanupLock());
   projectIdRef.current = projectId;
   activeThreadIdRef.current = activeThreadId;
+
+  const cleanupLocked = isStreaming || cleanupInFlight;
 
   const conversationLoader = useMemo(() => createConversationLoader({
     invoke: (channel, ...args) => window.electronAPI.invoke(channel, ...args),
@@ -389,12 +411,15 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   }, []);
 
   // 项目切换时只从 SQLite 加载；旧项目的迟到结果会被 loader 丢弃。
+  // 清理在飞锁不在此释放——等旧请求 finally + token 匹配后自行解锁。
   useEffect(() => {
     conversationLoader.invalidate();
     setThreadData(EMPTY_THREAD_DATA);
     setLoadedProjectId(null);
     setActiveThreadId(null);
     setMessages([]);
+    setPendingUndo(null);
+    setCleanupTip(null);
     setError(null);
     setStreamingText('');
     setIsStreaming(false);
@@ -406,6 +431,24 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setConversationLoading(true);
     void conversationLoader.load(projectId);
   }, [conversationLoader, projectId]);
+
+  // 撤销条约 10 秒后自动收起（不调 restore，仅收 UI）
+  useEffect(() => {
+    if (!pendingUndo) return;
+    const remaining = pendingUndo.expiresAt - Date.now();
+    if (remaining <= 0) {
+      setPendingUndo(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setPendingUndo(null), remaining);
+    return () => window.clearTimeout(timer);
+  }, [pendingUndo]);
+
+  useEffect(() => {
+    if (!cleanupTip) return;
+    const timer = window.setTimeout(() => setCleanupTip(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [cleanupTip]);
 
   useEffect(() => {
     decisionOperationGenerationRef.current += 1;
@@ -432,6 +475,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
   const handleCreateThread = async () => {
     const requestProjectId = projectId;
     if (!newThreadName.trim() || !requestProjectId || loadedProjectId !== requestProjectId) return;
+    if (isStreaming || cleanupInFlight) return;
     const response = await window.electronAPI.invoke('db:conversation:createThread', {
       projectId: requestProjectId,
       title: newThreadName.trim(),
@@ -459,49 +503,198 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     setError(null);
   };
 
-  // Handle thread deletion
+  const showCleanupUndo = (result: ConversationCleanupResult, requestProjectId: string) => {
+    if (!result.batchId || result.noop) return;
+    setPendingUndo({
+      batchId: result.batchId,
+      threadId: result.threadId,
+      projectId: requestProjectId,
+      expiresAt: Date.now() + CLEANUP_UNDO_MS,
+    });
+  };
+
+  const removeMessagesLocally = (threadId: string, deletedMessageIds: string[]) => {
+    const removed = new Set(deletedMessageIds);
+    setThreadData(current => ({
+      ...current,
+      messages: {
+        ...current.messages,
+        [threadId]: (current.messages[threadId] || []).filter(item => !removed.has(item.id)),
+      },
+    }));
+  };
+
+  const handleDeleteTurn = async (userMessageId: string) => {
+    const requestProjectId = projectId;
+    const requestThreadId = activeThreadId;
+    if (!requestProjectId || !requestThreadId || loadedProjectId !== requestProjectId) return;
+    if (isStreaming) return;
+    const token = cleanupLockRef.current.tryAcquire();
+    if (!token) return;
+    setCleanupInFlight(true);
+    setCleanupTip(null);
+    try {
+      const input: DeleteConversationTurnInput = {
+        projectId: requestProjectId,
+        threadId: requestThreadId,
+        userMessageId,
+      };
+      const response = await window.electronAPI.invoke(
+        'db:conversation:deleteTurn', input,
+      ) as IpcResult<ConversationCleanupResult>;
+      if (projectIdRef.current !== requestProjectId) return;
+      if (!response.success || !response.data) {
+        setError(response.error || '删除本轮失败');
+        return;
+      }
+      if (response.data.noop) return;
+      removeMessagesLocally(requestThreadId, response.data.deletedMessageIds);
+      showCleanupUndo(response.data, requestProjectId);
+      setError(null);
+    } finally {
+      cleanupLockRef.current.release(token);
+      setCleanupInFlight(cleanupLockRef.current.isHeld());
+    }
+  };
+
+  const handleClearThread = async () => {
+    const requestProjectId = projectId;
+    const requestThreadId = activeThreadId;
+    if (!requestProjectId || !requestThreadId || loadedProjectId !== requestProjectId) return;
+    if (isStreaming) return;
+    const token = cleanupLockRef.current.tryAcquire();
+    if (!token) return;
+    setCleanupInFlight(true);
+    setCleanupTip(null);
+    try {
+      const input: ClearConversationThreadInput = {
+        projectId: requestProjectId,
+        threadId: requestThreadId,
+      };
+      const response = await window.electronAPI.invoke(
+        'db:conversation:clearThread', input,
+      ) as IpcResult<ConversationCleanupResult>;
+      if (projectIdRef.current !== requestProjectId) return;
+      if (!response.success || !response.data) {
+        setError(response.error || '清空消息失败');
+        return;
+      }
+      if (response.data.noop) {
+        setCleanupTip('已无消息');
+        setPendingUndo(null);
+        return;
+      }
+      setThreadData(current => ({
+        ...current,
+        messages: { ...current.messages, [requestThreadId]: [] },
+      }));
+      showCleanupUndo(response.data, requestProjectId);
+      setError(null);
+    } finally {
+      cleanupLockRef.current.release(token);
+      setCleanupInFlight(cleanupLockRef.current.isHeld());
+    }
+  };
+
+  const handleUndoCleanup = async () => {
+    const undo = pendingUndo;
+    if (!undo) return;
+    if (isStreaming) return;
+    const requestProjectId = undo.projectId;
+    const token = cleanupLockRef.current.tryAcquire();
+    if (!token) return;
+    setCleanupInFlight(true);
+    try {
+      const input: RestoreConversationBatchInput = {
+        projectId: requestProjectId,
+        threadId: undo.threadId,
+        batchId: undo.batchId,
+      };
+      const response = await window.electronAPI.invoke(
+        'db:conversation:restoreBatch', input,
+      ) as IpcResult<ConversationRestoreResult>;
+      if (projectIdRef.current !== requestProjectId) return;
+      if (!response.success || !response.data) {
+        setError(response.error || '撤销失败');
+        return;
+      }
+      const snapshot = await window.electronAPI.invoke(
+        'db:conversation:findByProject', requestProjectId,
+      ) as IpcResult<ConversationSnapshot>;
+      if (projectIdRef.current !== requestProjectId) return;
+      if (!snapshot.success || !snapshot.data) {
+        setError(snapshot.error || '撤销后刷新消息失败');
+        return;
+      }
+      const nextMessages = (snapshot.data.messages[undo.threadId] || []).map(toChatEntry);
+      setThreadData(current => ({
+        ...current,
+        messages: { ...current.messages, [undo.threadId]: nextMessages },
+      }));
+      setPendingUndo(null);
+      setCleanupTip(null);
+      setError(null);
+    } finally {
+      cleanupLockRef.current.release(token);
+      setCleanupInFlight(cleanupLockRef.current.isHeld());
+    }
+  };
+
+  // Handle thread deletion（硬删 + 二次确认；占用同一清理单飞锁）
   const handleDeleteThread = async (threadId: string) => {
     const requestProjectId = projectId;
     if (!requestProjectId || loadedProjectId !== requestProjectId) return;
+    if (isStreaming) return;
     const thread = threadData.threads.find(t => t.id === threadId);
+    if (!confirm(`确定删除会话「${thread?.name || '对话'}」？此操作不可短时撤销。`)) return;
+
+    const token = cleanupLockRef.current.tryAcquire();
+    if (!token) return;
+    setCleanupInFlight(true);
     const msgs = threadData.messages[threadId] || [];
 
-    // 保存到回收站
     try {
-      const raw = localStorage.getItem('hi-story-trash-bin');
-      const trash = raw ? JSON.parse(raw) : [];
-      trash.unshift({
-        id: 'trash_' + Date.now(),
-        entityType: 'aiThread',
-        entityId: threadId,
-        entityName: thread?.name || '对话',
-        projectId: requestProjectId,
-        data: { thread, messages: msgs },
-        deletedAt: new Date().toISOString(),
-      });
-      localStorage.setItem('hi-story-trash-bin', JSON.stringify(trash.slice(0, 100)));
-    } catch {}
+      // 保存到回收站
+      try {
+        const raw = localStorage.getItem('hi-story-trash-bin');
+        const trash = raw ? JSON.parse(raw) : [];
+        trash.unshift({
+          id: 'trash_' + Date.now(),
+          entityType: 'aiThread',
+          entityId: threadId,
+          entityName: thread?.name || '对话',
+          projectId: requestProjectId,
+          data: { thread, messages: msgs },
+          deletedAt: new Date().toISOString(),
+        });
+        localStorage.setItem('hi-story-trash-bin', JSON.stringify(trash.slice(0, 100)));
+      } catch {}
 
-    const response = await window.electronAPI.invoke(
-      'db:conversation:removeThread', requestProjectId, threadId,
-    ) as IpcResult<void>;
-    if (projectIdRef.current !== requestProjectId) return;
-    if (!response.success) {
-      setError(response.error || '删除会话失败');
-      return;
+      const response = await window.electronAPI.invoke(
+        'db:conversation:removeThread', requestProjectId, threadId,
+      ) as IpcResult<void>;
+      if (projectIdRef.current !== requestProjectId) return;
+      if (!response.success) {
+        setError(response.error || '删除会话失败');
+        return;
+      }
+      setThreadData(current => {
+        const { [threadId]: _removed, ...remainingMessages } = current.messages;
+        return {
+          threads: current.threads.filter(item => item.id !== threadId),
+          messages: remainingMessages,
+        };
+      });
+      if (activeThreadIdRef.current === threadId) {
+        const remaining = threadData.threads.filter(item => item.id !== threadId);
+        setActiveThreadId(remaining[0]?.id ?? null);
+      }
+      setPendingUndo(current => (current?.threadId === threadId ? null : current));
+      setError(null);
+    } finally {
+      cleanupLockRef.current.release(token);
+      setCleanupInFlight(cleanupLockRef.current.isHeld());
     }
-    setThreadData(current => {
-      const { [threadId]: _removed, ...remainingMessages } = current.messages;
-      return {
-        threads: current.threads.filter(item => item.id !== threadId),
-        messages: remainingMessages,
-      };
-    });
-    if (activeThreadIdRef.current === threadId) {
-      const remaining = threadData.threads.filter(item => item.id !== threadId);
-      setActiveThreadId(remaining[0]?.id ?? null);
-    }
-    setError(null);
   };
 
   const handleAddConfig = async () => {
@@ -595,6 +788,10 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
       setError('会话尚未加载完成，请稍后重试');
       return;
     }
+    if (cleanupLockRef.current.isHeld()) {
+      setError('清理操作进行中，请稍后再发送');
+      return;
+    }
 
     const history = [...messages];
     setError(null);
@@ -666,7 +863,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
 
   const sendMessage = async () => {
     const text = input.trim();
-    if (!text || isStreaming || decisionContextRefreshing) return;
+    if (!text || isStreaming || decisionContextRefreshing || cleanupInFlight) return;
     if (!activeConfig) {
       setError('请先添加一个 AI 配置（点击 ⚙️ → 选择服务 → 输入 API Key）');
       return;
@@ -773,6 +970,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
     if (
       continueReq
       && !isStreaming
+      && !cleanupInFlight
       && activeConfig
       && contextMessages.length > 0
       && projectId
@@ -785,7 +983,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
         'continue',
       );
     }
-  }, [activeConfigId, activeThreadId, contextMessages.length, isStreaming, loadedProjectId, projectId]);
+  }, [activeConfigId, activeThreadId, cleanupInFlight, contextMessages.length, isStreaming, loadedProjectId, projectId]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -817,9 +1015,13 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             </button>
           )}
           <button
-            onClick={() => setShowNewThread(!showNewThread)}
-            className="text-gray-400 hover:text-gray-100 transition-colors text-xs"
-            title="新建对话线程"
+            onClick={() => {
+              if (cleanupLocked) return;
+              setShowNewThread(!showNewThread);
+            }}
+            disabled={cleanupLocked}
+            className="text-gray-400 hover:text-gray-100 transition-colors text-xs disabled:opacity-40 disabled:cursor-not-allowed"
+            title={cleanupLocked ? '生成或清理进行中，请稍后再新建' : '新建对话线程'}
           >
             +新对话
           </button>
@@ -850,20 +1052,30 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
               className={`flex items-center gap-0.5 flex-shrink-0`}
             >
               <button
-                onClick={() => setActiveThreadId(t.id)}
-                className={`px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors ${
+                onClick={() => {
+                  if (cleanupLocked) return;
+                  setActiveThreadId(t.id);
+                }}
+                disabled={cleanupLocked}
+                className={`px-2 py-1 rounded text-[10px] whitespace-nowrap transition-colors disabled:cursor-not-allowed ${
                   t.id === activeThreadId
                     ? 'bg-accent text-white'
-                    : 'text-gray-400 hover:bg-aichat-700 hover:text-gray-100'
+                    : 'text-gray-400 hover:bg-aichat-700 hover:text-gray-100 disabled:opacity-40'
                 }`}
-                title={`${THREAD_CATEGORY_LABELS[t.category]} — ${t.name}`}
+                title={cleanupLocked
+                  ? '生成或清理进行中，请稍后再切换会话'
+                  : `${THREAD_CATEGORY_LABELS[t.category]} — ${t.name}`}
               >
                 {THREAD_CATEGORY_ICONS[t.category]} {t.name}
               </button>
               <button
-                onClick={() => handleDeleteThread(t.id)}
-                className="text-gray-600 hover:text-red-400 text-[8px] px-0.5"
-                title="删除对话"
+                onClick={() => {
+                  if (cleanupLocked) return;
+                  void handleDeleteThread(t.id);
+                }}
+                disabled={cleanupLocked}
+                className="text-gray-600 hover:text-red-400 text-[8px] px-0.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                title={cleanupLocked ? '生成或清理进行中' : '删除对话'}
               >
                 ×
               </button>
@@ -898,7 +1110,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             </select>
             <button
               onClick={handleCreateThread}
-              disabled={!newThreadName.trim() || conversationLoading || loadedProjectId !== projectId}
+              disabled={!newThreadName.trim() || conversationLoading || loadedProjectId !== projectId || cleanupLocked}
               className="px-3 py-1 text-xs bg-accent text-white rounded hover:bg-accent-hover disabled:opacity-50"
             >
               创建
@@ -959,6 +1171,7 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
                       key={entry.id}
                       className="px-2 py-1 my-0.5 bg-aichat-900/50 rounded cursor-pointer hover:bg-aichat-700 text-[10px] text-gray-400"
                       onClick={() => {
+                        if (cleanupLocked) return;
                         setActiveThreadId(r.threadId);
                         setShowChatSearch(false);
                         setChatSearchResults([]);
@@ -1013,6 +1226,14 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
               <span className="text-[10px] text-gray-600">
                 {messages.length} 条消息
               </span>
+              <button
+                onClick={() => void handleClearThread()}
+                disabled={cleanupLocked || conversationLoading || loadedProjectId !== projectId}
+                className="text-[10px] text-gray-500 hover:text-red-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                title={isStreaming ? '请先停止生成再清空' : cleanupInFlight ? '清理进行中' : '清空当前会话消息（约 10 秒内可撤销）'}
+              >
+                清空消息
+              </button>
               <button
                 onClick={() => { setShowUsage(!showUsage); setUsage(loadUsage()); }}
                 className="text-[10px] text-gray-500 hover:text-accent transition-colors"
@@ -1263,8 +1484,20 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             <div className={`max-w-[80%] rounded-lg px-4 py-2.5 text-sm
               ${msg.role === 'user' ? 'bg-accent text-white' : 'bg-aichat-800 text-gray-200 border border-aichat-700'}`}>
               <div className="whitespace-pre-wrap">{msg.content}</div>
-              <div className={`text-[10px] mt-1 ${msg.role === 'user' ? 'text-white/60' : 'text-gray-600'}`}>
-                {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+              <div className={`text-[10px] mt-1 flex items-center gap-2 ${msg.role === 'user' ? 'text-white/60' : 'text-gray-600'}`}>
+                <span>
+                  {new Date(msg.timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}
+                </span>
+                {msg.role === 'user' && (
+                  <button
+                    onClick={() => void handleDeleteTurn(msg.id)}
+                    disabled={cleanupLocked}
+                    className="text-white/70 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                    title={isStreaming ? '请先停止生成再删除' : cleanupInFlight ? '清理进行中' : '删除本轮（含后续回复，约 10 秒内可撤销）'}
+                  >
+                    删除本轮
+                  </button>
+                )}
               </div>
               {msg.role === 'assistant' && (
                 <button
@@ -1307,8 +1540,27 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
           </div>
         )}
 
+        {cleanupTip && (
+          <div className="text-center text-gray-500 text-xs py-1">{cleanupTip}</div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
+
+      {pendingUndo
+        && pendingUndo.projectId === projectId
+        && pendingUndo.expiresAt > Date.now() && (
+        <div className="px-3 py-2 border-t border-aichat-700 bg-aichat-800/80 flex items-center justify-between gap-2">
+          <span className="text-xs text-gray-400">已删除 · 约 10 秒内可撤销</span>
+          <button
+            onClick={() => void handleUndoCleanup()}
+            disabled={cleanupInFlight || isStreaming}
+            className="text-xs px-2 py-1 rounded bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+          >
+            撤销
+          </button>
+        </div>
+      )}
 
       {/* === Input === */}
       <div className="p-3 border-t border-aichat-700 bg-aichat-800">
@@ -1321,11 +1573,11 @@ const AIChatPanel: React.FC<AIChatPanelProps> = ({
             rows={2}
             className="flex-1 resize-y min-h-[2.5rem] max-h-40 rounded bg-aichat-900 border border-aichat-700 px-3 py-2 text-sm text-gray-100
                        focus:outline-none focus:border-accent placeholder-gray-600"
-            disabled={isStreaming || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
+            disabled={isStreaming || decisionContextRefreshing || cleanupInFlight || conversationLoading || loadedProjectId !== projectId || !activeThreadId}
           />
           <button
             onClick={isStreaming ? handleStopStream : sendMessage}
-            disabled={isStreaming ? false : (!input.trim() || decisionContextRefreshing || conversationLoading || loadedProjectId !== projectId || !activeThreadId)}
+            disabled={isStreaming ? false : (!input.trim() || decisionContextRefreshing || cleanupInFlight || conversationLoading || loadedProjectId !== projectId || !activeThreadId)}
             className={isStreaming
               ? 'px-4 py-2 bg-red-600 text-white text-sm rounded hover:bg-red-500 transition-colors self-end'
               : 'px-4 py-2 bg-accent text-white text-sm rounded hover:bg-accent-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors self-end'}
