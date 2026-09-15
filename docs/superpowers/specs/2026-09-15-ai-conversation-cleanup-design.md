@@ -1,9 +1,9 @@
 # AI 对话清理设计（方案 4 · 软删除 + 短时撤销，2026-09-15）
 
-> **效力：** 本文是「AI 对话隔离与清理」产品拍板后的**施工 Spec**。  
-> **前置：** #145 renderer 全量类型检查门槛已提交于分支 `codex/renderer-typecheck`（`25d96ce`）；叙事时间 fail-closed 已在 master。  
-> **本轮授权范围：** 项目级会话（**不绑章**）+ 消息软删除 + 约 10 秒撤销 + 清空/按轮删/删整会话。  
-> **本轮不做：** 按章强制隔离、完整回收站 UI、关应用后恢复、消息硬删除、编辑消息、会话重命名大改。  
+> **效力：** 本文是「AI 对话隔离与清理」产品拍板后的**施工 Spec**。
+> **前置：** #145 renderer 全量类型检查门槛已提交于分支 `codex/renderer-typecheck`（`25d96ce`）；叙事时间 fail-closed 已在 master。
+> **本轮授权范围：** 项目级会话（**不绑章**）+ 消息软删除 + 约 10 秒撤销 + 清空/按轮删/删整会话。
+> **本轮不做：** 按章强制隔离、完整回收站 UI、关应用后恢复、消息硬删除、编辑消息、会话重命名大改。
 > **分支纪律：** Spec 可暂存在 `#145` 分支上便于审查；**批准编码后**须等 `#145` 合入最新 `master`，再从该 tip **新开**会话清理分支施工——禁止在 `codex/renderer-typecheck` 上直接叠编码提交。
 
 ---
@@ -28,8 +28,8 @@
 7. **流式互斥合同**：正在流式生成时，**禁止**按轮删、清空、切换会话；须先取消生成，再允许操作。**门闩仅渲染端**（§3.1 / §5.4）；Main 不做流式前置。
 8. **创作决策来源**：软删保留 `conversation_messages` 行，使 `creative_decisions.source_message_id` 外键**不断裂**。软删**不**自动撤回已确认决策投影（另立账本路径）。
 9. **删整会话例外**：`removeThread` 继续物理删除线程（CASCADE 消息）；`source_message_id` 现有 `ON DELETE SET NULL` 行为不变。本轮不改成会话级软删。
-10. **渲染端守卫**：清理写路径必须遵守 §5.0 项目 ID + 操作代次；空清空不得伪造可撤销批次（§3.2）。
-11. **清空确认**：清空消息**不**弹确认；仅删整会话二次确认。
+10. **渲染端守卫：** 清理写路径必须遵守 §5.0（项目守卫 + **单飞互斥**）；空清空不得伪造可撤销批次（§3.2）。
+11. **清空确认：** 清空消息**不**弹确认；仅删整会话二次确认。
 
 ---
 
@@ -44,7 +44,7 @@
 | `deleted_at` | TEXT NULL | 非空 = 已软删；`NULL` = 活跃 |
 | `deletion_batch_id` | TEXT NULL | 同一次「按轮删」或「清空」共享同一 UUID；活跃行必须为 NULL |
 
-约束（应用层保证，必要时 CHECK）：
+约束（**应用层保证，本轮不做 SQL CHECK**——避免迁移方言/重建表扩大范围；单测锁定「活跃行两列皆 NULL、软删行两列皆非空」）：
 
 - `deleted_at IS NULL` ⇒ `deletion_batch_id IS NULL`
 - `deleted_at IS NOT NULL` ⇒ `deletion_batch_id IS NOT NULL`
@@ -131,7 +131,7 @@
 
 ### 3.5 `appendMessage` / 加载
 
-- `appendMessage` 只追加活跃消息；`sort_order` 仍对**全表**（含软删行）取 `MAX+1`，避免与软删行撞序导致恢复后乱序。  
+- `appendMessage` 只追加活跃消息；`sort_order` 仍对**全表**（含软删行）取 `MAX+1`，避免与软删行撞序导致恢复后乱序。
   **合同：** 排序键全局单调；过滤只影响可见集，不重排 `sort_order`。
 - `findByProject`（及任何 list API）消息数组**仅含** `deleted_at IS NULL`。
 
@@ -148,14 +148,22 @@
 
 ## 5. 渲染端 UX 合同
 
-### 5.0 项目与操作代次守卫（必做）
+### 5.0 项目守卫与清理单飞互斥（必做）
 
-与策划加载、会话加载同一纪律：清理类写操作必须带 **项目 ID + 请求代次** 双重校验，防止切项目 / 快速连点后的迟到回执污染 UI。
+与策划/会话加载一样要防切项目污染；**但清理写路径禁止用「每次 invoke 递增 epoch、仅最新 epoch 可 apply」**——那会在连点时把**已经成功写库**的回执丢掉，UI 与 SQLite 分叉（P1）。
 
-1. **项目守卫：** invoke 前记下 `requestProjectId`；回执落地前若 `activeProjectId !== requestProjectId`，**忽略**（不改 `messages`、不弹撤销条、不切 `activeThreadId`）。
-2. **操作代次：** 按线程（或面板级）维护单调 `cleanupEpoch`（或等价 Map）；每次 `deleteTurn` / `clearThread` / `restoreBatch` / `removeThread` 在 invoke **前同步递增**；仅当回执携带的 epoch 仍为当前值时才 `onApply`。失败回执同样受 epoch 约束，不得用旧错误覆盖新状态。
-3. **撤销条与代次绑定：** pending undo 记录 `{ batchId, threadId, projectId, epoch }`；展示撤销前校验三者仍匹配；切项目、删会话、新的删除批次覆盖时清除旧条。
-4. **切项目：** 先清空本地消息/撤销条并 bump epoch（或 `invalidate`），再加载新项目快照——与 `conversation-persistence` 现有 loader 一致，不得用空快照覆盖失败路径下的旧成功态（加载失败保留策略沿用现合同）。
+定案：**同一聊天面板同一时刻只允许一个清理类操作在飞（单飞互斥）**，外加项目守卫。
+
+1. **项目守卫：** invoke 前记下 `requestProjectId`；回执落地前若 `activeProjectId !== requestProjectId`，**忽略 UI 更新**（不改 `messages`、不弹/不改撤销条、不切 `activeThreadId`）。库侧已提交的软删不自动回滚。
+2. **单飞互斥（替代 cleanupEpoch）：**
+   - 面板级（或按 `threadId`）布尔 / Promise 锁：`cleanupInFlight`。
+   - 覆盖：`deleteTurn` / `clearThread` / `restoreBatch` / `removeThread`。
+   - 任一在飞时：禁用上述按钮与切换会话；新点击 **早退、不发起第二趟 IPC**。
+   - 当前操作的成功回执（且通过项目守卫）**必须** `onApply`——不得因「又点了一次」而丢弃。
+   - `finally` 清锁；失败同样清锁并展示错误。
+3. **撤销条：** pending undo 记录 `{ batchId, threadId, projectId }`（**无 epoch**）。新一次**已成功**的删除/清空（`noop: false`）覆盖旧条；切项目、删整会话、撤销成功或 10s 到期时清除。
+4. **切项目：** 清本地消息/撤销条并释放锁（或随面板卸载），再加载新项目快照；加载失败不得用空快照盖掉仍属该项目的旧成功态（沿用 `conversation-persistence` 合同）。
+5. **与流式互斥叠加：** 生成中禁止清理（§5.4）；清理在飞时亦禁止开新流（发送按钮 disabled），避免「删完立刻发」与未落地回执交错。若产品允许先停流再清，顺序为：cancel → 流结束 → 再获清理锁。
 
 ### 5.1 按轮删除
 
@@ -182,7 +190,7 @@
 - 禁用：按轮删、清空、切换 `activeThreadId`、会切走当前线程的新建聚焦。
 - 允许：停止生成（现有 cancel）。
 - 停止并确认流结束后，才解锁删除类操作。
-- **Main 不实现流式前置**：不查 `stream-registry`、不以生成中拒写。正确性靠本条 UI 门闩 + handler 早退（无 IPC）+ §5.0 代次；回归必须锁「生成中不可点 / 不 invoke」。
+- **Main 不实现流式前置**：不查 `stream-registry`、不以生成中拒写。正确性靠本条 UI 门闩 + handler 早退（无 IPC）+ §5.0 单飞互斥；回归必须锁「生成中不可点 / 不 invoke」「清理在飞时不可再点清理」。
 
 ### 5.5 关应用
 
@@ -237,7 +245,8 @@
 
 - 10s 内撤销成功；伪造 batch / 跨项目 / 跨线程 / `batchId` 命中 0 行 → `success: false`。
 - 新一次删除后，UI 只挂最近一次 pending undo；旧 batch 无按钮（行可保持软删）。
-- 切项目 / 切走会话后的迟到回执不更新当前 UI（§5.0）。
+- 切项目后的迟到回执不更新当前 UI（§5.0 项目守卫）。
+- 清理在飞时第二次点击不发起 IPC；成功回执不得被丢弃（禁止 cleanupEpoch 式「只认最新代次」）。
 
 ### 8.5 过滤
 
@@ -280,7 +289,7 @@
 1. 迁移 v22 + repo 过滤改造（先让所有读路径 fail-closed 过滤）。
 2. `deleteTurn` / `clearThread`（含空清空 `batchId: null`）/ `restoreBatch` + 单测。
 3. IPC 注册 + 共享结果类型（`batchId: string | null`）。
-4. `AIChatPanel`：按轮删、清空（无确认）、10s 撤销条、流式禁用、项目/会话/代次守卫。
+4. `AIChatPanel`：按轮删、清空（无确认）、10s 撤销条、流式禁用、项目守卫、清理单飞互斥。
 5. 回归：现有会话加载 / 决策账本来源；`typecheck:renderer` + 全量测试。
 
 ---
