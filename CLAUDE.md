@@ -135,6 +135,7 @@ resources/
 - **长篇生产 P0（2026-09-14 已合入 `feature/skill-engine`）** — 请求级 Provider 快照、策划 committed 快照 + 写库 epoch、写章预览分段文本节点（零 innerHTML）。含 Obsidian 导入分隔。HEAD `8a622f5`（代码止于 `6ff75e1`），现已在 `origin/feature/skill-engine`。合同 `docs/superpowers/specs/2026-09-13-ai-production-current-contract.md`。已接受偏差：无 `planningLoadError` UI（失败只 `console.error`）。P1 未授权；讨论稿第 1–11 节仍禁止编码。
 - **叙事时间接入（2026-09-14，选项 B）** — 迁移 v21：`narrative_transitions` + 空 `chapter_alias` + 章节软删墓碑 + 事实 `state_key`/`archived`；重抽取/confirm/resolve/payDebt 同事务双写投影与转换；AI 对话/写章/审稿经 `db:narrative:buildAsOfContext` 固定截面（`reduce*AsOf`）。v21 重建章表在事务外关 FK，升级后 `foreign_key_check` 且历史/锚点数量不变；as-of 读 superseded 历史并输出业务内容；章纲稳定 ID 在生成/导入/保存时分配，建章写 `planningOutlineId`。不永久删除、不并章、不新增墓碑 UI。合同 `docs/superpowers/specs/2026-09-14-narrative-time-integration-design.md`。
 - **叙事时间 fail-closed 手测收口（2026-09-15）** — 写章/审稿 as-of 失败阻断；对话失败不注入叙事。
+- **写章 after_chapter as-of（#146，2026-09-15）** — 新章无 id 时 `write` + `placement:'after_chapter'` + 库内活跃末章锚点，虚拟下一章跑正式 `before_target`（含债务逾期）；禁再挂 `chat`/`planning`；无章返回空运行时 `before_target`。合同 `docs/superpowers/specs/2026-09-15-write-after-chapter-as-of-design.md`。
 - **Renderer 全量类型检查门槛（#145，2026-09-15）** — `tsconfig.renderer.json` + `npm run typecheck:renderer`；`build:renderer` 先 typecheck 再 vite。
 - **AI 对话清理** — 迁移 v22 消息软删 + batch 撤销；聊天面板按轮删/清空当前会话，约 10 秒内可恢复；清理粒度为项目内 thread，不绑定章节。
 
