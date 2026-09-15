@@ -2,7 +2,9 @@ import Database from 'better-sqlite3';
 import { v4 as uuidv4 } from 'uuid';
 import type {
   AppendConversationMessageInput,
+  ConversationCleanupResult,
   ConversationMessage,
+  ConversationRestoreResult,
   ConversationSnapshot,
   ConversationThread,
   CreateConversationThreadInput,
@@ -11,25 +13,11 @@ import type {
   LegacyMigrationResult,
 } from '../../../renderer/types';
 
+export type { ConversationCleanupResult, ConversationRestoreResult } from '../../../renderer/types';
+
 const LEGACY_MIGRATION_KEY = 'ai_threads_localstorage_v1';
 const VALID_CATEGORIES = new Set<ConversationThread['category']>(['character', 'plot', 'world', 'general']);
 const VALID_ROLES = new Set<ConversationMessage['role']>(['user', 'assistant', 'system']);
-
-/** 软删 / 清空批次结果（Task 3 再上移共享类型） */
-export type ConversationCleanupResult = {
-  batchId: string | null;
-  threadId: string;
-  deletedMessageIds: string[];
-  deletedAt: string | null;
-  noop: boolean;
-};
-
-/** 按批次恢复结果 */
-export type ConversationRestoreResult = {
-  batchId: string;
-  threadId: string;
-  restoredMessageIds: string[];
-};
 
 export class ConversationRepo {
   constructor(private db: Database.Database) {}
