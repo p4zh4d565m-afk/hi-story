@@ -35,6 +35,51 @@ export function isSilentAiStreamEnd(message: string): boolean {
   return message === AI_STOPPED_MESSAGE || message === AI_IGNORED_MESSAGE;
 }
 
+/** 把内部/供应商英文错误翻译成友好中文提示，不暴露底层英文串。 */
+export function humanizeAiError(message: string): string {
+  const m = (message || '').trim();
+  if (!m) return 'AI 请求失败，请稍后重试';
+  if (isSilentAiStreamEnd(m)) return m;
+  // 已经是中文的业务错误（如「AI 返回格式解析失败」）直接透传，保留有用信息
+  if (/[一-龥]/.test(m)) return m;
+  if (/401|Unauthorized|invalid.*api.?key|api.?key.*invalid/i.test(m)) {
+    return 'API Key 无效（401）。请在 ⚙️ 中检查 API Key 是否正确';
+  }
+  if (/403|Forbidden|forbidden|permission/i.test(m)) {
+    return 'API 拒绝访问（403）。请检查 API Key 权限与账户额度';
+  }
+  if (/429|rate.?limit|too many requests/i.test(m)) {
+    return '请求过于频繁（429），请稍等片刻再试';
+  }
+  if (/timeout|timed out|ETIMEDOUT|ECONNABORTED/i.test(m)) {
+    return '请求超时，请检查网络后重试';
+  }
+  if (/network|fetch failed|failed to fetch|ENOTFOUND|ECONNREFUSED|ECONNRESET|getaddrinfo/i.test(m)) {
+    return '网络连接失败，请检查网络或 API 地址';
+  }
+  if (/insufficient|balance|quota|billing|额度|余额/i.test(m)) {
+    return '账户额度或余额不足，请充值后重试';
+  }
+  if (/abort/i.test(m)) {
+    return '请求已中止';
+  }
+  // 其余一律给通用提示，不把原始错误串透给用户
+  return 'AI 请求失败，请稍后重试';
+}
+
+/**
+ * 流异常结束时的展示决策（供面板 catch 使用）：
+ * - 切项目（AI_IGNORED_MESSAGE）→ null，静默，不打扰用户
+ * - 用户主动停止（AI_STOPPED_MESSAGE）→ 明确提示已停止
+ * - 其他真实失败 → `prefix + 友好中文错误`
+ */
+export function streamEndDisplay(message: string, prefix: string): string | null {
+  const m = (message || '').trim();
+  if (m === AI_IGNORED_MESSAGE) return null;
+  if (m === AI_STOPPED_MESSAGE) return '已停止生成，不会保存';
+  return `${prefix}${humanizeAiError(m)}`;
+}
+
 class AIServiceImpl implements AIService {
   private streamBridges = new Map<string, StreamBridge>();
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
-import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
+import { aiService, streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { POLISH_SYSTEM_PROMPT, buildPolishUserPrompt, htmlToPlainText } from '../services/ai-prompts';
 import type { Chapter, Character, WorldEntry } from '../types';
@@ -334,8 +334,8 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
       // 流式结束后，把润色结果转成可编辑纯文本，供用户微调
       setEditablePolishText(htmlToPlainText(fullText));
     } catch (e) {
-      const msg = (e as Error).message;
-      if (!isSilentAiStreamEnd(msg)) setError(`润色失败：${msg}`);
+      const display = streamEndDisplay((e as Error).message, '润色失败：');
+      if (display) setError(display);
     } finally {
       setPolishing(false);
     }
@@ -431,7 +431,7 @@ const AIPolishPanel: React.FC<AIPolishPanelProps> = ({
             ) : (
               <span className="text-[10px] text-red-400">⚠️ 未配置 AI</span>
             )}
-            <button onClick={handleClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+            <button onClick={handleClose} className="text-gray-500 hover:text-gray-100 text-lg leading-none">✕</button>
           </div>
         </div>
 

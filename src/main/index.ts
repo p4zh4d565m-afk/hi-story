@@ -1,7 +1,8 @@
 import { app, BrowserWindow, dialog } from 'electron';
 import path from 'path';
-import { getDb, attachLiteraryDb, closeDb } from './db/connection';
+import { getDb, getDbPath, attachLiteraryDb, closeDb } from './db/connection';
 import { runMigrations } from './db/migrations';
+import { backupOnStartup, isFirstRun } from './db/backup';
 import { registerAllIpc } from './ipc';
 import { createAppMenu } from './menu';
 
@@ -64,6 +65,10 @@ process.on('unhandledRejection', (reason) => {
 
 app.whenReady().then(() => {
   try {
+    // 首次启动：库文件尚不存在（getDb() 会当场建库），跳过备份避免留一份空库。
+    // 注意必须先于 getDb() 判断，否则到备份时库已被建出、existsSync 永远为真。
+    const isFirst = isFirstRun(getDbPath());
+
     const db = getDb();
     runMigrations(db);
     attachLiteraryDb();
@@ -77,6 +82,13 @@ app.whenReady().then(() => {
     } catch {}
     if (clearedUser > 0 || clearedLit > 0) {
       console.log(`[Init] 清空旧向量: user=${clearedUser}, lit=${clearedLit}（请用 build_embeddings.py 重建）`);
+    }
+
+    // 启动自动备份（迁移后备份完整可用库；异步执行，不阻塞启动，失败只记日志）
+    if (!isFirst) {
+      backupOnStartup().catch((err) => {
+        console.error('[Backup] 自动备份异常（不阻断启动）:', err);
+      });
     }
   } catch (err: any) {
     console.error('Failed to initialize database:', err);

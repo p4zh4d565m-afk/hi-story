@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
-import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd } from '../services/ai.service';
+import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd, streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { splitGeneratedPreviewBlocks } from '../services/ai/generated-preview';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
@@ -645,8 +645,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         throw new Error(AI_IGNORED_MESSAGE);
       }
     } catch (e) {
-      const msg = (e as Error).message;
-      if (!isSilentAiStreamEnd(msg)) setError(`AI 写作失败：${msg}`);
+      const display = streamEndDisplay((e as Error).message, 'AI 写作失败：');
+      if (display) setError(display);
     } finally {
       setGenerating(false);
     }
@@ -785,7 +785,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
             )}
             <button
               onClick={onClose}
-              className="text-gray-500 hover:text-white text-lg leading-none"
+              className="text-gray-500 hover:text-gray-100 text-lg leading-none"
             >
               ✕
             </button>
@@ -882,7 +882,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                   <span className="text-[10px] text-gray-500">暂无大纲节点</span>
                 ) : (
                   outlineNodes.map(n => (
-                    <label key={n.id} className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer hover:text-white">
+                    <label key={n.id} className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer hover:text-gray-100">
                       <input
                         type="checkbox"
                         checked={selectedOutlineIds.has(n.id)}
@@ -1036,7 +1036,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
             <div className="flex-1" />
             <button
               onClick={onClose}
-              className="px-3 py-1.5 text-gray-500 text-xs hover:text-white transition-colors"
+              className="px-3 py-1.5 text-gray-500 text-xs hover:text-gray-100 transition-colors"
             >
               放弃
             </button>
