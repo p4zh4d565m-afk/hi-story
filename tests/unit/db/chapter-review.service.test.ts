@@ -188,16 +188,26 @@ describe('applyRevision — 修订应用事务', () => {
     expect(pr.status).toBe('applied');
   });
 
-  it('hasAppliedRevisionAtGeneration 只匹配应用到指定世代的修订', () => {
+  it('hasBumpedAppliedRevision 只匹配「应用时确曾 +1」的修订', () => {
     seedChapter('<p>甲</p>');
     seedProposal(1, '<p>乙</p>');
-    // 应用到世代 2
+    // 应用到世代 2（source=1 → applied=2，确曾 +1）
     const res = applyRevision(db, repo, 'pr1', 'p1');
     expect(res.success).toBe(true);
     expect(res.data?.contentGeneration).toBe(2);
-    // 应用到世代 2 → 匹配
-    expect(repo.hasAppliedRevisionAtGeneration('c1', 2)).toBe(true);
-    // 世代 1 不再匹配（应用后世代已 +1）
-    expect(repo.hasAppliedRevisionAtGeneration('c1', 1)).toBe(false);
+    // applied_generation=2 === 当前世代 2 且 > source 1 → 匹配
+    expect(repo.hasBumpedAppliedRevision('c1', 2)).toBe(true);
+    // 世代 1 不匹配（applied 是 2）
+    expect(repo.hasBumpedAppliedRevision('c1', 1)).toBe(false);
+  });
+
+  it('hasBumpedAppliedRevision 排除世代 +0（applied_generation === source_generation）', () => {
+    seedChapter('<p>甲</p>');
+    seedProposal(1, '<p>甲</p><p></p>'); // 等价 HTML → 世代不 +1
+    const res = applyRevision(db, repo, 'pr1', 'p1');
+    expect(res.success).toBe(true);
+    expect(res.data?.contentGeneration).toBe(1); // +0，applied_generation === source_generation === 1
+    // 当前世代 1 时，因 applied_generation 不 > source_generation，不进入待复评
+    expect(repo.hasBumpedAppliedRevision('c1', 1)).toBe(false);
   });
 });

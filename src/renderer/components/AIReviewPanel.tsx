@@ -152,6 +152,9 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [pendingProposalId, setPendingProposalId] = useState<string | null>(null);
   // 当前审稿/修订流的 streamId（来自 started 事件），关面板时用它精确 cancel
   const activeStreamIdRef = useRef<string | null>(null);
+  // projectId 的同步镜像：open 变 false 的 effect 里读取，避免闭包拿到旧值
+  const projectIdRef = useRef(projectId);
+  projectIdRef.current = projectId;
   // 审稿历史加载守卫：记录「当前应加载的 projectId+chapterId」，迟到回执不落地
   const reviewLoadGuardRef = useRef<string | null>(null);
 
@@ -285,6 +288,21 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     );
     return () => { unsubscribe?.(); activeStreamIdRef.current = null; };
   }, []);
+
+  // ===== 面板关闭（open 变 false）即 abort 当前流，覆盖所有关闭路径 =====
+  // 说明：审稿面板是「保活」的（display:none 不卸载），顶栏/快捷键置 false 不经过 handleClose，
+  // 所以 abort 必须放在 open 变化的 effect 里，而非只在 ✕ 按钮的 handleClose 里。
+  useEffect(() => {
+    if (open) return;
+    const streamId = activeStreamIdRef.current;
+    if (streamId) {
+      const currentProjectId = projectIdRef.current;
+      if (currentProjectId) {
+        void (window as any).electronAPI.invoke('ai:cancelStream', streamId, currentProjectId);
+      }
+      activeStreamIdRef.current = null;
+    }
+  }, [open]);
 
   // ===== 加载审稿历史 =====
   const loadReviews = useCallback(async (chapterId: string) => {
@@ -578,13 +596,9 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   }, [pendingProposalId]);
 
   const handleClose = useCallback(() => {
-    const streamId = activeStreamIdRef.current;
-    if (projectId && streamId) {
-      void (window as any).electronAPI.invoke('ai:cancelStream', streamId, projectId);
-    }
-    activeStreamIdRef.current = null;
+    // abort 已由 open 变 false 的 effect 统一处理（覆盖 ✕ / 顶栏 / 快捷键所有路径）
     onClose();
-  }, [projectId, onClose]);
+  }, [onClose]);
 
   // ===== 跳转到问题段落 =====
   const handleJumpToIssue = useCallback((issue: ReviewIssue) => {
