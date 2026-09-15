@@ -26,10 +26,10 @@ describe('Migration v21（叙事时间接入）', () => {
     db.close();
   });
 
-  it('最新版本为 21', () => {
-    expect(getLatestMigrationVersion()).toBe(21);
+  it('最新版本包含 v21 之后的迁移', () => {
+    expect(getLatestMigrationVersion()).toBeGreaterThanOrEqual(21);
     const row = db.prepare('SELECT MAX(version) as v FROM _migrations').get() as { v: number };
-    expect(row.v).toBe(21);
+    expect(row.v).toBe(getLatestMigrationVersion());
   });
 
   it('创建 narrative_transitions、chapter_alias 与墓碑/状态键列', () => {
@@ -146,7 +146,7 @@ describe('Migration v21（叙事时间接入）', () => {
     expect(before.hookChapterId).toBe('c1');
     expect(before.debtChapterId).toBe('c1');
 
-    runMigrations(db2); // 20 → 21
+    runMigrations(db2, 21); // 20 → 21（显式封顶，避免被后续迁移干扰）
 
     const after = snapshotAnchors(db2);
     expect(after.version).toBe(21);
