@@ -7,12 +7,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm run dev              # Run dev (tsc main + electron + vite renderer)
 npm run build            # Production build (main + renderer)
+npm run typecheck:renderer # Renderer 全量 tsc --noEmit（jsx + DOM）
 npm run start            # Rebuild native modules then launch electron
 npm run test             # Electron-as-Node vitest（--pool=forks）
 npm run electron:rebuild # Rebuild better-sqlite3 for Electron's Node version
 ```
 
-**`npx vite build`** is the fastest way to verify TypeScript compiles across the full codebase (Vite bundles both renderer and imported main-process modules). No dev server or Electron needed.
+**`npx vite build`** 只做打包转译，不跑完整类型检查。正式前端门槛是 `npm run typecheck:renderer`（`tsconfig.renderer.json`）；`build:renderer` 会先跑该门槛。主进程用 `npm run build:main`。
 
 ## Architecture
 
@@ -22,6 +23,7 @@ npm run electron:rebuild # Rebuild better-sqlite3 for Electron's Node version
 
 **Build pipeline:** Two TypeScript configs targeting different module systems:
 - `tsconfig.main.json` — `"module": "commonjs"`, outputs to `dist/main/`
+- `tsconfig.renderer.json` — `"jsx": "react-jsx"` + DOM lib，仅 `tsc --noEmit`
 - Vite — bundles renderer from `src/renderer/`, outputs to `dist/renderer/`
 - The `main` field in `package.json` points to `dist/main/main/index.js`
 
@@ -132,6 +134,8 @@ resources/
 - **Obsidian 导入弹窗纵向分隔（2026-09-13 已落地）** — 候选/详情与导入方案之间用现有 `react-resizable-panels` 纵向 Group，默认 65/35、不写 localStorage；「确认导入」钉在下半底部。扫描中/失败不挂空分隔条。核心 `obsidian-import-split.ts`。与长篇生产 P0 同分支合入。拖动几何仍靠手测。
 - **长篇生产 P0（2026-09-14 已合入 `feature/skill-engine`）** — 请求级 Provider 快照、策划 committed 快照 + 写库 epoch、写章预览分段文本节点（零 innerHTML）。含 Obsidian 导入分隔。HEAD `8a622f5`（代码止于 `6ff75e1`），现已在 `origin/feature/skill-engine`。合同 `docs/superpowers/specs/2026-09-13-ai-production-current-contract.md`。已接受偏差：无 `planningLoadError` UI（失败只 `console.error`）。P1 未授权；讨论稿第 1–11 节仍禁止编码。
 - **叙事时间接入（2026-09-14，选项 B）** — 迁移 v21：`narrative_transitions` + 空 `chapter_alias` + 章节软删墓碑 + 事实 `state_key`/`archived`；重抽取/confirm/resolve/payDebt 同事务双写投影与转换；AI 对话/写章/审稿经 `db:narrative:buildAsOfContext` 固定截面（`reduce*AsOf`）。v21 重建章表在事务外关 FK，升级后 `foreign_key_check` 且历史/锚点数量不变；as-of 读 superseded 历史并输出业务内容；章纲稳定 ID 在生成/导入/保存时分配，建章写 `planningOutlineId`。不永久删除、不并章、不新增墓碑 UI。合同 `docs/superpowers/specs/2026-09-14-narrative-time-integration-design.md`。
+- **叙事时间 fail-closed 手测收口（2026-09-15）** — 写章/审稿 as-of 失败阻断；对话失败不注入叙事。
+- **Renderer 全量类型检查门槛（#145，2026-09-15）** — `tsconfig.renderer.json` + `npm run typecheck:renderer`；`build:renderer` 先 typecheck 再 vite。
 
 ## Git 远程仓库
 

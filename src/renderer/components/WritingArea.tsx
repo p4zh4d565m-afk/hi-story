@@ -30,7 +30,7 @@ interface WritingAreaProps {
   /** 编辑器字号变更回调 */
   onSetEditorFontSize?: (preset: 0 | 1 | 2 | 3) => void;
   /** 编辑器句柄（用于润色写回时程序化替换内容） */
-  editorRef?: React.RefObject<RichEditorHandle | null>;
+  editorRef?: React.Ref<RichEditorHandle>;
   /** bottom 槽有面板时隐藏底部字数/状态栏（拖走恢复） */
   hideStatusBar?: boolean;
 }

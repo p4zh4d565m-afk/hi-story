@@ -2,7 +2,8 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Group, Panel, Separator } from 'react-resizable-panels';
 import type {
   ObsidianImportCandidate, ObsidianImportPrepareResult, ObsidianImportSummary, Project,
-  ObsidianImportSlot, ImportLayerChoices, StoryOption, ImportCharacterOverride, ImportWorldOverride,
+  ObsidianImportSlot, ObsidianImportDrafts, ObsidianImportIssue,
+  ImportLayerChoices, StoryOption, ImportCharacterOverride, ImportWorldOverride,
 } from '../types';
 import { createObsidianImportGuard } from '../services/obsidian-import-guard';
 import { computeFinalVolumes, overlayStages } from '../../main/obsidian/final-volumes';

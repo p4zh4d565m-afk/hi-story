@@ -320,13 +320,13 @@ const MindMap: React.FC<MindMapProps> = ({
       const arrow = rel.arrowDirection || 'none';
       const toEdge = edgeIntersect(t.x, t.y, s.x, s.y, tcw, tch);
       const fromEdge = edgeIntersect(s.x, s.y, t.x, t.y, scw, sch);
-      if (arrow === 'forward' && toEdge) {
+      if (arrow === 'forward' && toEdge && fromEdge) {
         arrowQueue.push({ toX: toEdge.x, toY: toEdge.y, fromX: fromEdge.x, fromY: fromEdge.y, color });
-      } else if (arrow === 'backward' && fromEdge) {
+      } else if (arrow === 'backward' && fromEdge && toEdge) {
         arrowQueue.push({ toX: fromEdge.x, toY: fromEdge.y, fromX: toEdge.x, fromY: toEdge.y, color });
       } else if (arrow === 'both') {
-        if (toEdge) arrowQueue.push({ toX: toEdge.x, toY: toEdge.y, fromX: fromEdge.x, fromY: fromEdge.y, color });
-        if (fromEdge) arrowQueue.push({ toX: fromEdge.x, toY: fromEdge.y, fromX: toEdge.x, fromY: toEdge.y, color });
+        if (toEdge && fromEdge) arrowQueue.push({ toX: toEdge.x, toY: toEdge.y, fromX: fromEdge.x, fromY: fromEdge.y, color });
+        if (fromEdge && toEdge) arrowQueue.push({ toX: fromEdge.x, toY: fromEdge.y, fromX: toEdge.x, fromY: toEdge.y, color });
       }
 
       const mx = (s.x + t.x) / 2;

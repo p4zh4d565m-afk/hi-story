@@ -508,5 +508,4 @@ const ContextPanel: React.FC<ContextPanelProps> = ({
   );
 };
 
-export { type StyleFingerprint };
 export default ContextPanel;
