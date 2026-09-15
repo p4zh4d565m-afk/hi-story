@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
-import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd } from '../services/ai.service';
+import { aiService, AI_IGNORED_MESSAGE, AI_STOPPED_MESSAGE, streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { splitGeneratedPreviewBlocks } from '../services/ai/generated-preview';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
@@ -169,7 +169,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
-  const runBatchRef = useRef<(nodes: OutlineNode[], startIndex: number) => Promise<void>>(async () => {});
+  const runBatchRef = useRef<(nodes: OutlineNode[], startIndex: number, runId: number) => Promise<void>>(async () => {});
   const generateAndSaveSummaryRef = useRef<(
     projectId: string, chapterId: string, chapterTitle: string, content: string,
   ) => Promise<void>>(async () => {});
@@ -185,6 +185,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }>({ total: 0, completed: 0, results: [] });
   const BATCH_PROGRESS_KEY = 'hi-story-batch-progress';
   const [batchPaused, setBatchPaused] = useState(false);
+  // 批量是否正在连续生成中（区别于暂停/等待继续；用于显示停止入口）
+  const [batchRunning, setBatchRunning] = useState(false);
+  // 同步防重入：state 更新是异步的，ref 才能在两次点击间可靠拦住
+  const batchRunningRef = useRef(false);
+  // 任务代次：每次启动/停止都递增。它同时承担两件事：
+  // 1. 停止判断——循环每章开头检查「代次是否仍是自己」，变了就 break（覆盖章节间隙无活跃流）
+  // 2. 锁释放保护——finally 只在「代次仍是自己」时才释放锁，旧任务 finally 不干扰新任务
+  const batchRunIdRef = useRef(0);
 
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 680, height: 500 });
@@ -431,16 +439,38 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   // ===== 批量生成（P2 断点续写）=====
   const handleBatchGenerate = useCallback(async () => {
     if (selectedOutlineIds.size === 0) return;
+    if (batchRunningRef.current) return; // 防重复启动
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
+    const runId = ++batchRunIdRef.current; // 认领新代次，旧任务 finally 不再有资格释放
     setBatchProgress({ total: ordered.length, completed: 0, current: ordered[0]?.title, results: [] });
     setBatchPaused(false);
-    await runBatchRef.current(ordered, 0);
+    batchRunningRef.current = true;
+    setBatchRunning(true);
+    try {
+      await runBatchRef.current(ordered, 0, runId);
+    } finally {
+      // 仅当仍是本代次才释放锁，防止旧任务 finally 释放新任务锁
+      if (batchRunIdRef.current === runId) {
+        batchRunningRef.current = false;
+        setBatchRunning(false);
+      }
+    }
   }, [selectedOutlineIds, outlineNodes]);
 
   const handleBatchResume = useCallback(() => {
-    setBatchPaused(false);
+    if (batchRunningRef.current) return; // 防重复启动
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
-    runBatchRef.current(ordered, batchProgress.completed);
+    const runId = ++batchRunIdRef.current; // 认领新代次
+    setBatchPaused(false);
+    batchRunningRef.current = true;
+    setBatchRunning(true);
+    runBatchRef.current(ordered, batchProgress.completed, runId).finally(() => {
+      // 仅当仍是本代次才释放锁
+      if (batchRunIdRef.current === runId) {
+        batchRunningRef.current = false;
+        setBatchRunning(false);
+      }
+    });
   }, [selectedOutlineIds, outlineNodes, batchProgress.completed]);
 
   const handleBatchReset = useCallback(() => {
@@ -448,7 +478,21 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
   }, [projectId]);
 
-  const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number) => {
+  // 停止批量：递增代次作废当前任务（循环主体每章开头检测到代次变了就 break），
+  // 并 abort 当前活跃流立即打断正在生成的一章。
+  const handleBatchStop = useCallback(async () => {
+    const stopId = ++batchRunIdRef.current; // 作废当前代次，并记下本次递增后的值
+    if (projectId) await aiService.cancelActiveStreams(projectId);
+    // 异步回执后校验代次：若停止后又启动了新批次（代次再次递增），则本回执不得释放新任务锁、
+    // 也不得回写「已停止」提示（新批次正在跑）
+    if (batchRunIdRef.current === stopId) {
+      batchRunningRef.current = false;
+      setBatchRunning(false);
+      setError('已停止批量生成');
+    }
+  }, [projectId]);
+
+  const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number, runId: number) => {
     if (!requestBase) return;
     // 批量模式：一次性加载创作罗盘/风格指纹/叙事 as-of（整批共用末章截面）
     const compassCtx = ContextBuilder.getCompassContext(projectId);
@@ -461,6 +505,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         chapters,
       );
     } catch { /* 忽略 */ }
+    // 异步边界后校验代次：加载期间被停止或新批次已启动，则静默退出，不写旧批次的错误提示
+    if (batchRunIdRef.current !== runId) return;
     // fail-closed：as-of 失败即阻断批量，不回退到「当前活跃事实」（那会读进目标章之后的事实）
     if (!asOfText) {
       setError('叙事时间截面加载失败，已停止批量生成（避免误读目标章之后的事实）');
@@ -468,6 +514,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     }
 
     for (let i = startIndex; i < nodes.length; i++) {
+      // 每章开头检查代次：停止会递增 batchRunIdRef，代次变了即 break（覆盖章节间隙无活跃流）
+      if (batchRunIdRef.current !== runId) break;
       setBatchProgress(p => ({ ...p, completed: i, current: nodes[i].title }));
 
       try {
@@ -534,6 +582,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         // 自动保存（拿到章节 id，失败则记录 saved:false）
         const chapterId = await onSaveAsChapter(node.title || 'AI 生成章节', fullText);
 
+        // 异步边界后校验代次：保存期间被停止或新批次已启动，则不写旧进度、直接退出
+        if (batchRunIdRef.current !== runId) break;
+
         setBatchProgress(p => ({
           ...p,
           completed: i + 1,
@@ -544,8 +595,12 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         await new Promise(r => setTimeout(r, 500));
       } catch (e) {
         const msg = (e as Error).message;
-        if (isSilentAiStreamEnd(msg)) break;
+        // 切项目静默 break；主动停止静默 break（停止提示由 handleBatchStop 主动发出）；
+        // 真实失败记录并继续（写进度前校验代次）
+        if (msg === AI_IGNORED_MESSAGE || msg === AI_STOPPED_MESSAGE) break;
         console.error(`批量生成失败 [${nodes[i].title}]:`, e);
+        // 失败也校验代次：停止/新批次已启动则不再写旧进度
+        if (batchRunIdRef.current !== runId) break;
         setBatchProgress(p => ({
           ...p,
           completed: i + 1,
@@ -554,6 +609,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       }
     }
 
+    // 最终清理前校验代次：若期间被停止或新批次启动，不删新批次的恢复记录
+    if (batchRunIdRef.current !== runId) return;
     setBatchProgress(p => ({ ...p, current: undefined }));
     // 清除进度
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
@@ -645,8 +702,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         throw new Error(AI_IGNORED_MESSAGE);
       }
     } catch (e) {
-      const msg = (e as Error).message;
-      if (!isSilentAiStreamEnd(msg)) setError(`AI 写作失败：${msg}`);
+      const display = streamEndDisplay((e as Error).message, 'AI 写作失败：');
+      if (display) setError(display);
     } finally {
       setGenerating(false);
     }
@@ -785,7 +842,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
             )}
             <button
               onClick={onClose}
-              className="text-gray-500 hover:text-white text-lg leading-none"
+              className="text-gray-500 hover:text-gray-100 text-lg leading-none"
             >
               ✕
             </button>
@@ -882,7 +939,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                   <span className="text-[10px] text-gray-500">暂无大纲节点</span>
                 ) : (
                   outlineNodes.map(n => (
-                    <label key={n.id} className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer hover:text-white">
+                    <label key={n.id} className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer hover:text-gray-100">
                       <input
                         type="checkbox"
                         checked={selectedOutlineIds.has(n.id)}
@@ -921,6 +978,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                     style={{ width: `${batchProgress.total > 0 ? (batchProgress.completed / batchProgress.total) * 100 : 0}%` }}
                   />
                 </div>
+                {batchRunning && (
+                  <button
+                    onClick={handleBatchStop}
+                    className="w-full mt-1 px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-500 transition-colors"
+                  >
+                    ⏹ 停止批量生成
+                  </button>
+                )}
               </div>
             )}
 
@@ -931,7 +996,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                   {(batchProgress.completed === 0 || batchProgress.completed >= batchProgress.total) ? (
                     <button
                       onClick={handleBatchGenerate}
-                      disabled={!aiReady || selectedOutlineIds.size === 0}
+                      disabled={!aiReady || selectedOutlineIds.size === 0 || batchRunning}
                       className="px-4 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                       🖋 批量生成（{selectedOutlineIds.size} 章）
@@ -940,7 +1005,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                     <>
                       <button
                         onClick={handleBatchResume}
-                        disabled={!aiReady}
+                        disabled={!aiReady || batchRunning}
                         className="px-4 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         ▶ 继续生成
@@ -1036,7 +1101,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
             <div className="flex-1" />
             <button
               onClick={onClose}
-              className="px-3 py-1.5 text-gray-500 text-xs hover:text-white transition-colors"
+              className="px-3 py-1.5 text-gray-500 text-xs hover:text-gray-100 transition-colors"
             >
               放弃
             </button>

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
-import { aiService, isSilentAiStreamEnd } from '../services/ai.service';
+import { aiService, streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import {
   REVIEW_SYSTEM_PROMPT,
@@ -390,8 +390,8 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
 
       setResult(parsed);
     } catch (e) {
-      const msg = (e as Error).message;
-      if (!isSilentAiStreamEnd(msg)) setError(`审稿失败：${msg}`);
+      const display = streamEndDisplay((e as Error).message, '审稿失败：');
+      if (display) setError(display);
     } finally {
       setReviewing(false);
     }
@@ -464,8 +464,8 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         setRevisedContent(fullText);
       }
     } catch (e) {
-      const msg = (e as Error).message;
-      if (!isSilentAiStreamEnd(msg)) setError(`AI 修复失败：${msg}`);
+      const display = streamEndDisplay((e as Error).message, 'AI 修复失败：');
+      if (display) setError(display);
     } finally {
       setRevising(false);
     }
@@ -628,7 +628,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             ) : (
               <span className="text-[10px] text-red-400">⚠️ 未配置 AI</span>
             )}
-            <button onClick={handleClose} className="text-gray-500 hover:text-white text-lg leading-none">✕</button>
+            <button onClick={handleClose} className="text-gray-500 hover:text-gray-100 text-lg leading-none">✕</button>
           </div>
         </div>
 
@@ -673,7 +673,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             <button
               onClick={() => setActiveTab('review')}
               className={`px-3 py-1.5 text-[11px] border-b-2 transition-colors ${
-                activeTab === 'review' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-white'
+                activeTab === 'review' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-gray-100'
               }`}
             >
               🤖 AI 审稿
@@ -681,7 +681,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             <button
               onClick={() => setActiveTab('quickcheck')}
               className={`px-3 py-1.5 text-[11px] border-b-2 transition-colors ${
-                activeTab === 'quickcheck' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-white'
+                activeTab === 'quickcheck' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-gray-100'
               }`}
             >
               ⚡ 快速检测 (反AI痕迹)
@@ -689,7 +689,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             <button
               onClick={handleStyleStats}
               className={`px-3 py-1.5 text-[11px] border-b-2 transition-colors ${
-                activeTab === 'stylestats' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-white'
+                activeTab === 'stylestats' ? 'border-accent text-accent' : 'border-transparent text-gray-500 hover:text-gray-100'
               }`}
               title="全书级句式统计，纯本地计算零 AI 消耗，发现单章看不出的固化模式"
             >
@@ -1000,7 +1000,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             <div className="flex-1" />
             <button
               onClick={handleClose}
-              className="px-3 py-1.5 text-gray-500 text-xs hover:text-white transition-colors"
+              className="px-3 py-1.5 text-gray-500 text-xs hover:text-gray-100 transition-colors"
             >
               关闭
             </button>
