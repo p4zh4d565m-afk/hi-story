@@ -37,6 +37,8 @@
 - **第五轮审查（P1 竞态 + 文档）已闭环**：P1 批量可重复启动 + 停止竞态——加 `batchRunningRef`（同步防重入，按钮 disabled）+ `stopRequestedRef`（循环每章开头检查，覆盖无活跃流的间隙），`handleBatchStop` 置标志 + abort 当前流；P3 报告「遇到问题」里「备份改为迁移后 fire-and-forget」「backup 注释『迁移前』已改『迁移后』」两句相反的旧结论删除。
 - **第六轮审查（P1 锁释放竞态）已闭环**：旧任务 finally 可释放新任务锁——加 `batchRunIdRef` 任务代次 token，`handleBatchGenerate/Resume` 启动时 `++batchRunIdRef.current` 认领代次，`handleBatchStop` 也递增作废当前代次，`finally` 只在「代次仍是自己」时才释放锁。
 - **第七轮审查（P1 任务主体未受代次保护）已闭环**：移除全局 `stopRequestedRef`，统一由代次 token 承担停止判断——`runBatch` 接收 runId，循环每章开头用「`batchRunIdRef.current !== runId`」判断 break；停止就是递增代次。这样新任务认领新代次不会清除任何旧任务状态，旧任务的停止判断只认自己的 runId。
+- **第八轮审查（P1 异步边界后副作用未校验）已闭环**：给三个异步边界后的副作用补齐代次校验——① `await onSaveAsChapter` 返回后写进度前校验；② catch 失败写进度前校验；③ 循环结束后删 localStorage 恢复记录前校验。任何一处代次已变（被停止或新批次启动）即跳过旧副作用。
+- **测试缺口（如实记录）**：审查者建议的「保存进行中停止 → 立即启动新批次」回归测试未补——该竞态深埋在 AIWritePanel 组件闭包内（依赖 aiService / ContextBuilder / onSaveAsChapter 等），无低成本单测的纯函数切点，批量生成亦无 Electron UI E2E。硬补只会是空转断言，无实际价值。已通过代码走查确认代次校验覆盖全部异步边界，留给后续若重构出「代次守卫」纯函数时再补。
 - **全量测试注水**：原 `npm run test` 扫到 `.worktrees/` 5 份副本 → 371/2727。`vitest.config.ts` 排除 worktree 后，主树真实规模为 **78 文件 / 577 测试**。
 
 ## 下一步建议
@@ -48,8 +50,8 @@
 
 ## 自检结论
 
-1. 满足需求 ✅（4 项落地，2 项按作者决定跳过；七轮审查意见全部闭环）
+1. 满足需求 ✅（4 项落地，2 项按作者决定跳过；八轮审查意见全部闭环）
 2. 不影响已有功能 ✅（577 测试全过、renderer typecheck 过、build:main 过）
-3. 边界情况 ✅（首启无库在 getDb 前跳过、备份失败不阻断、同秒撞车防、material 非法 source_layer 回退、中文错误透传、Failed to fetch 命中、批量停止有入口 + 提示 + 防重入 + 停得住 + 旧任务不释放新任务锁 + 新任务不清旧停止标志）
+3. 边界情况 ✅（首启无库在 getDb 前跳过、备份失败不阻断、同秒撞车防、material 非法 source_layer 回退、中文错误透传、Failed to fetch 命中、批量停止有入口 + 提示 + 防重入 + 停得住 + 旧任务不释放新任务锁 + 新任务不清旧停止标志 + 异步边界后副作用均校验代次）
 4. 测试已同步 ✅（新增 backup + humanize 单测；startup 补 mock；vitest 排除 worktree）
 5. 技术债已记录 ✅（见「下一步建议」）

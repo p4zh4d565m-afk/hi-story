@@ -575,6 +575,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         // 自动保存（拿到章节 id，失败则记录 saved:false）
         const chapterId = await onSaveAsChapter(node.title || 'AI 生成章节', fullText);
 
+        // 异步边界后校验代次：保存期间被停止或新批次已启动，则不写旧进度、直接退出
+        if (batchRunIdRef.current !== runId) break;
+
         setBatchProgress(p => ({
           ...p,
           completed: i + 1,
@@ -593,6 +596,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
           break;
         }
         console.error(`批量生成失败 [${nodes[i].title}]:`, e);
+        // 失败也校验代次：停止/新批次已启动则不再写旧进度
+        if (batchRunIdRef.current !== runId) break;
         setBatchProgress(p => ({
           ...p,
           completed: i + 1,
@@ -601,6 +606,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       }
     }
 
+    // 最终清理前校验代次：若期间被停止或新批次启动，不删新批次的恢复记录
+    if (batchRunIdRef.current !== runId) return;
     setBatchProgress(p => ({ ...p, current: undefined }));
     // 清除进度
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
