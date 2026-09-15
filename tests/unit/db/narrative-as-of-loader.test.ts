@@ -510,6 +510,14 @@ describe('loadNarrativeAsOfFromDb', () => {
         placement: 'after_chapter',
         anchorChapterId: c1.id,
       })).toThrow(/after_chapter/);
+
+      expect(() => loadNarrativeAsOfFromDb(db, {
+        projectId: 'p1',
+        taskType: 'write',
+        placement: 'after_chapter',
+        anchorChapterId: c1.id,
+        requestedMode: 'through_target',
+      })).toThrow(/before_target/);
     });
 
     it('A6: 无章节 write → 空运行时 before_target，不伪装 planning', () => {

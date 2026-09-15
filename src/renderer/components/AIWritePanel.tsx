@@ -4,9 +4,10 @@ import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd } from '../services/
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { splitGeneratedPreviewBlocks } from '../services/ai/generated-preview';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
-import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
 import { ContextBuilder } from '../../main/ai/context-builder';
+import { loadNarrativeAsOfForWrite } from '../services/write-narrative-as-of';
+import type { OutlineNode, Character, WorldEntry, Chapter, ChapterOutline } from '../types';
 
 // ============================================================
 // 叙事事实层格式化工具 — 复用 context-builder 的分类标签
@@ -26,33 +27,6 @@ function formatChapterOutlineSummary(outline: ChapterOutline): string {
   if (outline.payoff) lines.push(`爽点/回报：${outline.payoff}`);
   if (outline.endingHook) lines.push(`章末钩子：${outline.endingHook}`);
   return lines.join('\n');
-}
-
-/** 加载叙事时间截面（写「下一新章」：write + after_chapter 正式 before_target） */
-async function loadNarrativeAsOfForWrite(
-  projectId: string,
-  chapters: Chapter[],
-): Promise<string | null> {
-  try {
-    const last = chapters.length > 0 ? chapters[chapters.length - 1] : null;
-    // 有活跃章：锚点末章之后的虚拟新章；无章：write 空运行时（不挂 chat/planning）
-    const payload = last
-      ? {
-          projectId,
-          taskType: 'write' as const,
-          placement: 'after_chapter' as const,
-          anchorChapterId: last.id,
-        }
-      : {
-          projectId,
-          taskType: 'write' as const,
-        };
-    const res = await (window as any).electronAPI.invoke('db:narrative:buildAsOfContext', payload);
-    if (res?.success && res.data?.textBlock) return res.data.textBlock as string;
-    return null;
-  } catch {
-    return null;
-  }
 }
 
 // ============================================================
@@ -481,7 +455,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const styleFpCtx = ContextBuilder.getStyleFingerprintContext(projectId);
     let asOfText: string | null = null;
     try {
-      asOfText = await loadNarrativeAsOfForWrite(projectId, chapters);
+      asOfText = await loadNarrativeAsOfForWrite(
+        (channel, payload) => window.electronAPI.invoke(channel, payload),
+        projectId,
+        chapters,
+      );
     } catch { /* 忽略 */ }
     // fail-closed：as-of 失败即阻断批量，不回退到「当前活跃事实」（那会读进目标章之后的事实）
     if (!asOfText) {
@@ -608,7 +586,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       let asOfText: string | null = null;
       if (projectId) {
         try {
-          asOfText = await loadNarrativeAsOfForWrite(projectId, chapters);
+          asOfText = await loadNarrativeAsOfForWrite(
+        (channel, payload) => window.electronAPI.invoke(channel, payload),
+        projectId,
+        chapters,
+      );
         } catch { /* 忽略加载失败 */ }
       }
       if (!asOfText) {
