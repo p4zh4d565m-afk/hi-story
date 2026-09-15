@@ -4,6 +4,7 @@ import { aiService, streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import {
   REVIEW_SYSTEM_PROMPT,
+  REVIEW_PROMPT_VERSION,
   buildReviewUserPrompt,
   REVISE_SYSTEM_PROMPT,
   buildReviseUserPrompt,
@@ -15,9 +16,23 @@ import {
 } from '../services/ai-prompts';
 import type { StyleStatsResult } from '../services/ai-prompts';
 import AIReviewResultComponent from './AIReviewResult';
-import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, ChapterOutline, AntiAICheckResult } from '../types';
+import type { AIReviewResult, ReviewIssue, Chapter, Character, WorldEntry, OutlineNode, ChapterOutline, AntiAICheckResult, ChapterReviewRecord, ChapterReviewRunResult, ReviewDimension } from '../types';
 import { encrypt, decrypt } from '../services/crypto';
 import { ContextBuilder } from '../../main/ai/context-builder';
+
+/** 把账本审稿行转成展示态 AIReviewResult（供既有 AIReviewResultComponent 使用） */
+function recordToResult(r: ChapterReviewRecord): AIReviewResult {
+  const dims = r.dimensions;
+  return {
+    totalScore: Math.round(r.qualityScore ?? 0),
+    summary: r.summary,
+    criticalCount: r.issues.filter((i) => i.severity === 'critical').length,
+    warningCount: r.issues.filter((i) => i.severity === 'warning').length,
+    passedCount: dims.filter((d) => d.status === 'pass').length,
+    dimensions: dims,
+    issues: r.issues,
+  };
+}
 
 // ============================================================
 // AI 审稿浮动面板
@@ -125,10 +140,16 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [styleStatsResult, setStyleStatsResult] = useState<StyleStatsResult | null>(null);
   const [styleStatsLoading, setStyleStatsLoading] = useState(false);
 
+  // ===== 审稿账本（二期） =====
+  const [reviewRecords, setReviewRecords] = useState<ChapterReviewRecord[]>([]);
+  const [selectedReviewId, setSelectedReviewId] = useState<string | null>(null);
+  const [pendingReReview, setPendingReReview] = useState(false);
+
   // ===== 修订状态 =====
   const [revising, setRevising] = useState(false);
   const [revisedContent, setRevisedContent] = useState('');
   const [revisionAccepted, setRevisionAccepted] = useState(false);
+  const [pendingProposalId, setPendingProposalId] = useState<string | null>(null);
   const reviewingRef = useRef(false);
   reviewingRef.current = reviewing;
   const revisingRef = useRef(false);
@@ -255,10 +276,32 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     init();
   }, [open]);
 
+  // ===== 加载审稿历史 =====
+  const loadReviews = useCallback(async (chapterId: string) => {
+    const res = await (window as any).electronAPI.invoke('workflow:chapterReview:list', chapterId);
+    if (res?.success) {
+      setReviewRecords(res.data.records as ChapterReviewRecord[]);
+      setPendingReReview(Boolean(res.data.pendingReReview));
+      // 默认选中当前世代最新一份有效审稿（completed）
+      const freshCompleted = (res.data.records as ChapterReviewRecord[])
+        .filter((r) => r.freshnessStatus === 'fresh' && r.executionStatus === 'completed');
+      const selected = freshCompleted[0] ?? (res.data.records as ChapterReviewRecord[])[0] ?? null;
+      setSelectedReviewId(selected?.id ?? null);
+      if (selected) {
+        setResult(recordToResult(selected));
+      } else {
+        setResult(null);
+      }
+    }
+  }, []);
+
   // ===== 同步外部章节选择 =====
   useEffect(() => {
-    if (activeChapterId) setSelectedChapterId(activeChapterId);
-  }, [activeChapterId]);
+    if (activeChapterId) {
+      setSelectedChapterId(activeChapterId);
+      void loadReviews(activeChapterId);
+    }
+  }, [activeChapterId, loadReviews]);
 
   // ===== 执行审稿 =====
   const handleReview = useCallback(async () => {
@@ -349,53 +392,45 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      let response = '';
-      const generator = aiService.chatStream(
-        snapshotAIRequestConfig(requestBase),
-        messages,
-        { temperature: 0.3, maxTokens: 4096 },
+      // 二期：改走主进程 workflow（chat + 解析 + 聚合 + 落库），渲染端不再自开 chatStream / 自解析
+      const sourceGeneration = chapter.contentGeneration ?? 1;
+      const res = await (window as any).electronAPI.invoke('workflow:chapterReview:run', {
         projectId,
-      );
-      for await (const token of generator) {
-        response = token;
-      }
-      if (!response.trim()) throw new Error('AI 未返回审稿结果');
+        chapterId: chapter.id,
+        messages,
+        providerConfig: snapshotAIRequestConfig(requestBase),
+        sourceGeneration,
+        promptVersion: REVIEW_PROMPT_VERSION,
+      }) as { success: boolean; data?: ChapterReviewRunResult; error?: string };
 
-      // 解析 AI 返回的 JSON
-      let parsed: AIReviewResult;
-      try {
-        // 尝试清理可能的 markdown 代码块包裹
-        let jsonStr = response.trim();
-        if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
-        if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
-        if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
-        jsonStr = jsonStr.trim();
-
-        parsed = JSON.parse(jsonStr);
-
-        // 验证基本结构
-        if (typeof parsed.totalScore !== 'number' || !Array.isArray(parsed.dimensions) || !Array.isArray(parsed.issues)) {
-          throw new Error('返回的数据结构不完整');
-        }
-
-        // 计算统计
-        parsed.criticalCount = parsed.issues.filter(i => i.severity === 'critical').length;
-        parsed.warningCount = parsed.issues.filter(i => i.severity === 'warning').length;
-        parsed.passedCount = parsed.dimensions.filter(d => d.passed).length;
-
-      } catch (parseErr) {
-        console.error('AI 审稿解析失败，原始响应：', response);
-        throw new Error(`AI 返回格式解析失败：${(parseErr as Error).message}`);
+      if (!res?.success) {
+        setError(res?.error || '审稿失败');
+        return;
       }
 
-      setResult(parsed);
+      const run = res.data!;
+      if (run.executionStatus === 'stale') {
+        setError('正文已变化，请重新审稿');
+        return;
+      }
+      if (run.executionStatus === 'cancelled') {
+        setError('已停止审稿');
+        return;
+      }
+      if (run.executionStatus === 'failed') {
+        setError('审稿失败（可查看历史中的失败记录）');
+        return;
+      }
+
+      // completed：重新加载账本列表（默认选中最新一份）
+      await loadReviews(chapter.id);
     } catch (e) {
       const display = streamEndDisplay((e as Error).message, '审稿失败：');
       if (display) setError(display);
     } finally {
       setReviewing(false);
     }
-  }, [selectedChapterId, aiReady, requestBase, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, chapterOutlines, obsidianContext]);
+  }, [selectedChapterId, aiReady, requestBase, chapters, projectName, projectId, typeTags, characters, worldEntries, outlineNodes, chapterOutlines, obsidianContext, loadReviews]);
 
   // ===== AI 自动修复 =====
   const handleAutoRevise = useCallback(async () => {
@@ -452,16 +487,32 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      const generator = aiService.chatStream(
-        snapshotAIRequestConfig(requestBase),
-        messages,
-        { temperature: 0.4, maxTokens: 8192 },
+      // 二期：生成修订改走主进程 workflow（可取消，取消不落 proposed）
+      const sourceGeneration = chapter.contentGeneration ?? 1;
+      const res = await (window as any).electronAPI.invoke('workflow:chapterReview:createRevision', {
         projectId,
-      );
-      let fullText = '';
-      for await (const token of generator) {
-        fullText = token;
-        setRevisedContent(fullText);
+        chapterId: chapter.id,
+        reviewId: selectedReviewId,
+        messages,
+        providerConfig: snapshotAIRequestConfig(requestBase),
+        sourceGeneration,
+      }) as { success: boolean; data?: { proposalId: string | null; proposedContent: string | null; executionStatus: string }; error?: string };
+
+      if (!res?.success) {
+        setError(res?.error === 'REVISION_SOURCE_STALE' ? '审稿已过期，请重新审稿' : (res?.error || '生成修订失败'));
+        return;
+      }
+      if (res.data?.executionStatus === 'stale') {
+        setError('正文已变化，请重新审稿');
+        return;
+      }
+      if (res.data?.executionStatus === 'cancelled') {
+        setError('已停止生成修订');
+        return;
+      }
+      if (res.data?.proposalId) {
+        setPendingProposalId(res.data.proposalId);
+        setRevisedContent(res.data.proposedContent ?? '');
       }
     } catch (e) {
       const display = streamEndDisplay((e as Error).message, 'AI 修复失败：');
@@ -469,38 +520,48 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     } finally {
       setRevising(false);
     }
-  }, [selectedChapterId, result, chapters, projectId, characters, worldEntries, obsidianContext, requestBase]);
+  }, [selectedChapterId, result, selectedReviewId, chapters, projectId, characters, worldEntries, obsidianContext, requestBase]);
 
   // ===== 接受修订 =====
   const handleAcceptRevision = useCallback(async () => {
-    if (!selectedChapterId || !revisedContent) return;
+    if (!pendingProposalId) return;
     if (!projectId) {
       setError('当前项目无效，无法保存修订');
       return;
     }
     try {
-      const res = await (window as any).electronAPI.invoke('db:chapter:update', {
-        id: selectedChapterId,
-        content: revisedContent,
-      });
-      if (res?.success) {
+      const res = await (window as any).electronAPI.invoke('workflow:chapterReview:applyRevision', pendingProposalId, projectId) as
+        { success: boolean; data?: { chapterId: string; content: string; wordCount: number; contentGeneration: number }; error?: string };
+      if (res?.success && res.data) {
         setRevisionAccepted(true);
-        // 回写 App，让打开的编辑器读到新正文（不再用字面量 'current' 刷新）
-        onChapterAccepted?.(selectedChapterId, revisedContent);
+        // 回写 App：接受修订走账本 IPC 回写章节列表/字数/世代
+        onChapterAccepted?.(res.data.chapterId, res.data.content);
+        setPendingProposalId(null);
         setResult(null);
         setRevisedContent('');
         setActiveTab('review');
+        // 应用成功后刷新账本（可能进入待复评）
+        await loadReviews(res.data.chapterId);
+      } else if (res?.error === 'REVISION_SOURCE_STALE') {
+        setError('正文已变化，修订已作废，请重新审稿');
+        setPendingProposalId(null);
+      } else {
+        setError(res?.error || '保存修订失败');
       }
     } catch (e) {
       setError(`保存修订失败：${(e as Error).message}`);
     }
-  }, [selectedChapterId, revisedContent, projectId, onChapterAccepted]);
+  }, [pendingProposalId, projectId, onChapterAccepted, loadReviews]);
 
   // ===== 放弃修订 =====
-  const handleDiscardRevision = useCallback(() => {
+  const handleDiscardRevision = useCallback(async () => {
+    if (pendingProposalId) {
+      await (window as any).electronAPI.invoke('workflow:chapterReview:rejectRevision', pendingProposalId);
+    }
+    setPendingProposalId(null);
     setRevisedContent('');
     setActiveTab('review');
-  }, []);
+  }, [pendingProposalId]);
 
   const handleClose = useCallback(() => {
     if (projectId && (reviewingRef.current || revisingRef.current)) {
@@ -526,7 +587,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     lines.push(`\n## 总结\n${result.summary}`);
     lines.push(`\n## 各维度评分`);
     for (const d of result.dimensions) {
-      lines.push(`- ${d.passed ? '✅' : '⚠️'} ${d.name}：${d.score}分`);
+      lines.push(`- ${d.status === 'pass' ? '✅' : d.status === 'inconclusive' ? '❓' : '⚠️'} ${d.name}：${d.score ?? '—'}分`);
     }
     lines.push(`\n## 具体问题`);
     for (const i of result.issues) {
@@ -730,6 +791,40 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             <div className="flex flex-col items-center justify-center py-8 space-y-3">
               <div className="w-8 h-8 border-2 border-accent border-t-transparent rounded-full animate-spin" />
               <span className="text-xs text-gray-500">AI 正在从 15 个维度审查章节...</span>
+            </div>
+          )}
+
+          {/* 待复评提示 */}
+          {pendingReReview && activeTab === 'review' && (
+            <div className="p-3 bg-yellow-900/30 border border-yellow-800 rounded text-xs text-yellow-400">
+              ⏳ 修订已应用，当前版本尚未通过审稿，请重新审稿
+            </div>
+          )}
+
+          {/* 审稿历史列表（二期账本） */}
+          {activeTab === 'review' && reviewRecords.length > 1 && (
+            <div className="p-2 bg-gray-900/50 rounded border border-gray-800">
+              <p className="text-[10px] text-gray-500 mb-1">审稿历史</p>
+              <div className="space-y-1 max-h-[120px] overflow-y-auto">
+                {reviewRecords.map((r) => (
+                  <button
+                    key={r.id}
+                    onClick={() => { setSelectedReviewId(r.id); setResult(recordToResult(r)); }}
+                    className={`w-full text-left px-2 py-1 rounded text-[10px] transition-colors ${
+                      selectedReviewId === r.id ? 'bg-accent/20 text-accent' : 'text-gray-400 hover:bg-gray-800'
+                    }`}
+                  >
+                    <span className="mr-1">
+                      {r.freshnessStatus === 'stale' ? '🕓' : r.executionStatus === 'completed' ? '✅' : r.executionStatus === 'cancelled' ? '⏹' : '❌'}
+                    </span>
+                    {r.executionStatus === 'completed'
+                      ? `${Math.round(r.qualityScore ?? 0)}分 · ${r.coverage >= 0.8 ? '完整' : '不完整'}`
+                      : r.executionStatus === 'cancelled' ? '已取消' : '失败'}
+                    <span className="text-gray-600 ml-1">{r.freshnessStatus === 'stale' ? '· 过期' : ''}</span>
+                    <span className="text-gray-600 float-right">{new Date(r.createdAt).toLocaleTimeString('zh-CN')}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -991,7 +1086,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
             {result.issues.length > 0 && (
               <button
                 onClick={handleAutoRevise}
-                disabled={!aiReady}
+                disabled={!aiReady || !selectedReviewId}
                 className="px-3 py-1.5 bg-accent text-white text-xs rounded hover:bg-accent-hover disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               >
                 🪄 自动修复 ({result.issues.length}项)

@@ -8,6 +8,7 @@ import {
   deleteChapter as deleteChapterOrder,
   restoreChapter as restoreChapterOrder,
 } from '../../ai/narrative-time-order';
+import { shouldBumpContentGeneration } from '../../ai/content-revision';
 
 export interface CreateChapterInput {
   projectId: string;
@@ -64,8 +65,8 @@ export class ChapterRepo {
     this.db.prepare(`
       INSERT INTO chapters (
         id, project_id, title, content, status, word_count, sort_order,
-        planning_outline, planning_outline_id, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?)
+        planning_outline, planning_outline_id, content_generation, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, 'draft', ?, ?, ?, ?, 1, ?, ?)
     `).run(
       id,
       input.projectId,
@@ -151,9 +152,16 @@ export class ChapterRepo {
     }
 
     const chapter = existing.data;
+
+    // 判据拆分（二期关键，不得混用）：
+    // - 打历史快照：暂留现有 content !==（字符串全等，非阻塞项）
+    // - 世代递增 + 作废 proposed：用 shouldBumpContentGeneration（normalize 判据）
     if (input.content !== undefined && input.content !== chapter.content) {
       ChapterHistoryRepo.addSnapshot(this.db, chapter.id, chapter.content, chapter.wordCount);
     }
+
+    const contentChanged = input.content !== undefined
+      && shouldBumpContentGeneration(chapter.content, input.content);
 
     const now = new Date().toISOString();
     const title = input.title ?? chapter.title;
@@ -162,11 +170,29 @@ export class ChapterRepo {
     const wordCount = input.wordCount !== undefined ? input.wordCount : chapter.wordCount;
     const summary = input.summary !== undefined ? input.summary : chapter.summary ?? '';
 
-    this.db.prepare(`
-      UPDATE chapters
-      SET title = ?, content = ?, status = ?, word_count = ?, summary = ?, updated_at = ?
-      WHERE id = ? AND deleted_at IS NULL
-    `).run(title, content, status, wordCount, summary, now, input.id);
+    const tx = this.db.transaction(() => {
+      if (contentChanged) {
+        this.db.prepare(`
+          UPDATE chapters
+          SET title = ?, content = ?, status = ?, word_count = ?, summary = ?,
+              content_generation = content_generation + 1, updated_at = ?
+          WHERE id = ? AND deleted_at IS NULL
+        `).run(title, content, status, wordCount, summary, now, input.id);
+
+        // 正文真变 → 同章所有待处理修订作废（避免旧提案仍可点「接受」）
+        this.db.prepare(`
+          UPDATE chapter_revision_proposals SET status = 'stale', updated_at = ?
+          WHERE chapter_id = ? AND status = 'proposed'
+        `).run(now, input.id);
+      } else {
+        this.db.prepare(`
+          UPDATE chapters
+          SET title = ?, content = ?, status = ?, word_count = ?, summary = ?, updated_at = ?
+          WHERE id = ? AND deleted_at IS NULL
+        `).run(title, content, status, wordCount, summary, now, input.id);
+      }
+    });
+    tx();
 
     return this.findById(input.id);
   }
@@ -377,6 +403,7 @@ export class ChapterRepo {
         }
       })(),
       planningOutlineId: (row.planning_outline_id as string | null | undefined) ?? null,
+      contentGeneration: (row.content_generation as number | null | undefined) ?? 1,
       createdAt: row.created_at as string,
       updatedAt: row.updated_at as string,
     };
@@ -473,9 +500,23 @@ export class ChapterHistoryRepo {
         ChapterHistoryRepo.addSnapshot(db, chapterId, current.content, current.word_count);
       }
 
-      db.prepare(
-        'UPDATE chapters SET content = ?, word_count = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
-      ).run(content, wordCount, now, chapterId);
+      // 历史恢复也是正文变更：用 normalize 判据决定是否递增世代，并作废待处理修订
+      const contentChanged = current
+        ? shouldBumpContentGeneration(current.content, content)
+        : true;
+      if (contentChanged) {
+        db.prepare(
+          'UPDATE chapters SET content = ?, word_count = ?, content_generation = content_generation + 1, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
+        ).run(content, wordCount, now, chapterId);
+        db.prepare(
+          `UPDATE chapter_revision_proposals SET status = 'stale', updated_at = ?
+           WHERE chapter_id = ? AND status = 'proposed'`,
+        ).run(now, chapterId);
+      } else {
+        db.prepare(
+          'UPDATE chapters SET content = ?, word_count = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL',
+        ).run(content, wordCount, now, chapterId);
+      }
 
       const row = db.prepare(
         'SELECT * FROM chapters WHERE id = ? AND deleted_at IS NULL',
@@ -501,6 +542,7 @@ export class ChapterHistoryRepo {
             }
           })(),
           planningOutlineId: (row.planning_outline_id as string | null | undefined) ?? null,
+          contentGeneration: (row.content_generation as number | null | undefined) ?? 1,
           createdAt: row.created_at as string,
           updatedAt: row.updated_at as string,
         },

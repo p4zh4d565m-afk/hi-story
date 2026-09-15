@@ -2,6 +2,9 @@
 // AI 审稿 Prompt 模板
 // ============================================================
 
+/** 二期审稿 prompt 版本（改 prompt 必须改此常量 + 改 Spec/单测） */
+export const REVIEW_PROMPT_VERSION = 'review-v2-2026-09-15';
+
 export const REVIEW_DIMENSIONS = [
   { id: 1, name: '角色OOC', desc: '角色行为是否符合性格设定，是否出现前后矛盾或不符合人设的行为' },
   { id: 2, name: '时间线', desc: '事件顺序是否合理，时间标记是否一致，是否存在时间跳跃错误' },
@@ -25,34 +28,37 @@ export const REVIEW_SYSTEM_PROMPT = `你是一位专业的文学编辑，擅长�
 ## 审查维度说明
 ${REVIEW_DIMENSIONS.map(d => `${d.id}. ${d.name}：${d.desc}`).join('\n')}
 
-## 评分标准
-- 90-100：优秀，该维度表现突出
-- 75-89：良好，整体不错，有小瑕疵
-- 60-74：合格，基本达标但可改进
-- 40-59：不佳，存在明显问题
-- 0-39：差，有严重缺陷
-
 ## 输出格式
 严格返回纯 JSON 对象（不要包裹在 markdown 代码块中），字段如下：
 {
-  "totalScore": 85,
   "summary": "整体评价，一两句话概括",
   "dimensions": [
-    { "id": 1, "name": "角色OOC", "score": 90, "passed": true, "comment": "角色行为符合设定..." },
+    { "id": 1, "name": "角色OOC", "status": "pass", "score": 90, "comment": "判断说明", "evidence": [] },
     ...
   ],
   "issues": [
-    { "severity": "critical", "dimensionId": 1, "location": "可定位的文本片段（原文引用）", "description": "问题描述", "suggestion": "改进建议" },
+    { "severity": "critical", "dimensionId": 1, "location": "原文片段", "description": "问题描述", "suggestion": "改进建议" },
     ...
   ]
 }
 
-## 注意事项
+## 三态判断规则（必须遵守）
+- 每个维度必须给出 status 三选一：
+  - "pass"：该维度表现良好，无问题
+  - "issue"：该维度存在需要修改的问题
+  - "inconclusive"：上下文不足以做出判断（例如缺少角色设定、无法判断 OOC）
+- 15 个维度一个都不能缺、不能重复、不能用未知 id。
+- 只有 status 为 "pass" 或 "issue" 时才给 score（0-100）；status 为 "inconclusive" 时 score 必须为 null，并在 comment 说明缺什么信息。
+- status 为 "issue" 时，evidence 必须列出原文片段作为举证（至少 1 条）；"pass" 和 "inconclusive" 时 evidence 可为空数组。
+- 禁止为了凑数硬给 pass 或高分；判断不了就如实写 "inconclusive"。
+
+## 评分标准（仅用于 pass/issue 的 score）
+- 90-100：优秀；75-89：良好；60-74：合格；40-59：不佳；0-39：差
+
+## issues 注意事项
 - severity 取值为 "critical"（严重问题）、"warning"（警告）、"info"（建议）
 - location 字段填入原文片段，方便定位
-- 每个维度都要评分，不要跳过
 - 问题要具体，给出可操作的改进建议
-- 如果某个维度没有任何问题，score 给 90 以上，passed 为 true
 
 ## AI 味质感层检查（用于「段落AI痕」维度，必须引用原文举证）
 

@@ -14,7 +14,7 @@
 2. **二期必须改审稿 prompt / 解析 / 聚合。** 三态 + evidence 不是「只加两张表」。结构不合格 → `execution_status = failed`。
 3. **一期写死渲染端拒收。** 采用 `streamId → projectId` 映射；切项目作废旧映射。主进程事件形状仍只带 `streamId`。
 4. **非技术说明补上世代绑定的代价：** 改一个标点也要重审、旧修订作废，这是有意取舍。
-5. **迁移号拆开：** 一期无表；二期 v21；三期 v22。禁止改 v20。若二、三期合并发布，合成一次迁移事务（版本号仍按当时最高未用号一次登记）。
+5. **迁移号拆开：** 一期无表；二期 v23；三期 v24。禁止改 v20。若二、三期合并发布，合成一次迁移事务（版本号仍按当时最高未用号一次登记）。
 6. **`ChatOptions.temperature` 保持 `number`。** v0.2 误写成 `string | number`，作废。
 7. **一期点名接取消的面板：** `AIWritePanel`、`AIChatPanel` 必须接；`AIReviewPanel`、`AIPolishPanel` 同期接上（它们已在用 `chatStream`），避免只改写章、其它面板继续停不住。
 
@@ -39,7 +39,7 @@
 - 对 `content` 原始字符串计算 SHA，或用 HTML 字符串 `!==` 决定世代。
 - `coverage < 1` 一律 `delivery_status = inconclusive`。
 - 把流取消、审稿账本、写章状态机绑成同一实施计划。
-- 「二、三期合并发布仍写 v21」这种含糊口径（改为：二期 v21、三期 v22；合并发布则一次事务）。
+- 「二、三期合并发布仍写 v21」这种含糊口径（改为：二期 v23、三期 v24；合并发布则一次事务）。
 
 ---
 
@@ -128,7 +128,7 @@
 
 包含：
 
-- 迁移 **v21**：`chapters.content_generation` + `chapter_reviews` + `chapter_revision_proposals`。
+- 迁移 **v23**：`chapters.content_generation` + `chapter_reviews` + `chapter_revision_proposals`。
 - 世代按规范化纯文本递增（见术语与数据模型）。
 - **改 `REVIEW_SYSTEM_PROMPT` 输出契约**为三态 + `evidence`；重写解析；用固定规则聚合覆盖率/均分/门禁。结构不合格不得落成完整审稿。
 - 审稿报告持久化，绑定 `source_generation`。
@@ -143,13 +143,13 @@
 
 包含：
 
-- 迁移 **v22**：`chapter_runs` 一张表（无五阶段子表）。
+- 迁移 **v24**：`chapter_runs` 一张表（无五阶段子表）。
 - 完整草稿保存在运行记录中；重启后 `drafted` 可继续保存；遗留 `running` 恢复为 `failed/PROCESS_INTERRUPTED`，不自动重放付费请求。
 - 取消与运行绑定 `projectId + runId`。
 - 保存仍走「正文优先」：`commit` 只保证章节正文（及施工卡）写入并返回真实 id；抽取仍异步，钩子仍进账本提议。
 - 失败可重试抽取，不可把未确认钩子写成运行时状态。
 
-若二、三期在同一发布里交付：把 v21 与 v22 的 DDL 放进**一次**迁移事务，只登记一个新版本号（当时最高未用号）。禁止改 v20。分开交付时必须是 v21 然后 v22，中间不能跳号。
+若二、三期在同一发布里交付：把 v23 与 v24 的 DDL 放进**一次**迁移事务，只登记一个新版本号（当时最高未用号）。禁止改 v20。分开交付时必须是 v23 然后 v24，中间不能跳号。
 
 ### 三期都不包含
 
@@ -345,8 +345,8 @@ Map<string, { projectId: string; ignored: boolean }>
 | 期 | 迁移 | 内容 |
 | --- | --- | --- |
 | 一 | 无 | 仅代码 |
-| 二 | **v21** | `content_generation` + 审稿两表 |
-| 三 | **v22** | `chapter_runs` |
+| 二 | **v23** | `content_generation` + 审稿两表 |
+| 三 | **v24** | `chapter_runs` |
 
 DDL 与 `_migrations` 登记必须在同一 SQLite 事务。只新增列/表/索引，不删除、不重写现有章节正文、策划 JSON、决策账本或 Obsidian 路径。**禁止改 v20。**
 
@@ -362,7 +362,7 @@ normalizeChapterText(oldHtml) !== normalizeChapterText(newHtml)
 
 为 true 才 `content_generation + 1`。`chapter.history` 是否打快照可继续用现有「content 字符串是否变化」或改为同一纯函数；**世代与审稿新鲜度必须用纯函数，不得用字符串全等。** 建议历史快照也改用同一判据，避免无语义保存刷掉 30 份上限，但不作为二期验收阻塞。
 
-### `chapters.content_generation`（二期 / v21）
+### `chapters.content_generation`（二期 / v23）
 
 ```sql
 ALTER TABLE chapters ADD COLUMN content_generation INTEGER NOT NULL DEFAULT 1;
@@ -370,7 +370,7 @@ ALTER TABLE chapters ADD COLUMN content_generation INTEGER NOT NULL DEFAULT 1;
 
 已有行迁移后视为世代 1。`ChapterRepo.create` 插入 1；`update` / 历史恢复 / 修订应用走 `shouldBumpContentGeneration`。
 
-### `chapter_reviews`（二期 / v21）
+### `chapter_reviews`（二期 / v23）
 
 ```sql
 CREATE TABLE chapter_reviews (
@@ -409,7 +409,7 @@ CREATE INDEX idx_chapter_reviews_chapter_created
 
 审稿行写入后不可修改。`freshness_status` 不持久化。`execution_status = failed` 的行可以保存错误摘要，`dimensions_json` 允许空数组，不得填假维度凑覆盖率。
 
-### `chapter_revision_proposals`（二期 / v21）
+### `chapter_revision_proposals`（二期 / v23）
 
 ```sql
 CREATE TABLE chapter_revision_proposals (
@@ -438,7 +438,7 @@ CREATE UNIQUE INDEX idx_chapter_revision_one_pending
 
 同一章节最多一个待处理自动修订。已应用、拒绝或过期的历史不删除。
 
-### `chapter_runs`（三期 / v22）
+### `chapter_runs`（三期 / v24）
 
 ```sql
 CREATE TABLE chapter_runs (
@@ -663,20 +663,20 @@ quality_score = 有效维度 score 的算术平均值（无有效维度则为 nu
 ### 二期
 
 新增：`normalize-chapter-text.ts`（或放在 `content-revision.ts`）、`chapter-review.repo.ts`、`chapter-review.service.ts`、`chapter-review-loader.ts`、审稿 workflow IPC。  
-修改：`migrations.ts`（**v21**）、`chapter.repo.ts`（纯文本判据递增世代）、`ai-prompts/review.ts`、`AIReviewPanel.tsx`、`App.tsx`（接受修订走账本 IPC）、类型与 AGENTS.md。  
+修改：`migrations.ts`（**v23**）、`chapter.repo.ts`（纯文本判据递增世代）、`ai-prompts/review.ts`、`AIReviewPanel.tsx`、`App.tsx`（接受修订走账本 IPC）、类型与 AGENTS.md。  
 测试：规范化函数；等价 HTML 不递增；三态解析失败；审稿聚合与修订事务；真实 UI 过期 / 冲突 / 待复评。
 
 ### 三期
 
 新增：`chapter-run.repo.ts`、`chapter-run.service.ts`、`chapter-run-loader.ts`。  
-修改：`migrations.ts`（**v22**）、写章 IPC、`AIWritePanel.tsx`、`App.tsx` 保存与抽取仍遵守 A1/A5。  
+修改：`migrations.ts`（**v24**）、写章 IPC、`AIWritePanel.tsx`、`App.tsx` 保存与抽取仍遵守 A1/A5。  
 测试：运行状态、重启恢复、抽取失败不回滚正文、hook 只出现在 `creative_decisions.proposed`。
 
 ---
 
 ## 数据迁移与兼容
 
-- v21 / v22 只加列/表/索引。现有项目启动后可立即编辑。
+- v23 / v24 只加列/表/索引。现有项目启动后可立即编辑。
 - 无历史审稿时显示空状态；不迁移旧面板内存里的审稿。
 - 不把任何旧 `hi-story-pending-*` 身份不明数据写入项目。
 - 手工保存继续 `ChapterRepo` + `chapter_history`。
@@ -699,7 +699,7 @@ quality_score = 有效维度 score 的算术平均值（无有效维度则为 nu
 
 ### 二期
 
-- v20 库无损升级到 v21；中途失败时 DDL 与版本号均不残留。
+- v20 库无损升级到 v23；中途失败时 DDL 与版本号均不残留。
 - `normalizeChapterText`：标签顺序/空段落不同但汉字相同 → 相等；改一个汉字 → 不等。
 - `shouldBumpContentGeneration`：等价 HTML 不递增；改字递增；只改标题不递增。
 - 15 维度齐全时覆盖率与均分正确；缺失/重复/未知 ID、非法分数与严重度、`inconclusive` 带分数、`issue` 无证据 → `execution_status = failed`。
@@ -713,7 +713,7 @@ quality_score = 有效维度 score 的算术平均值（无有效维度则为 nu
 
 ### 三期
 
-- v21 库无损升级到 v22。
+- v23 库无损升级到 v24。
 - 空草稿不能进入 drafted。
 - 重复 commit 返回同一章节。
 - 进程中断 running → failed/PROCESS_INTERRUPTED，不自动请求模型。
@@ -801,7 +801,7 @@ git diff --check
 7. **原始 HTML SHA？** 作废。世代用 `normalizeChapterText`，不用字符串全等。
 8. **覆盖率必须为 1？** 过严。锁定 ≥ 12/15。
 9. **同章一个待处理修订？** 采用。
-10. **v20 外键？** 二期 v21、三期 v22；删除策略合理。
+10. **v20 外键？** 二期 v23、三期 v24；删除策略合理。
 11. **文件拆分？** 兼容；新 service 禁止从 renderer 倒进口。
 12. **五类最高风险测试？** 保留，并补施工卡、切项目、钩子提议、等价 HTML。
 
@@ -811,7 +811,7 @@ git diff --check
 2. 三态是 prompt/解析大改，列入二期必做。
 3. 旧 Token：渲染端 `streamId → projectId` 映射，切项目作废。
 4. 改标点导致重审：非技术说明与界面文案写明是有意取舍。
-5. 二期 v21、三期 v22。
+5. 二期 v23、三期 v24。
 
 ---
 
