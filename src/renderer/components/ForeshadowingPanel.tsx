@@ -300,7 +300,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                 <label className="text-[10px] text-gray-400 block mb-1">标题 *</label>
                 <input
                   type="text" value={editing.title}
-                  onChange={e => setEditing(p => ({ ...p, title: e.target.value }))}
+                  onChange={e => setEditing(p => (p ? { ...p, title: e.target.value } : p))}
                   placeholder="例如：主角师父的真实身份"
                   className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 focus:outline-none focus:border-accent placeholder-gray-600"
                 />
@@ -309,7 +309,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                 <label className="text-[10px] text-gray-400 block mb-1">描述</label>
                 <textarea
                   value={editing.description} rows={2}
-                  onChange={e => setEditing(p => ({ ...p, description: e.target.value }))}
+                  onChange={e => setEditing(p => (p ? { ...p, description: e.target.value } : p))}
                   placeholder="伏笔的详细内容..."
                   className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 resize-none focus:outline-none focus:border-accent placeholder-gray-600"
                 />
@@ -319,7 +319,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                   <label className="text-[10px] text-gray-400 block mb-1">状态</label>
                   <select
                     value={editing.status}
-                    onChange={e => setEditing(p => ({ ...p, status: e.target.value as any }))}
+                    onChange={e => setEditing(p => (p ? { ...p, status: e.target.value as EditingForeshadowing['status'] } : p))}
                     className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 focus:outline-none focus:border-accent"
                   >
                     <option value="planted">🟡 已埋</option>
@@ -331,7 +331,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                   <label className="text-[10px] text-gray-400 block mb-1">埋设章节</label>
                   <select
                     value={editing.plantedChapterId}
-                    onChange={e => setEditing(p => ({ ...p, plantedChapterId: e.target.value }))}
+                    onChange={e => setEditing(p => (p ? { ...p, plantedChapterId: e.target.value } : p))}
                     className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 focus:outline-none focus:border-accent"
                   >
                     <option value="">(不关联)</option>
@@ -346,7 +346,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                   <label className="text-[10px] text-gray-400 block mb-1">回收章节</label>
                   <select
                     value={editing.resolvedChapterId}
-                    onChange={e => setEditing(p => ({ ...p, resolvedChapterId: e.target.value }))}
+                    onChange={e => setEditing(p => (p ? { ...p, resolvedChapterId: e.target.value } : p))}
                     className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 focus:outline-none focus:border-accent"
                   >
                     <option value="">(不关联)</option>
@@ -365,12 +365,12 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                         type="checkbox"
                         checked={editing.relatedCharacters.includes(ch.id)}
                         onChange={e => {
-                          setEditing(p => ({
+                          setEditing(p => (p ? {
                             ...p,
                             relatedCharacters: e.target.checked
                               ? [...p.relatedCharacters, ch.id]
                               : p.relatedCharacters.filter(id => id !== ch.id),
-                          }));
+                          } : p));
                         }}
                         className="accent-accent"
                       />
@@ -384,7 +384,7 @@ const ForeshadowingPanel: React.FC<ForeshadowingPanelProps> = ({
                 <label className="text-[10px] text-gray-400 block mb-1">笔记</label>
                 <textarea
                   value={editing.note} rows={2}
-                  onChange={e => setEditing(p => ({ ...p, note: e.target.value }))}
+                  onChange={e => setEditing(p => (p ? { ...p, note: e.target.value } : p))}
                   placeholder="补充说明..."
                   className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-gray-200 resize-none focus:outline-none focus:border-accent placeholder-gray-600"
                 />

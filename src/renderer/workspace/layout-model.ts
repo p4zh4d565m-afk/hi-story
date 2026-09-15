@@ -87,7 +87,7 @@ function removePanel(l: WorkspaceLayoutV1, panelId: PanelId): void {
 }
 
 /** 目标为 center 时落到 bottom（写作区/策划页不可被占）。 */
-function resolveTarget(target: Target): Target {
+function resolveTarget(target: Target): SlotId | 'floating' {
   return target === 'center' ? 'bottom' : target;
 }
 

@@ -332,9 +332,9 @@ export function generateItemNames(opts: {
   const { type, count } = opts;
   return collectUnique(count, () => {
     const ri = rarityIndex();
-    const data = ITEM[type];
 
     if (type === '法宝') {
+      const data = ITEM['法宝'];
       const words = [...data.weapons, ...data.accessories, ...data.defensive, ...data.tools];
       if (ri <= 1) return pickOne(words);
       if (ri <= 2) return pickOne(data.prefixes_rare) + pickOne(words);
@@ -342,25 +342,29 @@ export function generateItemNames(opts: {
       return pickOne(data.prefixes_legendary) + pickOne(words);
     }
     if (type === '丹药') {
+      const data = ITEM['丹药'];
       if (ri <= 1) return pickOne(data.effects) + pickOne(data.forms);
       if (ri <= 3) return pickOne(SHARED.colors) + pickOne(data.effects) + pickOne(data.forms);
       return pickOne(['千年', '万年', '太古', '上古', '洪荒', '混沌']) + pickOne(data.effects) + pickOne(data.forms);
     }
     if (type === '符箓') {
+      const data = ITEM['符箓'];
       if (ri <= 1) return pickOne(data.effects) + pickOne(data.forms.slice(0, 7));
       if (ri <= 3) return pickOne(SHARED.colors) + pickOne(data.effects) + pickOne(data.forms.slice(0, 7));
-      return pickOne(data.materials) + pickOne(data.effects) + pickOne(data.forms[0]);
+      return pickOne(data.materials) + pickOne(data.effects) + data.forms[0];
     }
     if (type === '材料') {
+      const data = ITEM['材料'];
       const mats = [...data.minerals, ...data.organic, ...data.botanical];
       if (ri <= 1) return pickOne(mats);
       if (ri <= 3) return pickOne(data.quality_prefixes) + pickOne(mats);
       return pickOne(SHARED.colors) + pickOne(data.quality_prefixes) + pickOne(mats);
     }
     // 典籍
+    const data = ITEM['典籍'];
     if (ri <= 1) return pickOne(data.subjects) + pickOne(data.forms.slice(0, 10));
     if (ri <= 3) return pickOne(data.quality_prefixes) + pickOne(data.subjects) + pickOne(data.forms.slice(0, 10));
-    return pickOne(data.quality_prefixes) + pickOne(data.subjects) + pickOne(data.forms[0]);
+    return pickOne(data.quality_prefixes) + pickOne(data.subjects) + data.forms[0];
   });
 }
 

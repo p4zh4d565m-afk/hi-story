@@ -93,8 +93,10 @@ const MainArea: React.FC<MainAreaProps> = ({
               onSelectChapter={onSelectChapter}
               onCreateChapter={onCreateChapter}
               onDeleteChapter={onDeleteChapter}
-              onRenameChapter={onRenameChapter}
+              onRenameChapter={onRenameChapter ?? (() => {})}
               onSaveChapter={onSaveChapter}
+              onCreateProject={() => {}}
+              onImportNovel={() => {}}
               saving={saving}
             />
           )}

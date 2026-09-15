@@ -1183,7 +1183,6 @@ const App: React.FC = () => {
         onToggleSidebar={() => setPanelState(p => ({ ...p, sidebarOpen: !p.sidebarOpen }))}
         onToggleAiChat={() => setPanelState(p => ({ ...p, aiChatOpen: !p.aiChatOpen, aiChatMinimized: false }))}
         onMinimizeAiChat={() => setPanelState(p => ({ ...p, aiChatMinimized: !p.aiChatMinimized }))}
-        onToggleContext={() => { /* deprecated — no longer used */ }}
         onToggleInspiration={() => workspaceLayout.openOrFocus('inspiration', 'right')}
         onToggleMindmap={() => setPanelState(p => ({ ...p, mindmapOpen: !p.mindmapOpen }))}
         onToggleMaterial={() => workspaceLayout.openOrFocus('material', DEFAULT_SLOT.material!)}

@@ -31,8 +31,9 @@
 ## 下一步建议
 
 - 任务 #144 已收口。继续按既定顺序推进：
-  - #145 renderer 全量类型检查门槛（根 tsconfig 缺 jsx；清理 `App.tsx:1186` 残留 `onToggleContext`）。
+  - #145 renderer 全量类型检查门槛 — **已完成**（`tsconfig.renderer.json` + `typecheck:renderer`，合入前见分支 `codex/renderer-typecheck`）。
+  - 下一步：AI 对话隔离与清理（新建/切换/删除会话；是否按章隔离需设计拍板）。
   - #146 新章无 ID 的 before_target 正式语义（替换 `AIWritePanel.loadNarrativeAsOfForWrite` 的临时 chat 等价）。
-  - #147 其余 P2 技术债。
+  - #147 其余 P2 技术债（先拆清单，只处理数据安全/上下文正确性/后续开发阻断项）。
 - 顺带发现的产品体验问题（非本轮范围，建议另立项）：AI 对话历史跨章节共享且当前**不可删除**，用户换章节后旧对话仍堆积、无法清空。这对「对话按章隔离」或「误答纠正」都构成困扰。
 - 长期：清理 D 盘根目录混入的 Node 安装，或把正确的 Node 目录排到 PATH 前面。

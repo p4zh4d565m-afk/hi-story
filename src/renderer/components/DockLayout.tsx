@@ -28,6 +28,9 @@ interface PanelState {
   aiChatOpen: boolean;
   aiChatMinimized: boolean;
   mindmapOpen: boolean;
+  aiWriteOpen: boolean;
+  aiReviewOpen: boolean;
+  aiPolishOpen: boolean;
   aiLevel: 'off' | 'assist';  // AI participation level
 }
 
@@ -95,7 +98,7 @@ const FontSizeSelect: React.FC<{
 const SlotView: React.FC<{
   slotId: SlotId;
   slot: WorkspaceLayoutV1['slots'][SlotId];
-  panelContent: Record<PanelId, React.ReactNode>;
+  panelContent: Partial<Record<PanelId, React.ReactNode>>;
   onClosePanel: (panelId: PanelId) => void;
   onSetActive: (slotId: SlotId, panelId: PanelId) => void;
   onDragStart: (panelId: PanelId) => void;
@@ -136,7 +139,7 @@ const SlotView: React.FC<{
 };
 
 const DockLayout: React.FC<DockLayoutProps> = ({
-  sidebar, writingArea, planningArea, aiChat, contextPanel, inspirationPanel, mindmapPanel,
+  sidebar, writingArea, planningArea, aiChat, inspirationPanel, mindmapPanel,
   materialPanel, outlinePanel, referencePanel, namegenPanel,
   aiWritePanel, aiReviewPanel, aiPolishPanel, foreshadowingPanel,
   panelState, onToggleSidebar, onToggleAiChat, onMinimizeAiChat, onToggleInspiration, onToggleMindmap,
@@ -155,8 +158,8 @@ const DockLayout: React.FC<DockLayoutProps> = ({
   // 拖拽中的面板（HTML5 drag；靠 onDragEnd 清空，用于拆空槽热区）
   const [draggingPanel, setDraggingPanel] = useState<PanelId | null>(null);
 
-  // panelId → 实际 ReactNode（只含「进槽」的查阅类面板）
-  const panelContent = useMemo<Record<PanelId, React.ReactNode>>(() => ({
+  // panelId → 实际 ReactNode（只含「进槽」的查阅类面板；写章/审稿/润色走浮动窗，不进表）
+  const panelContent = useMemo<Partial<Record<PanelId, React.ReactNode>>>(() => ({
     sidebar,
     aiChat,
     inspiration: inspirationPanel,
