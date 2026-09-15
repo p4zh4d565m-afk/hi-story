@@ -163,18 +163,14 @@ export function registerChapterReviewIpc(): void {
     const res = repo.findByChapter(chapterId);
     if (!res.success) return res;
     const records = res.data!;
-    // 待复评：存在 applied 修订，且当前世代尚无 fresh + pass + completed 的审稿
     const currentGen = repo.getContentGeneration(chapterId);
+    // 待复评：存在「应用到当前世代」的修订，且当前世代尚无 fresh + pass + completed 的审稿
     const hasFreshPassing = records.some(
       (r) => r.freshnessStatus === 'fresh' && r.executionStatus === 'completed' && r.deliveryStatus === 'pass',
     );
-    const hasAppliedRevision = ((): boolean => {
-      const row = getDb().prepare(
-        `SELECT 1 FROM chapter_revision_proposals WHERE chapter_id = ? AND status = 'applied' LIMIT 1`,
-      ).get(chapterId);
-      return Boolean(row);
-    })();
-    const pendingReReview = currentGen !== null && hasAppliedRevision && !hasFreshPassing;
+    const hasAppliedAtCurrent = currentGen !== null
+      && repo.hasAppliedRevisionAtGeneration(chapterId, currentGen);
+    const pendingReReview = hasAppliedAtCurrent && !hasFreshPassing;
     return { success: true, data: { records, pendingReReview, currentGeneration: currentGen } };
   });
 

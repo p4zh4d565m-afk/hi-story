@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
-import { aiService, streamEndDisplay } from '../services/ai.service';
+import { streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import {
   REVIEW_SYSTEM_PROMPT,
@@ -67,8 +67,8 @@ interface AIReviewPanelProps {
   obsidianContext?: string;
   /** 跳转到编辑器段落 */
   onNavigateToParagraph?: (searchText: string) => void;
-  /** 接受修订后回写章节内容到 App（让编辑器显示新正文） */
-  onChapterAccepted?: (chapterId: string, content: string) => void;
+  /** 接受修订后回写章节内容到 App（让编辑器显示新正文 + 世代/字数） */
+  onChapterAccepted?: (chapterId: string, content: string, contentGeneration: number, wordCount: number) => void;
 }
 
 interface SavedConfig {
@@ -150,10 +150,10 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   const [revisedContent, setRevisedContent] = useState('');
   const [revisionAccepted, setRevisionAccepted] = useState(false);
   const [pendingProposalId, setPendingProposalId] = useState<string | null>(null);
-  const reviewingRef = useRef(false);
-  reviewingRef.current = reviewing;
-  const revisingRef = useRef(false);
-  revisingRef.current = revising;
+  // 当前审稿/修订流的 streamId（来自 started 事件），关面板时用它精确 cancel
+  const activeStreamIdRef = useRef<string | null>(null);
+  // 审稿历史加载守卫：记录「当前应加载的 projectId+chapterId」，迟到回执不落地
+  const reviewLoadGuardRef = useRef<string | null>(null);
 
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 760, height: 520 });
@@ -276,9 +276,23 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
     init();
   }, [open]);
 
+  // ===== 订阅 started 事件：拿到 streamId 供精确取消 =====
+  useEffect(() => {
+    const unsubscribe = (window as any).electronAPI.on('workflow:chapterReview:started',
+      (payload: { streamId: string; projectId: string; chapterId: string }) => {
+        activeStreamIdRef.current = payload.streamId;
+      },
+    );
+    return () => { unsubscribe?.(); activeStreamIdRef.current = null; };
+  }, []);
+
   // ===== 加载审稿历史 =====
   const loadReviews = useCallback(async (chapterId: string) => {
+    const guardKey = `${projectId}:${chapterId}`;
+    reviewLoadGuardRef.current = guardKey;
     const res = await (window as any).electronAPI.invoke('workflow:chapterReview:list', chapterId);
+    // 项目 + 章节守卫：迟到回执不落地
+    if (reviewLoadGuardRef.current !== guardKey) return;
     if (res?.success) {
       setReviewRecords(res.data.records as ChapterReviewRecord[]);
       setPendingReReview(Boolean(res.data.pendingReReview));
@@ -293,7 +307,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
         setResult(null);
       }
     }
-  }, []);
+  }, [projectId]);
 
   // ===== 同步外部章节选择 =====
   useEffect(() => {
@@ -499,7 +513,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       }) as { success: boolean; data?: { proposalId: string | null; proposedContent: string | null; executionStatus: string }; error?: string };
 
       if (!res?.success) {
-        setError(res?.error === 'REVISION_SOURCE_STALE' ? '审稿已过期，请重新审稿' : (res?.error || '生成修订失败'));
+        setError(res?.error === 'REVIEW_SOURCE_STALE' ? '审稿已过期，请重新审稿' : (res?.error || '生成修订失败'));
         return;
       }
       if (res.data?.executionStatus === 'stale') {
@@ -535,7 +549,7 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
       if (res?.success && res.data) {
         setRevisionAccepted(true);
         // 回写 App：接受修订走账本 IPC 回写章节列表/字数/世代
-        onChapterAccepted?.(res.data.chapterId, res.data.content);
+        onChapterAccepted?.(res.data.chapterId, res.data.content, res.data.contentGeneration, res.data.wordCount);
         setPendingProposalId(null);
         setResult(null);
         setRevisedContent('');
@@ -564,9 +578,11 @@ const AIReviewPanel: React.FC<AIReviewPanelProps> = ({
   }, [pendingProposalId]);
 
   const handleClose = useCallback(() => {
-    if (projectId && (reviewingRef.current || revisingRef.current)) {
-      void aiService.cancelActiveStreams(projectId);
+    const streamId = activeStreamIdRef.current;
+    if (projectId && streamId) {
+      void (window as any).electronAPI.invoke('ai:cancelStream', streamId, projectId);
     }
+    activeStreamIdRef.current = null;
     onClose();
   }, [projectId, onClose]);
 

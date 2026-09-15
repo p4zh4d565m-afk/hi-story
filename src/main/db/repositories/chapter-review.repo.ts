@@ -221,6 +221,15 @@ export class ChapterReviewRepo {
     `).run(now, chapterId);
   }
 
+  /** 是否存在「应用到当前世代的修订」（applied 且 applied_generation === 当前世代） */
+  hasAppliedRevisionAtGeneration(chapterId: string, generation: number): boolean {
+    const row = this.db.prepare(
+      `SELECT 1 FROM chapter_revision_proposals
+       WHERE chapter_id = ? AND status = 'applied' AND applied_generation = ? LIMIT 1`,
+    ).get(chapterId, generation);
+    return Boolean(row);
+  }
+
   private rowToProposal(row: RawRow): ChapterRevisionProposal {
     return {
       id: row.id as string,

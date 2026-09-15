@@ -187,4 +187,17 @@ describe('applyRevision — 修订应用事务', () => {
     const pr = db.prepare(`SELECT status FROM chapter_revision_proposals WHERE id = 'pr1'`).get() as { status: string };
     expect(pr.status).toBe('applied');
   });
+
+  it('hasAppliedRevisionAtGeneration 只匹配应用到指定世代的修订', () => {
+    seedChapter('<p>甲</p>');
+    seedProposal(1, '<p>乙</p>');
+    // 应用到世代 2
+    const res = applyRevision(db, repo, 'pr1', 'p1');
+    expect(res.success).toBe(true);
+    expect(res.data?.contentGeneration).toBe(2);
+    // 应用到世代 2 → 匹配
+    expect(repo.hasAppliedRevisionAtGeneration('c1', 2)).toBe(true);
+    // 世代 1 不再匹配（应用后世代已 +1）
+    expect(repo.hasAppliedRevisionAtGeneration('c1', 1)).toBe(false);
+  });
 });

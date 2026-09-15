@@ -172,6 +172,7 @@ resources/
 - **AI 对话清理** — 迁移 v22 消息软删 + batch 撤销；聊天面板按轮删/清空当前会话，约 10 秒内可恢复；清理粒度为项目内 thread，不绑定章节。
 - **第一版稳定写作基线（2026-09-15）** — 标签 `writing-baseline-v1`，对应 `08c6765` 起的准入收口（含启动 bat、可见 UI 验收脚本与两份验收报告）。IPC 成功链路见 `docs/reports/2026-09-15-writing-admission-joint-report.md`；可见窗口点击验收见 `docs/reports/2026-09-15-visible-ui-admission-report.md`（有条件通过，Critical 0）。日常启动用 `Launch hi story.bat`（直启 Electron，避开 D 盘 Node 24）；可见 UI 回归：`node tests/ui/run-visible-ui-admission.cjs`（隔离 userData，禁止 `invoke` 代点）。
 - **边写边维护（#147 / 其余 P2）** — 基线已立，不再阻塞写作。#147 与其余 P2 转入边写边维护：先拆清单，优先数据安全、上下文正确性、后续开发阻断项；不单开准入门槛。已知不挡写作的限制含：面板归属不持久化、对话删/清约 10 秒可撤销、写章/审稿/润色部分旧灰底白字、材料库少量旧 SQL 在 IPC、可见 UI 续跑截图偶发空文件。
+- **审稿版本账本（chapter-run 二期，2026-09-15）** — 迁移 v23：`chapters.content_generation` + `chapter_reviews` + `chapter_revision_proposals`（同章一个 proposed）。核心：`content-revision.ts` 的 normalize/世代判据（等价 HTML 不递增）；`chapter.repo.ts` 世代递增与打快照判据分开；审稿 prompt 三态 `pass/issue/inconclusive` + evidence；主进程 `chapter-review.service.ts` 解析（15 维度完整性）/聚合（≥12/15、critical、70 分）/`applyRevision`（世代冲突标 stale 在事务外）；workflow IPC run/list/createRevision/applyRevision/rejectRevision（可取消、双重世代校验、同章互斥、失败/取消落库）。渲染端 AIReviewPanel 走 workflow + 审稿历史列表 + 待复评；保存/接受修订回写 `contentGeneration`。三期（v24 写章运行记录）未开工。
 
 ## Git 远程仓库
 

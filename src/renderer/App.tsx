@@ -544,7 +544,11 @@ const App: React.FC = () => {
         console.error('Chapter save failed:', res?.error || 'unknown error');
         return false; // 保存失败时由编辑器保留待保存正文并提供重试
       }
-      setChapters(prev => prev.map(ch => ch.id === id ? { ...ch, content, wordCount } : ch));
+      // 二期：回写 contentGeneration（正文真变后世代已 +1），否则审稿/修订会立刻 stale
+      const contentGeneration = res.data?.contentGeneration ?? undefined;
+      setChapters(prev => prev.map(ch => ch.id === id
+        ? { ...ch, content, wordCount, ...(contentGeneration !== undefined ? { contentGeneration } : {}) }
+        : ch));
       return true;
     } catch (error) {
       console.error('Chapter save failed:', error);
@@ -1453,12 +1457,14 @@ const App: React.FC = () => {
               // 触发 WritingArea 响应
               window.dispatchEvent(new CustomEvent('hi-story:jump-paragraph', { detail: searchText }));
             }}
-            onChapterAccepted={(chapterId, content) => {
+            onChapterAccepted={(chapterId, content, contentGeneration, wordCount) => {
               // 接受修订后回写 App 的 chapters（与 handleSaveChapter 成功后的更新一致）。
               // 项目守卫：切走项目后的迟到修订不应改当前 chapters（与 setContent 的守卫一致）。
               const chapter = chapters.find(c => c.id === chapterId);
               if (chapter && isActiveProject(chapter.projectId)) {
-                setChapters(prev => prev.map(ch => ch.id === chapterId ? { ...ch, content } : ch));
+                setChapters(prev => prev.map(ch => ch.id === chapterId ? {
+                  ...ch, content, wordCount, contentGeneration,
+                } : ch));
                 // 同章节 key 不变，TipTap 不会自动同步；若修订的是当前打开章节，须主动刷新编辑器
                 if (activeChapter?.id === chapterId) {
                   editorRef.current?.setContent(content);
