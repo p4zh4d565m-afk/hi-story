@@ -187,6 +187,10 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const [batchPaused, setBatchPaused] = useState(false);
   // 批量是否正在连续生成中（区别于暂停/等待继续；用于显示停止入口）
   const [batchRunning, setBatchRunning] = useState(false);
+  // 同步防重入：state 更新是异步的，ref 才能在两次点击间可靠拦住
+  const batchRunningRef = useRef(false);
+  // 停止标志：批量循环每章间隙（无活跃流）也要能停下，靠它让循环 break
+  const stopRequestedRef = useRef(false);
 
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 680, height: 500 });
@@ -433,22 +437,32 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   // ===== 批量生成（P2 断点续写）=====
   const handleBatchGenerate = useCallback(async () => {
     if (selectedOutlineIds.size === 0) return;
+    if (batchRunningRef.current) return; // 防重复启动
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
     setBatchProgress({ total: ordered.length, completed: 0, current: ordered[0]?.title, results: [] });
     setBatchPaused(false);
+    stopRequestedRef.current = false;
+    batchRunningRef.current = true;
     setBatchRunning(true);
     try {
       await runBatchRef.current(ordered, 0);
     } finally {
+      batchRunningRef.current = false;
       setBatchRunning(false);
     }
   }, [selectedOutlineIds, outlineNodes]);
 
   const handleBatchResume = useCallback(() => {
-    setBatchPaused(false);
+    if (batchRunningRef.current) return; // 防重复启动
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
+    setBatchPaused(false);
+    stopRequestedRef.current = false;
+    batchRunningRef.current = true;
     setBatchRunning(true);
-    runBatchRef.current(ordered, batchProgress.completed).finally(() => setBatchRunning(false));
+    runBatchRef.current(ordered, batchProgress.completed).finally(() => {
+      batchRunningRef.current = false;
+      setBatchRunning(false);
+    });
   }, [selectedOutlineIds, outlineNodes, batchProgress.completed]);
 
   const handleBatchReset = useCallback(() => {
@@ -456,9 +470,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
   }, [projectId]);
 
-  // 停止批量：abort 该项目所有活跃流，对应 generator 抛「已停止」→ catch 提示后 break
+  // 停止批量：置停止标志让循环在下一章前 break，并 abort 当前活跃流立即打断正在生成的一章
   const handleBatchStop = useCallback(async () => {
+    stopRequestedRef.current = true;
     if (projectId) await aiService.cancelActiveStreams(projectId);
+    batchRunningRef.current = false;
     setBatchRunning(false);
   }, [projectId]);
 
@@ -482,6 +498,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     }
 
     for (let i = startIndex; i < nodes.length; i++) {
+      // 每章开头检查停止标志：覆盖「上一章结束到下一章开始之间」这段无活跃流的间隙
+      if (stopRequestedRef.current) break;
       setBatchProgress(p => ({ ...p, completed: i, current: nodes[i].title }));
 
       try {
@@ -959,7 +977,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                   {(batchProgress.completed === 0 || batchProgress.completed >= batchProgress.total) ? (
                     <button
                       onClick={handleBatchGenerate}
-                      disabled={!aiReady || selectedOutlineIds.size === 0}
+                      disabled={!aiReady || selectedOutlineIds.size === 0 || batchRunning}
                       className="px-4 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                     >
                       🖋 批量生成（{selectedOutlineIds.size} 章）
@@ -968,7 +986,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                     <>
                       <button
                         onClick={handleBatchResume}
-                        disabled={!aiReady}
+                        disabled={!aiReady || batchRunning}
                         className="px-4 py-1.5 bg-yellow-600 text-white text-xs rounded hover:bg-yellow-500 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                       >
                         ▶ 继续生成
