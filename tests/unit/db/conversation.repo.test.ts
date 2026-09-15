@@ -143,4 +143,97 @@ describe('ConversationRepo', () => {
     expect(repo.findByProject('project-a').data?.threads).toEqual([]);
     expect(db.prepare('SELECT COUNT(*) AS count FROM data_migration_state').get()).toEqual({ count: 0 });
   });
+
+  it('deleteTurn 软删 user 至下一 user 前的回复且可按 batch 恢复', () => {
+    const thread = repo.createThread({ projectId: 'project-a', title: 't', category: 'general' }).data!;
+    const u1 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'user', content: 'Q1', contextType: 'chat' }).data!;
+    const a1 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'assistant', content: 'A1', contextType: 'chat' }).data!;
+    const u2 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'user', content: 'Q2', contextType: 'chat' }).data!;
+    const a2 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'assistant', content: 'A2', contextType: 'chat' }).data!;
+
+    const del = repo.deleteTurn('project-a', thread.id, u1.id);
+    expect(del.success).toBe(true);
+    expect(del.data?.noop).toBe(false);
+    expect(del.data?.batchId).toBeTruthy();
+    expect(new Set(del.data!.deletedMessageIds)).toEqual(new Set([u1.id, a1.id]));
+
+    const visible = repo.findByProject('project-a').data!.messages[thread.id].map(m => m.id);
+    expect(visible).toEqual([u2.id, a2.id]);
+
+    const restored = repo.restoreBatch('project-a', thread.id, del.data!.batchId!);
+    expect(restored.success).toBe(true);
+    expect(repo.findByProject('project-a').data!.messages[thread.id].map(m => m.id))
+      .toEqual([u1.id, a1.id, u2.id, a2.id]);
+  });
+
+  it('clearThread 无活跃消息时 noop 且不改库', () => {
+    const thread = repo.createThread({ projectId: 'project-a', title: 'empty', category: 'general' }).data!;
+    const before = db.prepare('SELECT updated_at FROM conversation_threads WHERE id = ?').get(thread.id);
+    const res = repo.clearThread('project-a', thread.id);
+    expect(res).toMatchObject({
+      success: true,
+      data: { noop: true, batchId: null, deletedMessageIds: [], deletedAt: null },
+    });
+    const after = db.prepare('SELECT updated_at FROM conversation_threads WHERE id = ?').get(thread.id);
+    expect(after).toEqual(before);
+  });
+
+  it('restoreBatch 拒绝跨项目或空 batchId', () => {
+    expect(repo.restoreBatch('project-a', 'nope', '').success).toBe(false);
+    expect(repo.restoreBatch('project-a', 'nope', 'batch-missing').success).toBe(false);
+  });
+
+  it('clearThread 有活跃消息时整批软删', () => {
+    const thread = repo.createThread({ projectId: 'project-a', title: 'full', category: 'general' }).data!;
+    const u1 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'user', content: 'Q1', contextType: 'chat' }).data!;
+    const a1 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'assistant', content: 'A1', contextType: 'chat' }).data!;
+
+    const res = repo.clearThread('project-a', thread.id);
+    expect(res.success).toBe(true);
+    expect(res.data?.noop).toBe(false);
+    expect(res.data?.batchId).toBeTruthy();
+    expect(new Set(res.data!.deletedMessageIds)).toEqual(new Set([u1.id, a1.id]));
+    expect(repo.findByProject('project-a').data!.messages[thread.id] ?? []).toEqual([]);
+
+    const softDeleted = db.prepare(`
+      SELECT COUNT(*) AS c FROM conversation_messages
+      WHERE thread_id = ? AND deleted_at IS NOT NULL AND deletion_batch_id = ?
+    `).get(thread.id, res.data!.batchId) as { c: number };
+    expect(softDeleted.c).toBe(2);
+  });
+
+  it('deleteTurn 锚点非活跃 user 时失败', () => {
+    const thread = repo.createThread({ projectId: 'project-a', title: 't', category: 'general' }).data!;
+    const user = repo.appendMessage({
+      projectId: 'project-a', threadId: thread.id, role: 'user', content: 'Q', contextType: 'chat',
+    }).data!;
+    const assistant = repo.appendMessage({
+      projectId: 'project-a', threadId: thread.id, role: 'assistant', content: 'A', contextType: 'chat',
+    }).data!;
+
+    expect(repo.deleteTurn('project-a', thread.id, assistant.id).success).toBe(false);
+
+    db.prepare(`
+      UPDATE conversation_messages SET deleted_at = ?, deletion_batch_id = ? WHERE id = ?
+    `).run('2026-09-15T00:00:00.000Z', 'batch-x', user.id);
+    expect(repo.deleteTurn('project-a', thread.id, user.id).success).toBe(false);
+  });
+
+  it('软删后 appendMessage 的 sort_order 仍按全表 MAX+1 单调', () => {
+    const thread = repo.createThread({ projectId: 'project-a', title: 't', category: 'general' }).data!;
+    const u1 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'user', content: 'Q1', contextType: 'chat' }).data!;
+    const a1 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'assistant', content: 'A1', contextType: 'chat' }).data!;
+    expect(a1.sortOrder).toBe(1);
+
+    const del = repo.deleteTurn('project-a', thread.id, u1.id);
+    expect(del.success).toBe(true);
+
+    const u2 = repo.appendMessage({ projectId: 'project-a', threadId: thread.id, role: 'user', content: 'Q2', contextType: 'chat' }).data!;
+    expect(u2.sortOrder).toBe(2);
+
+    const maxIncludingDeleted = db.prepare(`
+      SELECT MAX(sort_order) AS m FROM conversation_messages WHERE thread_id = ?
+    `).get(thread.id) as { m: number };
+    expect(maxIncludingDeleted.m).toBe(2);
+  });
 });
