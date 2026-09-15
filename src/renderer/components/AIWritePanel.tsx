@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import type { ChatMessage, ProviderConfig } from '../../main/ai/provider';
-import { aiService, AI_IGNORED_MESSAGE, isSilentAiStreamEnd, streamEndDisplay } from '../services/ai.service';
+import { aiService, AI_IGNORED_MESSAGE, AI_STOPPED_MESSAGE, streamEndDisplay } from '../services/ai.service';
 import { snapshotAIRequestConfig } from '../services/ai/request-config';
 import { splitGeneratedPreviewBlocks } from '../services/ai/generated-preview';
 import { WRITE_SYSTEM_PROMPT, buildWriteUserPrompt, FACT_EXTRACTION_SYSTEM_PROMPT, buildSummaryUserPrompt, htmlToPlainText } from '../services/ai-prompts';
@@ -544,7 +544,13 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         await new Promise(r => setTimeout(r, 500));
       } catch (e) {
         const msg = (e as Error).message;
-        if (isSilentAiStreamEnd(msg)) break;
+        // 切项目静默 break；主动停止给明确提示后 break；真实失败记录并继续
+        if (msg === AI_IGNORED_MESSAGE) break;
+        const display = streamEndDisplay(msg, '批量生成：');
+        if (msg === AI_STOPPED_MESSAGE) {
+          if (display) setError(display);
+          break;
+        }
         console.error(`批量生成失败 [${nodes[i].title}]:`, e);
         setBatchProgress(p => ({
           ...p,

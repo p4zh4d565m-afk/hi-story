@@ -1,11 +1,15 @@
 /**
  * 启动自动备份
- * 每次启动在迁移完成后，用 better-sqlite3 的在线备份 API 把真实小说库复制一份到
+ * 每次启动在迁移前，用 better-sqlite3 的在线备份 API 把真实小说库复制一份到
  * userData/backups/，只保留最近 MAX_BACKUPS 份，旧的自动删除。
  * 备份失败不阻断启动（只记录日志），避免因磁盘满/权限问题导致应用打不开。
  *
- * 注意：本函数在 getDb() 之后调用（迁移后的完整库）。「首次启动无库跳过」由调用方
- * index.ts 在 getDb() 之前判断，这里不再判断 existsSync——等跑到这里时 getDb() 已建库。
+ * 迁移前备份的意义：迁移是唯一的自动结构变更，是最大的数据丢失风险点——若迁移中途
+ * 失败，迁移前的这份备份是唯一能完整恢复的原始数据。故 index.ts 在 runMigrations 之前
+ * 同步 await 本函数。
+ *
+ * 注意：「首次启动无库跳过」由调用方 index.ts 在 getDb() 之前用 isFirstRun 判断，
+ * 本函数不再判断 existsSync——等跑到这里时 getDb() 已建库。
  */
 
 import path from 'path';

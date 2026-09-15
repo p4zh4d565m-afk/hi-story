@@ -63,13 +63,22 @@ process.on('unhandledRejection', (reason) => {
   }
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   try {
     // 首次启动：库文件尚不存在（getDb() 会当场建库），跳过备份避免留一份空库。
     // 注意必须先于 getDb() 判断，否则到备份时库已被建出、existsSync 永远为真。
     const isFirst = isFirstRun(getDbPath());
 
     const db = getDb();
+
+    // 迁移前备份原始库：迁移是唯一的自动结构变更，是最大的数据丢失风险点。
+    // 若迁移中途失败，此备份是唯一可完整恢复的原始数据，故必须先同步备份完再迁移。
+    if (!isFirst) {
+      await backupOnStartup().catch((err) => {
+        console.error('[Backup] 自动备份异常（不阻断启动）:', err);
+      });
+    }
+
     runMigrations(db);
     attachLiteraryDb();
 
@@ -82,13 +91,6 @@ app.whenReady().then(() => {
     } catch {}
     if (clearedUser > 0 || clearedLit > 0) {
       console.log(`[Init] 清空旧向量: user=${clearedUser}, lit=${clearedLit}（请用 build_embeddings.py 重建）`);
-    }
-
-    // 启动自动备份（迁移后备份完整可用库；异步执行，不阻塞启动，失败只记日志）
-    if (!isFirst) {
-      backupOnStartup().catch((err) => {
-        console.error('[Backup] 自动备份异常（不阻断启动）:', err);
-      });
     }
   } catch (err: any) {
     console.error('Failed to initialize database:', err);

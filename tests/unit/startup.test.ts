@@ -47,8 +47,9 @@ it('启动仅清理旧的 768 维向量，重复启动保留 1024 维索引和�
   const oldRejection = process.listeners('unhandledRejection');
   try {
     await import('../../src/main/index');
-    state.ready();
-    state.ready();
+    // whenReady().then(async ...) 把 async 回调存进 state.ready；await 其返回值等迁移前备份跑完
+    await state.ready();
+    await state.ready();
     expect(db.prepare('SELECT content, length(embedding) AS size FROM reference_chunks ORDER BY id').all())
       .toEqual([{ content: '旧素材', size: null }, { content: '新素材', size: 4096 }]);
     expect(db.prepare('SELECT lit_rowid, length(embedding) AS size FROM lit_embeddings').all())
