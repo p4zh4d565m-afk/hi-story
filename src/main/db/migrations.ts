@@ -679,6 +679,67 @@ const MIGRATIONS: Migration[] = [
         ON conversation_messages(deletion_batch_id);
     `,
   },
+  // 023: 审稿版本账本（chapter-run 二期）—— 正文世代 + 审稿账本 + 修订提案
+  {
+    version: 23,
+    sql: `
+      ALTER TABLE chapters ADD COLUMN content_generation INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE IF NOT EXISTS chapter_reviews (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        run_id TEXT,
+        source_generation INTEGER NOT NULL,
+        prompt_version TEXT NOT NULL,
+        provider_name TEXT NOT NULL DEFAULT '',
+        model_name TEXT NOT NULL DEFAULT '',
+        execution_status TEXT NOT NULL CHECK(execution_status IN (
+          'completed','failed','cancelled'
+        )),
+        quality_score REAL,
+        coverage REAL NOT NULL DEFAULT 0 CHECK(coverage >= 0 AND coverage <= 1),
+        gate_status TEXT NOT NULL CHECK(gate_status IN (
+          'pass','blocked','inconclusive'
+        )),
+        delivery_status TEXT NOT NULL CHECK(delivery_status IN (
+          'pass','revise','blocked','inconclusive'
+        )),
+        summary TEXT NOT NULL DEFAULT '',
+        dimensions_json TEXT NOT NULL DEFAULT '[]',
+        issues_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_chapter_reviews_chapter_created
+        ON chapter_reviews(chapter_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS chapter_revision_proposals (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        chapter_id TEXT NOT NULL,
+        review_id TEXT NOT NULL,
+        source_generation INTEGER NOT NULL,
+        proposed_content TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+          'proposed','applied','rejected','stale'
+        )),
+        applied_generation INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        applied_at TEXT,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (chapter_id) REFERENCES chapters(id) ON DELETE CASCADE,
+        FOREIGN KEY (review_id) REFERENCES chapter_reviews(id) ON DELETE CASCADE
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_chapter_revision_one_pending
+        ON chapter_revision_proposals(chapter_id)
+        WHERE status = 'proposed';
+    `,
+  },
 ];
 
 /** 为 planning_ideas.chapter_outlines JSON 中缺 id 的项补 UUID（同事务调用） */

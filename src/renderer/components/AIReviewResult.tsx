@@ -112,18 +112,18 @@ const AIReviewResultComponent: React.FC<AIReviewResultProps> = ({ result, onJump
               key={d.id}
               className={`
                 px-2 py-1.5 rounded text-[10px] flex items-center gap-1.5 border
-                ${d.passed
+                ${d.status === 'pass'
                   ? 'bg-green-900/20 border-green-800/30 text-green-300'
-                  : d.score >= 60
-                    ? 'bg-yellow-900/20 border-yellow-800/30 text-yellow-300'
-                    : 'bg-red-900/20 border-red-800/30 text-red-300'
+                  : d.status === 'inconclusive'
+                    ? 'bg-gray-900/20 border-gray-800/30 text-gray-400'
+                    : 'bg-yellow-900/20 border-yellow-800/30 text-yellow-300'
                 }
               `}
             >
-              <span>{d.passed ? '✅' : d.score >= 60 ? '⚠️' : '❌'}</span>
-              <span className="truncate" title={`${d.name}：${d.score}分`}>
+              <span>{d.status === 'pass' ? '✅' : d.status === 'inconclusive' ? '❓' : '⚠️'}</span>
+              <span className="truncate" title={`${d.name}：${d.score ?? '—'}分`}>
                 {d.name}
-                <span className="text-gray-500 ml-1">{d.score}</span>
+                <span className="text-gray-500 ml-1">{d.score ?? '—'}</span>
               </span>
             </div>
           ))}

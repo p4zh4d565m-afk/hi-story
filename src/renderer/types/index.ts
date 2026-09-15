@@ -136,6 +136,8 @@ export interface Chapter {
   planningOutline: ChapterOutline | null; // 创建正文时冻结的章纲快照
   /** 正文绑定的规划章纲稳定 id（v21）；未绑定时为 null */
   planningOutlineId?: string | null;
+  /** 正文世代（v23）：规范化纯文本变化才 +1，用于审稿新鲜度 */
+  contentGeneration?: number;
   createdAt: string;
   updatedAt: string;
 }
@@ -285,21 +287,17 @@ export interface WriteChapterConfig {
 }
 
 // ===== AI 审稿 =====
-export interface AIReviewResult {
-  totalScore: number;      // 0-100
-  summary: string;
-  criticalCount: number;
-  warningCount: number;
-  passedCount: number;
-  dimensions: ReviewDimension[];
-  issues: ReviewIssue[];
-}
+// 二期三态契约：维度 status 三态 + evidence；主进程解析聚合为真相源，渲染端不再自算总分。
+
+export type ReviewDimensionStatus = 'pass' | 'issue' | 'inconclusive';
 
 export interface ReviewDimension {
   id: number;
   name: string;
-  score: number;          // 0-100
-  passed: boolean;        // 60 分以上通过
+  status: ReviewDimensionStatus;
+  score: number | null;    // inconclusive 时必为 null
+  comment: string;
+  evidence: string[];      // issue 时必非空
 }
 
 export interface ReviewIssue {
@@ -308,6 +306,69 @@ export interface ReviewIssue {
   location: string;       // 问题位置（段落文本片段）
   description: string;
   suggestion: string;
+}
+
+// 渲染端仅用「展示态」AIReviewResult（兼容旧 UI 的 totalScore 等派生字段）
+export interface AIReviewResult {
+  totalScore: number;      // 0-100，主进程聚合
+  summary: string;
+  criticalCount: number;
+  warningCount: number;
+  passedCount: number;
+  dimensions: ReviewDimension[];
+  issues: ReviewIssue[];
+}
+
+// ===== 审稿账本（二期 / v23，主进程 list 返回）=====
+export type ReviewExecutionStatus = 'completed' | 'failed' | 'cancelled';
+export type ReviewGateStatus = 'pass' | 'blocked' | 'inconclusive';
+export type ReviewDeliveryStatus = 'pass' | 'revise' | 'blocked' | 'inconclusive';
+export type ReviewFreshnessStatus = 'fresh' | 'stale';
+
+export interface ChapterReviewRecord {
+  id: string;
+  projectId: string;
+  chapterId: string;
+  runId: string | null;
+  sourceGeneration: number;
+  promptVersion: string;
+  providerName: string;
+  modelName: string;
+  executionStatus: ReviewExecutionStatus;
+  qualityScore: number | null;
+  coverage: number;
+  gateStatus: ReviewGateStatus;
+  deliveryStatus: ReviewDeliveryStatus;
+  summary: string;
+  dimensions: ReviewDimension[];
+  issues: ReviewIssue[];
+  createdAt: string;
+  /** 动态计算，不持久化 */
+  freshnessStatus: ReviewFreshnessStatus;
+  /** 动态计算：stale 时为 'stale'，否则用库内 deliveryStatus */
+  effectiveDeliveryStatus: ReviewDeliveryStatus | 'stale';
+}
+
+export type RevisionProposalStatus = 'proposed' | 'applied' | 'rejected' | 'stale';
+
+export interface ChapterRevisionProposal {
+  id: string;
+  projectId: string;
+  chapterId: string;
+  reviewId: string;
+  sourceGeneration: number;
+  proposedContent: string;
+  status: RevisionProposalStatus;
+  appliedGeneration: number | null;
+  createdAt: string;
+  updatedAt: string;
+  appliedAt: string | null;
+}
+
+/** 审稿 run 返回契约 */
+export interface ChapterReviewRunResult {
+  reviewId: string | null;
+  executionStatus: 'completed' | 'cancelled' | 'failed' | 'stale';
 }
 
 // ===== 反 AI 痕迹检测 =====
