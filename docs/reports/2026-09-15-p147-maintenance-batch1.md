@@ -16,11 +16,11 @@
 - 新增 `src/main/db/repositories/material.repo.ts`
 - 新增 `tests/unit/backup.test.ts`（真备份 / 保留 5 份 / 失败不阻断 / isFirstRun 首启门禁）
 - 新增 `tests/unit/humanize-ai-error.test.ts`
-- `src/main/index.ts` — 迁移后挂 backupOnStartup；getDb() 前判首启跳过
-- `src/main/ipc/entities.ipc.ts` — material 六段 SQL → 转调 MaterialRepo，删无用 uuidv4 import
+- `src/main/index.ts` — 迁移前同步 await backupOnStartup；getDb() 前用 isFirstRun 判首启跳过
+- `src/main/ipc/entities.ipc.ts` — material 五个 handler（8 次 SQL）→ 转调 MaterialRepo，删无用 uuidv4 import
 - `src/renderer/services/ai.service.ts` — 新增 humanizeAiError / streamEndDisplay，补 Failed to fetch 匹配
 - `src/renderer/components/AIChatPanel.tsx` — 对话两处 catch 走 streamEndDisplay（对话主路径不再透英文）
-- `src/renderer/components/AIWritePanel.tsx` — catch 走 streamEndDisplay；hover:text-white → gray-100
+- `src/renderer/components/AIWritePanel.tsx` — 单章 catch 走 streamEndDisplay；批量 catch 接入停止提示 + 新增「停止批量生成」按钮；hover:text-white → gray-100
 - `src/renderer/components/AIReviewPanel.tsx` — 同上
 - `src/renderer/components/AIPolishPanel.tsx` — 同上
 - `vitest.config.ts` — exclude 掉 `**/.worktrees/**`
@@ -33,6 +33,7 @@
 - **审查指出的问题已闭环**：backup 注释「迁移前」已改「迁移后」；「首启无库跳过」改为 getDb() 前判断（原实现因 getDb 已建库而失效）；文件名加毫秒防同秒撞车；`Failed to fetch` 已补匹配；对话 AIChatPanel 主路径 catch 已接 streamEndDisplay。
 - **第二轮审查（边角）已闭环**：报告「六段 SQL」改为「五个 handler / 8 次 prepare」；首启判断抽成 `backup.ts` 的 `isFirstRun` 纯函数并补独立单测；startup.test.ts 的 `getDbPath` 从 `':memory:'` 改为真实存在的临时文件，锁住「非首启会调 backup」。
 - **第三轮审查（PR 评审，P1+P2）已闭环**：P1 备份从迁移后改到**迁移前并同步 await**（迁移是最大数据丢失风险点，迁移前备份才能完整恢复）；P2 批量写章 catch 接入停止提示（切项目静默、停止提示后 break）。startup.test.ts 因 whenReady 回调改 async 相应改为 await。
+- **第四轮审查（功能缺口 + 文档）已闭环**：P2 上轮只加了 catch 提示、缺「停止批量生成」入口——本轮补 `batchRunning` 状态 + 批量进度区「⏹ 停止批量生成」按钮（`handleBatchStop` 调 `cancelActiveStreams`，generator 抛「已停止」后 catch 提示 break）；P3 报告「修改文件」里「迁移后挂」「六段 SQL」等旧描述已更正为「迁移前同步 await」「五个 handler/8 次 SQL」。
 - **全量测试注水**：原 `npm run test` 扫到 `.worktrees/` 5 份副本 → 371/2727。`vitest.config.ts` 排除 worktree 后，主树真实规模为 **78 文件 / 577 测试**。
 
 ## 下一步建议
@@ -44,8 +45,8 @@
 
 ## 自检结论
 
-1. 满足需求 ✅（4 项落地，2 项按作者决定跳过；三轮审查意见全部闭环）
+1. 满足需求 ✅（4 项落地，2 项按作者决定跳过；四轮审查意见全部闭环）
 2. 不影响已有功能 ✅（577 测试全过、renderer typecheck 过、build:main 过）
-3. 边界情况 ✅（首启无库在 getDb 前跳过、备份失败不阻断、同秒撞车防、material 非法 source_layer 回退、中文错误透传、Failed to fetch 命中、批量停止提示）
+3. 边界情况 ✅（首启无库在 getDb 前跳过、备份失败不阻断、同秒撞车防、material 非法 source_layer 回退、中文错误透传、Failed to fetch 命中、批量停止有入口 + 提示）
 4. 测试已同步 ✅（新增 backup + humanize 单测；startup 补 mock；vitest 排除 worktree）
 5. 技术债已记录 ✅（见「下一步建议」）

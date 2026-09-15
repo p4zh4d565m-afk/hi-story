@@ -185,6 +185,8 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   }>({ total: 0, completed: 0, results: [] });
   const BATCH_PROGRESS_KEY = 'hi-story-batch-progress';
   const [batchPaused, setBatchPaused] = useState(false);
+  // 批量是否正在连续生成中（区别于暂停/等待继续；用于显示停止入口）
+  const [batchRunning, setBatchRunning] = useState(false);
 
   // ===== 面板尺寸拖拽缩放 =====
   const [panelSize, setPanelSize] = useState({ width: 680, height: 500 });
@@ -434,18 +436,30 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
     setBatchProgress({ total: ordered.length, completed: 0, current: ordered[0]?.title, results: [] });
     setBatchPaused(false);
-    await runBatchRef.current(ordered, 0);
+    setBatchRunning(true);
+    try {
+      await runBatchRef.current(ordered, 0);
+    } finally {
+      setBatchRunning(false);
+    }
   }, [selectedOutlineIds, outlineNodes]);
 
   const handleBatchResume = useCallback(() => {
     setBatchPaused(false);
     const ordered = outlineNodes.filter(n => selectedOutlineIds.has(n.id));
-    runBatchRef.current(ordered, batchProgress.completed);
+    setBatchRunning(true);
+    runBatchRef.current(ordered, batchProgress.completed).finally(() => setBatchRunning(false));
   }, [selectedOutlineIds, outlineNodes, batchProgress.completed]);
 
   const handleBatchReset = useCallback(() => {
     setBatchProgress({ total: 0, completed: 0, results: [] });
     if (projectId) localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
+  }, [projectId]);
+
+  // 停止批量：abort 该项目所有活跃流，对应 generator 抛「已停止」→ catch 提示后 break
+  const handleBatchStop = useCallback(async () => {
+    if (projectId) await aiService.cancelActiveStreams(projectId);
+    setBatchRunning(false);
   }, [projectId]);
 
   const runBatch = useCallback(async (nodes: OutlineNode[], startIndex: number) => {
@@ -927,6 +941,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
                     style={{ width: `${batchProgress.total > 0 ? (batchProgress.completed / batchProgress.total) * 100 : 0}%` }}
                   />
                 </div>
+                {batchRunning && (
+                  <button
+                    onClick={handleBatchStop}
+                    className="w-full mt-1 px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-500 transition-colors"
+                  >
+                    ⏹ 停止批量生成
+                  </button>
+                )}
               </div>
             )}
 
