@@ -5,7 +5,8 @@ import { streamRegistry } from '../ai/stream-registry';
 import { normalizeStreamProjectId } from '../ai/stream-project-id';
 import { getDb } from '../db/connection';
 import { ChapterRunRepo } from '../db/repositories/chapter-run.repo';
-import { ChapterRunService, ERR_RUN_ALREADY_COMMITTED } from '../db/repositories/chapter-run.service';
+import { ChapterRunService } from '../db/repositories/chapter-run.service';
+import { resolvePostChatRunStatus } from '../ai/chapter-run-draft-gate';
 import type { IpcResult, ChapterRunStartResult, ChapterOutline } from '../../renderer/types';
 
 function getRepo(): ChapterRunRepo {
@@ -68,8 +69,18 @@ export function registerChapterRunIpc(): void {
           maxTokens: input.maxTokens ?? 4096,
         });
 
-        // 空草稿不能进入 drafted
-        if (!raw || raw.trim().length === 0) {
+        // chat 可能在 abort 后仍「成功返回」：落草稿前再查 aborted / cancel_requested
+        const runAfter = repo.findById(runId);
+        const post = resolvePostChatRunStatus({
+          aborted: controller.signal.aborted,
+          cancelRequested: runAfter?.cancelRequested === 1,
+          draft: raw,
+        });
+        if (post === 'cancelled') {
+          repo.markCancelled(runId);
+          return { success: true, data: { runId, executionStatus: 'cancelled', draftContent: null } };
+        }
+        if (post === 'failed') {
           repo.markFailed(runId, 'EMPTY_DRAFT', 'AI 未返回有效正文');
           return { success: true, data: { runId, executionStatus: 'failed', draftContent: null } };
         }

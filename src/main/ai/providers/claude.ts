@@ -29,6 +29,10 @@ export class ClaudeProvider implements AIProvider {
   }
 
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
+    // 开始前已取消：不发请求
+    if (options?.signal?.aborted) {
+      throw new AIError(AI_STREAM_CANCELLED, this.name);
+    }
     const client = this.getClient();
     try {
       const merged = mergeSystemPrompt(messages, options?.systemPrompt);
@@ -40,18 +44,26 @@ export class ClaudeProvider implements AIProvider {
 
       const systemPrompt = systemMessages.join('\n\n');
 
+      // 第二参传 signal，与 chatStream 一致，供 AbortController 真正中止 SDK 请求
       const response = await client.messages.create({
         model: options?.model || this.defaultModel,
         max_tokens: options?.maxTokens || 4096,
         temperature: options?.temperature ?? 0.7,
         system: systemPrompt || undefined,
         messages: userAssistantMessages,
-      });
+      }, options?.signal ? { signal: options.signal } : undefined);
 
       // Extract text from content blocks
       const textBlocks = response.content.filter((block: any) => block.type === 'text');
       return textBlocks.map((block: any) => block.text).join('\n');
     } catch (err: any) {
+      if (
+        options?.signal?.aborted
+        || err?.name === 'AbortError'
+        || err?.name === 'APIUserAbortError'
+      ) {
+        throw new AIError(AI_STREAM_CANCELLED, this.name);
+      }
       throw new AIError(
         err.message || 'Claude API error',
         this.name,

@@ -361,13 +361,14 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   // ===== 关面板（open 变 false）统一 abort：覆盖 ✕ / 顶栏 / 快捷键所有路径 =====
   // 写章面板是「保活」的（display:none 不卸载），置 false 不经过 handleClose，
   // 所以 abort 必须放 open 变化的 effect 里。
+  // 仅 running 才 cancel：已 drafted 的草稿要保留，方便再次打开继续保存。
   useEffect(() => {
     if (open) return;
-    if (currentRunId && projectIdRef.current) {
+    if (runStatus === 'running' && currentRunId && projectIdRef.current) {
       void (window as any).electronAPI.invoke('workflow:chapterRun:cancel', currentRunId, projectIdRef.current);
       setRunStatus('cancelled');
     }
-  }, [open, currentRunId]);
+  }, [open, currentRunId, runStatus]);
 
   // ===== 断点续写：页面打开时恢复进度 =====
   useEffect(() => {
@@ -740,6 +741,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
       // 三期：改走主进程 workflow（一次性 chat + 落草稿），渲染端不再自开 chatStream
       const title = preferredTitle || context.outlineTitle || 'AI 生成章节';
+      const startedProjectId = projectId;
       const res = await (window as any).electronAPI.invoke('workflow:chapterRun:start', {
         projectId,
         requestedTitle: title,
@@ -749,6 +751,9 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         sourceOutlineNodeId: null,
         maxTokens: targetWords * 3, // 旧逻辑同口径，避免长章截断
       }) as { success: boolean; data?: { runId: string; executionStatus: string; draftContent: string | null }; error?: string };
+
+      // 切项目后旧回执不进新项目 UI（草稿已在原项目库内，可由该项目打开面板恢复）
+      if (projectIdRef.current !== startedProjectId) return;
 
       if (!res?.success) {
         setError(res?.error || '写章失败');
@@ -777,15 +782,15 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   // ===== 停止生成 =====
   const handleStop = useCallback(async () => {
     // 三期：停止走 run cancel（绑定 projectId + runId，主进程 abort provider.chat）
-    if (currentRunId && projectId) {
+    if (runStatus === 'running' && currentRunId && projectId) {
       await (window as any).electronAPI.invoke('workflow:chapterRun:cancel', currentRunId, projectId);
       setRunStatus('cancelled');
-    } else if (projectId) {
+    } else if (projectId && runStatus !== 'drafted') {
       // 兜底：无 runId（旧批量/旧路径），走 chatStream 取消
       await aiService.cancelActiveStreams(projectId);
     }
     setGenerating(false);
-  }, [currentRunId, projectId]);
+  }, [currentRunId, projectId, runStatus]);
 
   // ===== 保存为新章节 =====
   const handleSave = useCallback(async () => {
