@@ -740,6 +740,42 @@ const MIGRATIONS: Migration[] = [
         WHERE status = 'proposed';
     `,
   },
+  // 024: 轻量写章运行记录（chapter-run 三期）—— 一张表，无五阶段子表
+  {
+    version: 24,
+    sql: `
+      CREATE TABLE IF NOT EXISTS chapter_runs (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        retry_of_run_id TEXT,
+        source_outline_node_id TEXT,
+        target_chapter_id TEXT,
+        requested_title TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL CHECK(status IN (
+          'running','drafted','committed','failed','cancelled'
+        )),
+        cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+        provider_name TEXT NOT NULL DEFAULT '',
+        model_name TEXT NOT NULL DEFAULT '',
+        input_summary TEXT NOT NULL DEFAULT '',
+        draft_content TEXT,
+        extract_status TEXT NOT NULL DEFAULT 'pending' CHECK(extract_status IN (
+          'pending','running','completed','failed','skipped'
+        )),
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT,
+        FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+        FOREIGN KEY (retry_of_run_id) REFERENCES chapter_runs(id) ON DELETE SET NULL,
+        FOREIGN KEY (target_chapter_id) REFERENCES chapters(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_chapter_runs_project_updated
+        ON chapter_runs(project_id, updated_at DESC);
+    `,
+  },
 ];
 
 /** 为 planning_ideas.chapter_outlines JSON 中缺 id 的项补 UUID（同事务调用） */

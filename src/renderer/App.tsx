@@ -1404,6 +1404,15 @@ const App: React.FC = () => {
               }
               return null;
             }}
+            onChapterCommitted={(chapter) => {
+              // 三期：commit 成功后把完整章节加进列表并选中（项目守卫）
+              if (!isActiveProject(chapter.projectId)) return;
+              setChapters(prev => {
+                if (prev.some(c => c.id === chapter.id)) return prev; // 幂等去重
+                return [...prev, chapter];
+              });
+              setActiveChapterId(chapter.id);
+            }}
             onPersistExtraction={async (projectId: string, chapterId: string, extraction: { summary?: string; facts?: unknown[]; knowledge?: unknown[] }) => {
               // 抽取结果异步落库：正文已保存，摘要/事实稍后到；失败不阻断正文
               try {

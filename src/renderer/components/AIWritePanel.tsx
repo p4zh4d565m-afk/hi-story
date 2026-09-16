@@ -68,6 +68,8 @@ interface AIWritePanelProps {
   preferredTitle?: string;
   /** 保存为新章节的回调，返回新建章节 id（失败返回 null） */
   onSaveAsChapter: (title: string, content: string) => Promise<string | null>;
+  /** 三期：commit 成功后把完整章节加进 App 列表 */
+  onChapterCommitted?: (chapter: Chapter) => void;
   /** 抽取结果（摘要/事实/角色知识）落库回调 */
   onPersistExtraction?: (
     projectId: string,
@@ -143,6 +145,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   obsidianContext,
   preferredTitle,
   onSaveAsChapter,
+  onChapterCommitted,
   onPersistExtraction,
 }) => {
   // ===== 配置状态 =====
@@ -173,6 +176,11 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   const generateAndSaveSummaryRef = useRef<(
     projectId: string, chapterId: string, chapterTitle: string, content: string,
   ) => Promise<void>>(async () => {});
+
+  // ===== 写章运行（三期） =====
+  const [currentRunId, setCurrentRunId] = useState<string | null>(null);
+  const [runStatus, setRunStatus] = useState<'idle' | 'running' | 'drafted' | 'failed' | 'cancelled'>('idle');
+  const activeRunStreamIdRef = useRef<string | null>(null);
 
   // ===== 批量生成 + 断点续写（P2）=====
   const [batchMode, setBatchMode] = useState(false);
@@ -332,9 +340,23 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       setGenerating(false);
       setSaved(false);
       setError(null);
+      setCurrentRunId(null);
+      setRunStatus('idle');
     }
     prevProjectIdRef.current = projectId;
   }, [projectId]);
+
+  // ===== 订阅写章 run started 事件（拿 streamId 供取消） =====
+  useEffect(() => {
+    const unsubscribe = (window as any).electronAPI.on('workflow:chapterRun:started',
+      (payload: { streamId: string; projectId: string; runId: string }) => {
+        activeRunStreamIdRef.current = payload.streamId;
+        setCurrentRunId(payload.runId);
+        setRunStatus('running');
+      },
+    );
+    return () => { unsubscribe?.(); activeRunStreamIdRef.current = null; };
+  }, []);
 
   // ===== 断点续写：页面打开时恢复进度 =====
   useEffect(() => {
@@ -684,30 +706,40 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         { role: 'user', content: userPrompt },
       ];
 
-      // 流式生成
-      const startedProjectId = projectId;
-      const generator = aiService.chatStream(
-        snapshotAIRequestConfig(requestBase, writeModel),
+      // 三期：改走主进程 workflow（一次性 chat + 落草稿），渲染端不再自开 chatStream
+      const title = preferredTitle || context.outlineTitle || 'AI 生成章节';
+      const res = await (window as any).electronAPI.invoke('workflow:chapterRun:start', {
+        projectId,
+        requestedTitle: title,
         messages,
-        { temperature: 0.7, maxTokens: targetWords * 3 },
-        startedProjectId,
-      );
-      let fullText = '';
-      for await (const token of generator) {
-        if (projectIdRef.current !== startedProjectId) break;
-        fullText = token;
-        setGeneratedContent(fullText);
+        providerConfig: snapshotAIRequestConfig(requestBase, writeModel),
+        inputSummary: `标题：${title}\n大纲：${context.outlineTitle}${context.outlineSummary ? `（${context.outlineSummary.slice(0, 60)}）` : ''}\n人物：${context.characters.map(c => c.name).join('、') || '（未启用）'}\n世界观：${context.worldEntries.length} 条`,
+        sourceOutlineNodeId: null,
+      }) as { success: boolean; data?: { runId: string; executionStatus: string; draftContent: string | null }; error?: string };
+
+      if (!res?.success) {
+        setError(res?.error || '写章失败');
+        return;
       }
-      if (projectIdRef.current !== startedProjectId) {
-        throw new Error(AI_IGNORED_MESSAGE);
+      const run = res.data!;
+      if (run.executionStatus === 'drafted') {
+        setGeneratedContent(run.draftContent ?? '');
+        setRunStatus('drafted');
+      } else if (run.executionStatus === 'cancelled') {
+        setError('已停止写章');
+        setRunStatus('cancelled');
+      } else {
+        setError('写章失败');
+        setRunStatus('failed');
       }
     } catch (e) {
       const display = streamEndDisplay((e as Error).message, 'AI 写作失败：');
       if (display) setError(display);
+      setRunStatus('failed');
     } finally {
       setGenerating(false);
     }
-  }, [getContext, aiReady, requestBase, styleGuide, targetWords, extraRequirement, projectId, obsidianContext, writeModel]);
+  }, [getContext, aiReady, requestBase, styleGuide, targetWords, extraRequirement, projectId, obsidianContext, writeModel, preferredTitle]);
 
   // ===== 停止生成 =====
   const handleStop = useCallback(async () => {
@@ -718,22 +750,34 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
   // ===== 保存为新章节 =====
   const handleSave = useCallback(async () => {
     if (!generatedContent) return;
-    // 从生成内容取第一句作为标题，或使用大纲标题
-    const plainText = generatedContent.replace(/<[^>]+>/g, '');
-    const firstLine = plainText.split('\n').find(l => l.trim().length > 0)?.trim() || '';
-    const title = firstLine.length > 40 ? firstLine.slice(0, 40) + '...' : firstLine;
-    const chapterId = await onSaveAsChapter(preferredTitle || title || 'AI 生成章节', generatedContent);
+    // 三期：保存走 workflow commit（幂等），返回完整章节
+    if (currentRunId) {
+      const res = await (window as any).electronAPI.invoke('workflow:chapterRun:commit', currentRunId, projectId, null) as
+        { success: boolean; data?: { chapter: Chapter }; error?: string };
+      if (res?.success && res.data?.chapter) {
+        setSaved(true);
+        // 通知 App 把新章节加进列表
+        onChapterCommitted?.(res.data.chapter);
+        // 异步抽取
+        if (aiReady) {
+          void generateAndSaveSummaryRef.current(projectId, res.data.chapter.id, preferredTitle || 'AI 生成章节', generatedContent);
+        }
+        return;
+      }
+      setError(res?.error === 'RUN_ALREADY_COMMITTED' ? '已保存' : (res?.error || '保存章节失败'));
+      return;
+    }
+    // 兜底：无 runId（旧路径兼容），走 onSaveAsChapter
+    const chapterId = await onSaveAsChapter(preferredTitle || 'AI 生成章节', generatedContent);
     if (!chapterId) {
       setError('保存章节失败');
       return;
     }
     setSaved(true);
-
-    // 异步生成章节摘要 + 抽取叙事事实（后台执行，不阻塞 UI）
     if (aiReady) {
-      void generateAndSaveSummaryRef.current(projectId, chapterId, title || 'AI 生成章节', generatedContent);
+      void generateAndSaveSummaryRef.current(projectId, chapterId, preferredTitle || 'AI 生成章节', generatedContent);
     }
-  }, [generatedContent, onSaveAsChapter, aiReady, preferredTitle, projectId]);
+  }, [generatedContent, currentRunId, onSaveAsChapter, onChapterCommitted, aiReady, preferredTitle, projectId]);
 
   // ===== 后台生成章节摘要 + 抽取叙事事实（合并为一次 AI 调用）=====
   const generateAndSaveSummary = useCallback(async (projectId: string, chapterId: string, chapterTitle: string, content: string) => {

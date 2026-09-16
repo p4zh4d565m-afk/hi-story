@@ -3,6 +3,7 @@ import path from 'path';
 import { getDb, getDbPath, attachLiteraryDb, closeDb } from './db/connection';
 import { runMigrations } from './db/migrations';
 import { backupOnStartup, isFirstRun } from './db/backup';
+import { ChapterRunService } from './db/repositories/chapter-run.service';
 import { registerAllIpc } from './ipc';
 import { createAppMenu } from './menu';
 
@@ -81,6 +82,16 @@ app.whenReady().then(async () => {
 
     runMigrations(db);
     attachLiteraryDb();
+
+    // 三期启动恢复：把遗留 running 的写章运行标为 failed/PROCESS_INTERRUPTED，不自动重放付费请求
+    try {
+      const interrupted = new ChapterRunService(db).recoverInterruptedAll();
+      if (interrupted > 0) {
+        console.log(`[Init] 恢复 ${interrupted} 条中断的写章运行 → failed/PROCESS_INTERRUPTED`);
+      }
+    } catch (err) {
+      console.error('[Init] 写章运行恢复失败（不阻断启动）:', err);
+    }
 
     // 清空旧 768 维向量（避免与新 1024 维 API Embedding 维度冲突导致余弦相似度全 0）
     let clearedUser = 0, clearedLit = 0;
