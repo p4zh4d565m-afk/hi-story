@@ -27,6 +27,7 @@ export function registerChapterRunIpc(): void {
       providerConfig: ProviderConfig;
       inputSummary: string;
       sourceOutlineNodeId?: string | null;
+      maxTokens?: number;
     }): Promise<IpcResult<ChapterRunStartResult>> => {
       const pid = normalizeStreamProjectId(input.projectId);
       const repo = getRepo();
@@ -63,7 +64,8 @@ export function registerChapterRunIpc(): void {
         const raw = await provider.chat(input.messages, {
           signal: controller.signal,
           temperature: 0.7,
-          maxTokens: 4096,
+          // 默认 4096，渲染端可传更大值（旧逻辑 targetWords * 3）避免长章截断
+          maxTokens: input.maxTokens ?? 4096,
         });
 
         // 空草稿不能进入 drafted

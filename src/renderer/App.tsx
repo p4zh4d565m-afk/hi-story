@@ -1407,6 +1407,11 @@ const App: React.FC = () => {
             onChapterCommitted={(chapter) => {
               // 三期：commit 成功后把完整章节加进列表并选中（项目守卫）
               if (!isActiveProject(chapter.projectId)) return;
+              // 清理 pendingAIOutlineRef，避免下次写章仍套用旧章纲施工卡
+              if (pendingAIOutlineRef.current) {
+                pendingAIOutlineRef.current = null;
+                setPendingAIOutline(null);
+              }
               setChapters(prev => {
                 if (prev.some(c => c.id === chapter.id)) return prev; // 幂等去重
                 return [...prev, chapter];

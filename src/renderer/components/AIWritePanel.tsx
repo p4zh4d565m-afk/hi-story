@@ -358,6 +358,17 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     return () => { unsubscribe?.(); activeRunStreamIdRef.current = null; };
   }, []);
 
+  // ===== 关面板（open 变 false）统一 abort：覆盖 ✕ / 顶栏 / 快捷键所有路径 =====
+  // 写章面板是「保活」的（display:none 不卸载），置 false 不经过 handleClose，
+  // 所以 abort 必须放 open 变化的 effect 里。
+  useEffect(() => {
+    if (open) return;
+    if (currentRunId && projectIdRef.current) {
+      void (window as any).electronAPI.invoke('workflow:chapterRun:cancel', currentRunId, projectIdRef.current);
+      setRunStatus('cancelled');
+    }
+  }, [open, currentRunId]);
+
   // ===== 断点续写：页面打开时恢复进度 =====
   useEffect(() => {
     if (!open || !projectId) return;
@@ -383,6 +394,27 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
       localStorage.removeItem(`${BATCH_PROGRESS_KEY}-${projectId}`);
     }
   }, [batchProgress, projectId]);
+
+  // ===== 三期：打开面板时恢复最新 drafted 草稿（重启后可继续保存） =====
+  useEffect(() => {
+    if (!open || !projectId) return;
+    let cancelled = false;
+    (async () => {
+      const res = await (window as any).electronAPI.invoke('workflow:chapterRun:list', projectId) as
+        { success: boolean; data?: Array<{ id: string; status: string; draftContent: string | null; requestedTitle: string }> };
+      if (cancelled) return;
+      if (res?.success && Array.isArray(res.data)) {
+        const drafted = res.data.filter((r) => r.status === 'drafted' && r.draftContent);
+        if (drafted.length > 0) {
+          const latest = drafted[0];
+          setCurrentRunId(latest.id);
+          setGeneratedContent(latest.draftContent!);
+          setRunStatus('drafted');
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, projectId]);
 
   // ===== 构建 Write 上下文 =====
   const getContext = useCallback(() => {
@@ -715,6 +747,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         providerConfig: snapshotAIRequestConfig(requestBase, writeModel),
         inputSummary: `标题：${title}\n大纲：${context.outlineTitle}${context.outlineSummary ? `（${context.outlineSummary.slice(0, 60)}）` : ''}\n人物：${context.characters.map(c => c.name).join('、') || '（未启用）'}\n世界观：${context.worldEntries.length} 条`,
         sourceOutlineNodeId: null,
+        maxTokens: targetWords * 3, // 旧逻辑同口径，避免长章截断
       }) as { success: boolean; data?: { runId: string; executionStatus: string; draftContent: string | null }; error?: string };
 
       if (!res?.success) {
@@ -743,17 +776,28 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
 
   // ===== 停止生成 =====
   const handleStop = useCallback(async () => {
-    if (projectId) await aiService.cancelActiveStreams(projectId);
+    // 三期：停止走 run cancel（绑定 projectId + runId，主进程 abort provider.chat）
+    if (currentRunId && projectId) {
+      await (window as any).electronAPI.invoke('workflow:chapterRun:cancel', currentRunId, projectId);
+      setRunStatus('cancelled');
+    } else if (projectId) {
+      // 兜底：无 runId（旧批量/旧路径），走 chatStream 取消
+      await aiService.cancelActiveStreams(projectId);
+    }
     setGenerating(false);
-  }, [projectId]);
+  }, [currentRunId, projectId]);
 
   // ===== 保存为新章节 =====
   const handleSave = useCallback(async () => {
     if (!generatedContent) return;
-    // 三期：保存走 workflow commit（幂等），返回完整章节
+    // 三期：保存走 workflow commit（幂等），返回完整章节；施工卡随 create 写入（C4）
     if (currentRunId) {
-      const res = await (window as any).electronAPI.invoke('workflow:chapterRun:commit', currentRunId, projectId, null) as
-        { success: boolean; data?: { chapter: Chapter }; error?: string };
+      const res = await (window as any).electronAPI.invoke(
+        'workflow:chapterRun:commit',
+        currentRunId,
+        projectId,
+        pendingChapterOutline ?? null,
+      ) as { success: boolean; data?: { chapter: Chapter }; error?: string };
       if (res?.success && res.data?.chapter) {
         setSaved(true);
         // 通知 App 把新章节加进列表
@@ -764,7 +808,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
         }
         return;
       }
-      setError(res?.error === 'RUN_ALREADY_COMMITTED' ? '已保存' : (res?.error || '保存章节失败'));
+      setError(res?.error || '保存章节失败');
       return;
     }
     // 兜底：无 runId（旧路径兼容），走 onSaveAsChapter
@@ -777,7 +821,7 @@ const AIWritePanel: React.FC<AIWritePanelProps> = ({
     if (aiReady) {
       void generateAndSaveSummaryRef.current(projectId, chapterId, preferredTitle || 'AI 生成章节', generatedContent);
     }
-  }, [generatedContent, currentRunId, onSaveAsChapter, onChapterCommitted, aiReady, preferredTitle, projectId]);
+  }, [generatedContent, currentRunId, pendingChapterOutline, onSaveAsChapter, onChapterCommitted, aiReady, preferredTitle, projectId]);
 
   // ===== 后台生成章节摘要 + 抽取叙事事实（合并为一次 AI 调用）=====
   const generateAndSaveSummary = useCallback(async (projectId: string, chapterId: string, chapterTitle: string, content: string) => {
