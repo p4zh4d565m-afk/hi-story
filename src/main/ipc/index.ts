@@ -19,6 +19,7 @@ import { registerConversationIpc } from './conversation.ipc';
 import { registerCreativeDecisionIpc } from './creative-decision.ipc';
 import { registerNarrativeTimeIpc } from './narrative-time.ipc';
 import { registerChapterReviewIpc } from './chapter-review.ipc';
+import { registerChapterRunIpc } from './chapter-run.ipc';
 
 export function registerAllIpc(): void {
   registerProjectIpc();
@@ -45,4 +46,5 @@ export function registerAllIpc(): void {
   registerCreativeDecisionIpc();
   registerNarrativeTimeIpc();
   registerChapterReviewIpc();
+  registerChapterRunIpc();
 }

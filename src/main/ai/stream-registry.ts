@@ -57,6 +57,16 @@ export const streamRegistry = {
     return true;
   },
 
+  /** 按 runId 取消（三期写章运行）：找到该 runId 对应流，校验 projectId 后 abort。 */
+  cancelByRunId(runId: string, projectId: string): boolean {
+    for (const [id, entry] of streams) {
+      if (entry.runId === runId) {
+        return this.cancel(id, projectId);
+      }
+    }
+    return false;
+  },
+
   /** 中止某窗口下所有未终止的流（窗口销毁用）。先 abort 再删，避免竞态。 */
   abortAllForSender(senderId: number): void {
     for (const { id, entry } of collectBySender(senderId)) {

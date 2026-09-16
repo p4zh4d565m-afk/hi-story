@@ -371,6 +371,38 @@ export interface ChapterReviewRunResult {
   executionStatus: 'completed' | 'cancelled' | 'failed' | 'stale';
 }
 
+// ===== 写章运行记录（三期 / v24）=====
+export type ChapterRunStatus = 'running' | 'drafted' | 'committed' | 'failed' | 'cancelled';
+export type ChapterRunExtractStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped';
+
+export interface ChapterRun {
+  id: string;
+  projectId: string;
+  retryOfRunId: string | null;
+  sourceOutlineNodeId: string | null;
+  targetChapterId: string | null;
+  requestedTitle: string;
+  status: ChapterRunStatus;
+  cancelRequested: 0 | 1;
+  providerName: string;
+  modelName: string;
+  inputSummary: string;
+  draftContent: string | null;
+  extractStatus: ChapterRunExtractStatus;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+}
+
+/** 写章 run start 返回契约 */
+export interface ChapterRunStartResult {
+  runId: string;
+  executionStatus: 'drafted' | 'cancelled' | 'failed';
+  draftContent: string | null;
+}
+
 // ===== 反 AI 痕迹检测 =====
 export interface AntiAICheckResult {
   totalScore: number;       // 0-100，越高越好（越不像AI）

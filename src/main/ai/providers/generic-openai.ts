@@ -42,9 +42,14 @@ export class GenericOpenAIProvider implements AIProvider {
   }
 
   async chat(messages: ChatMessage[], options?: ChatOptions): Promise<string> {
+    // 开始前已取消：不发请求
+    if (options?.signal?.aborted) {
+      throw new AIError(AI_STREAM_CANCELLED, this.name);
+    }
     const client = this.getClient();
     try {
       const merged = mergeSystemPrompt(messages, options?.systemPrompt);
+      // 第二参传 signal，与 chatStream 一致，供 AbortController 真正中止 SDK 请求
       const response = await client.chat.completions.create({
         model: options?.model || this.defaultModel,
         max_tokens: options?.maxTokens || 4096,
@@ -53,9 +58,16 @@ export class GenericOpenAIProvider implements AIProvider {
           role: m.role as 'system' | 'user' | 'assistant',
           content: m.content,
         })),
-      });
+      }, options?.signal ? { signal: options.signal } : undefined);
       return response.choices[0]?.message?.content || '';
     } catch (err: any) {
+      if (
+        options?.signal?.aborted
+        || err?.name === 'AbortError'
+        || err?.name === 'APIUserAbortError'
+      ) {
+        throw new AIError(AI_STREAM_CANCELLED, this.name);
+      }
       throw new AIError(err.message || `${this.name} API error`, this.name, err.status);
     }
   }
